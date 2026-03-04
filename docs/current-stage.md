@@ -62,23 +62,24 @@ Current locked behavior:
 Current working tree before the next commit includes:
 
 - `docs/current-stage.md`
-- `docs/dependency-view-m1.md`
 - `docs/dependency-view-v1-1.md`
-- `src/components/DependencyModal.svelte`
-- `src/components/DependencyTreeNode.svelte`
-- `src/lib/api/dependencies.ts`
 - `src/App.svelte`
 - `src/app.css`
 - `src/components/BrowseScreen.svelte`
+- `src/components/Icon.svelte`
 - `src/components/PackageDetail.svelte`
+- `src/lib/api/client.ts`
+- `src/lib/api/dependencies.ts`
 - `src/lib/api/mock-backend.ts`
-- `src/lib/mock-data.ts`
 - `src/lib/store.ts`
 - `src/lib/types.ts`
 - `src-tauri/src/commands/dependencies.rs`
+- `src-tauri/src/commands/profiles.rs`
+- `src-tauri/src/commands/reference.rs`
+- `src-tauri/src/app_state.rs`
 - `src-tauri/src/main.rs`
+- `src-tauri/src/services/catalog_service.rs`
 - `src-tauri/src/services/dependency_service.rs`
-- `src-tauri/src/services/mod.rs`
 
 ## Profile Milestone Notes
 
@@ -130,6 +131,12 @@ Current working tree before the next commit includes:
 - install-start failures now surface more context:
   - clearer frontend error text
   - failed Downloads rows show backend error messages
+- install-related download icons now force white fill for consistency across status-colored install buttons:
+  - Browse card quick-install button
+  - detail `Install {version}` button
+  - detail `Install version` buttons
+- topbar `Launch modded` play icon now also uses the same white icon override
+- the detail-panel category chip row now has slightly more vertical spacing below the primary action row
 
 ## Desktop Runtime Status
 
@@ -179,7 +186,14 @@ Current dependency-view state:
   - `src-tauri/src/services/dependency_service.rs`
   - `src/lib/api/dependencies.ts`
   - `src/components/DependencyModal.svelte`
-- dependency resolution is local-catalog only and now loads one request-local catalog index, then resolves in memory
+- dependency resolution is local-catalog only and now uses an app-lifetime in-memory dependency index cache
+- dependency index cache warmup now exists as a dedicated backend command:
+  - `warm_dependency_index`
+- dependency index cache is invalidated after:
+  - catalog sync writes
+  - reference override writes
+  - reset-all-data
+- dependency index build now parses version dependency arrays lazily per visited node (instead of eagerly parsing all versions on every request)
 - modal defaults to `Summary` and keeps `Tree` as the advanced inspection view
 - Summary sections are:
   - `Direct`
@@ -196,6 +210,16 @@ Current dependency-view state:
 - lower-version rows in Tree are visually de-emphasized (strikethrough/italic version + italic title + muted row background)
 - resolved entries can jump to the exact dependency version in Browse
 - exact target version rows still scroll into view and highlight temporarily
+
+Browse startup / interaction behavior tied to dependency optimization:
+
+- startup overlay now includes a `Prepare dependencies` step
+- app startup with an existing catalog now keeps the overlay visible until:
+  1. first Browse page is loaded
+  2. selected package detail is loaded
+  3. dependency index warmup completes
+- background non-blocking refresh after startup no longer toggles the first-page `Searching cached mods...` state
+- during first-page Browse searches, the right-side package detail panel is now interaction-locked to avoid stale-detail discrepancies while results are being replaced
 
 Current known gaps / follow-up candidates:
 

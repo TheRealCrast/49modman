@@ -326,7 +326,7 @@ export interface AppState {
   isCatalogOverlayVisible: boolean;
   catalogOverlayTitle: string | null;
   catalogOverlayMessage: string | null;
-  catalogOverlayStep: "network" | "cache" | "browse" | null;
+  catalogOverlayStep: "network" | "cache" | "browse" | "dependencies" | null;
   isLoadingCatalogFirstPage: boolean;
   isLoadingCatalogNextPage: boolean;
   isLoadingPackageDetail: boolean;

@@ -5,6 +5,7 @@ use crate::{
     error::AppError,
     services::{
         cache_service::clear_cache_files,
+        dependency_service::invalidate_dependency_catalog_index,
         profile_service::{
             create_profile as create_profile_service, delete_profile as delete_profile_service,
             get_active_profile as get_active_profile_service,
@@ -151,7 +152,9 @@ pub async fn reset_all_data(state: State<'_, AppState>) -> Result<(), AppError> 
             .lock()
             .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
 
-        reset_all_data_service(&connection).map_err(AppError::from)
+        reset_all_data_service(&connection).map_err(AppError::from)?;
+        invalidate_dependency_catalog_index(&state.dependency_index_cache).map_err(AppError::from)?;
+        Ok(())
     })
     .await
     .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?

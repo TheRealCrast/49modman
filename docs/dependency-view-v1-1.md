@@ -15,14 +15,17 @@ Locked decisions:
 - lower required versions for that package remain visible as strikethrough metadata in the row
 - repeated nodes in the advanced tree should collapse into lightweight `Already shown above` reference rows
 - backend optimization should stay within the current schema for now
-- resolver optimization should use request-local in-memory indexes and memoized traversal, not a new persistent dependency edge table yet
+- resolver optimization should use an app-lifetime in-memory index cache with warm/invalidate flow, not a new persistent dependency edge table yet
 
 ## Implementation Status (2026-03-04)
 
 Implemented behavior:
 
 - dependency modal opens on `Summary` by default and supports `Summary` / `Tree` switching
-- backend command `get_version_dependencies` now resolves from request-local in-memory indexes
+- backend command `get_version_dependencies` now resolves from a cached app-lifetime in-memory index
+- backend command `warm_dependency_index` now prewarms that in-memory index
+- dependency index cache is invalidated on catalog/reference/reset mutations
+- dependency-array JSON is parsed lazily for visited nodes during traversal
 - response shape is summary + compact tree
 - Summary sections are `Direct`, `Indirect`, and `Unresolved`
 - Summary resolved rows are deduplicated by package:
@@ -36,6 +39,7 @@ Implemented behavior:
   - muted grey row background
 - unresolved rows remain visible in both Summary and Tree
 - jump-to-exact-version still closes modal, opens Browse, and highlights the target row
+- startup overlay now includes dependency warmup so the first dependency modal open avoids cold index build cost
 
 ## Original Plan Context
 
@@ -176,31 +180,33 @@ Tree node resolution kinds should become:
 - `cycle`
 - `repeated`
 
-## Backend Optimization Plan
+## Backend Optimization Status
 
 ### Key Change
 
-Stop doing one SQLite query per dependency edge.
+Stop rebuilding dependency lookup structures for every dependency modal request.
 
-Instead, each request should:
+Implemented approach:
 
-1. load a dependency-capable catalog snapshot with one batched query
-2. build request-local indexes in memory
-3. traverse the graph using those indexes
-4. memoize traversal results within the request
+1. build one dependency-capable catalog snapshot in memory
+2. keep it in an app-lifetime cache
+3. warm it during startup overlay
+4. invalidate and rebuild after dependency-relevant mutations
 
 ### Request-Local Indexes
 
-Recommended internal indexes:
+Current internal indexes:
 
 - `versions_by_id`
 - `version_id_by_dependency_raw`
 
-The second map should use keys in this form:
+Dependency raw lookup keys stay in this form:
 
 - `{full_name}-{version_number}`
 
-That preserves exact-version resolution without live string-concatenation lookups in SQLite.
+This preserves exact-version resolution without live string-concatenation lookups in SQLite.
+
+Version dependency arrays now use lazy parsing per record so cold warmup avoids eagerly deserializing every `dependencies_json` row.
 
 ### Traversal Split
 
@@ -224,9 +230,9 @@ Tree pass responsibilities:
 
 ### Important Constraint
 
-Do not add a schema migration in this pass.
+No schema migration was added in this pass.
 
-If performance is still unacceptable after request-local indexing and memoization, that follow-up can become a later milestone with a normalized dependency edge table.
+If performance remains unacceptable after app-lifetime cache + warm/invalidate + lazy parsing, the next follow-up can be a normalized dependency edge table populated at sync time.
 
 ## Frontend Design
 
@@ -262,9 +268,9 @@ This pass is complete when:
 7. repeated exact-version nodes in tree mode no longer render full duplicate subtrees
 8. repeated exact-version nodes are clearly labeled
 9. jump-to-exact-version still works from the modal
-10. backend resolution no longer performs one SQLite lookup per dependency edge
+10. backend resolution no longer performs repeated per-request full-catalog index rebuild work for each modal open
 11. one dependency request expands a given exact version at most once in tree construction
-12. heavy dependency queries no longer peg one worker thread for long periods in normal use
+12. first dependency open after startup avoids cold index build in normal use
 
 ## Validation
 
@@ -272,7 +278,7 @@ This pass is complete when:
 
 Cover:
 
-- exact dependency resolution from request-local index
+- exact dependency resolution from the warmed app-lifetime in-memory index
 - unresolved dependency handling
 - cycle detection
 - repeated-node compaction
@@ -297,7 +303,7 @@ Check:
 
 ## Follow-Up If Needed
 
-If request-local indexing and memoization still are not enough:
+If app-lifetime cache warm/invalidate and lazy parsing still are not enough:
 
 - add a normalized dependency edge table during catalog sync
 - query dependency graphs from normalized rows instead of on-demand `dependencies_json` parsing

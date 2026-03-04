@@ -80,7 +80,7 @@
 
         <div class="launch-actions">
           <button class="solid-button icon-button" type="button">
-            <Icon label="Launch modded" name="play" />
+            <Icon label="Launch modded" name="play" forceWhite={true} />
             <span>Launch modded</span>
           </button>
           <button class="ghost-button icon-button" type="button">
@@ -163,17 +163,37 @@
       <h3>{$appState.catalogOverlayTitle ?? "Retrieving Thunderstore catalog"}</h3>
       <p>{$appState.catalogOverlayMessage ?? "Building local cache for Browse"}</p>
       <div class="loading-steps" aria-label="Catalog refresh progress">
-        <div class:active={$appState.catalogOverlayStep === "network"} class:done={$appState.catalogOverlayStep !== "network" && $appState.catalogOverlayStep !== null} class="loading-step">
+        <div
+          class:active={$appState.catalogOverlayStep === "network"}
+          class:done={
+            $appState.catalogOverlayStep === "cache" ||
+            $appState.catalogOverlayStep === "browse" ||
+            $appState.catalogOverlayStep === "dependencies"
+          }
+          class="loading-step"
+        >
           <span class="loading-step-dot"></span>
           <span>Contact Thunderstore</span>
         </div>
-        <div class:active={$appState.catalogOverlayStep === "cache"} class:done={$appState.catalogOverlayStep === "browse"} class="loading-step">
+        <div
+          class:active={$appState.catalogOverlayStep === "cache"}
+          class:done={$appState.catalogOverlayStep === "browse" || $appState.catalogOverlayStep === "dependencies"}
+          class="loading-step"
+        >
           <span class="loading-step-dot"></span>
           <span>Update local cache</span>
         </div>
-        <div class:active={$appState.catalogOverlayStep === "browse"} class="loading-step">
+        <div
+          class:active={$appState.catalogOverlayStep === "browse"}
+          class:done={$appState.catalogOverlayStep === "dependencies"}
+          class="loading-step"
+        >
           <span class="loading-step-dot"></span>
           <span>Load Browse results</span>
+        </div>
+        <div class:active={$appState.catalogOverlayStep === "dependencies"} class="loading-step">
+          <span class="loading-step-dot"></span>
+          <span>Prepare dependencies</span>
         </div>
       </div>
     </div>

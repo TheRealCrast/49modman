@@ -3,6 +3,7 @@ import {
   createProfileMock,
   deleteProfileMock,
   getVersionDependenciesMock,
+  warmDependencyIndexMock,
   getCacheSummaryMock,
   getActiveProfileMock,
   getCatalogSummaryMock,
@@ -31,6 +32,7 @@ type CommandMap = {
   search_packages: typeof searchPackagesMock;
   get_package_detail: typeof getPackageDetailMock;
   get_version_dependencies: typeof getVersionDependenciesMock;
+  warm_dependency_index: typeof warmDependencyIndexMock;
   list_profiles: typeof listProfilesMock;
   get_active_profile: typeof getActiveProfileMock;
   set_active_profile: typeof setActiveProfileMock;
@@ -58,6 +60,7 @@ const mockCommands: CommandMap = {
   search_packages: searchPackagesMock,
   get_package_detail: getPackageDetailMock,
   get_version_dependencies: getVersionDependenciesMock,
+  warm_dependency_index: warmDependencyIndexMock,
   list_profiles: listProfilesMock,
   get_active_profile: getActiveProfileMock,
   set_active_profile: setActiveProfileMock,

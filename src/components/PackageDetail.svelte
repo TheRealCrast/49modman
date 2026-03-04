@@ -19,6 +19,7 @@
   }) => void;
   export let focusedVersionId: string | undefined = undefined;
   export let focusedVersionToken = 0;
+  export let isLocked = false;
 
   const filters = ["verified", "green", "yellow", "orange", "red", "broken"] as const;
   const versionRowElements = new Map<string, HTMLElement>();
@@ -40,6 +41,10 @@
     x: number,
     y: number
   ) {
+    if (isLocked) {
+      return;
+    }
+
     menu = {
       versionId: version.id,
       versionNumber: version.versionNumber,
@@ -49,11 +54,19 @@
   }
 
   function openContextMenu(event: MouseEvent, version: ModVersion) {
+    if (isLocked) {
+      return;
+    }
+
     event.preventDefault();
     openMenuForVersion(version, event.clientX, event.clientY);
   }
 
   function openOverflowMenu(event: MouseEvent, version: ModVersion) {
+    if (isLocked) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
     const button = event.currentTarget as HTMLButtonElement;
@@ -104,6 +117,10 @@
   }
 
   function viewDependenciesForMenuVersion() {
+    if (isLocked) {
+      return;
+    }
+
     if (!pkg || !menu) {
       return;
     }
@@ -118,6 +135,10 @@
   }
 
   async function viewPackageInBrowser() {
+    if (isLocked) {
+      return;
+    }
+
     if (!pkg?.websiteUrl) {
       return;
     }
@@ -127,6 +148,10 @@
   }
 
   function installRecommendedVersion() {
+    if (isLocked) {
+      return;
+    }
+
     if (!pkg) {
       return;
     }
@@ -146,6 +171,10 @@
   }
 
   function applyReference(state: "verified" | "broken" | "neutral") {
+    if (isLocked) {
+      return;
+    }
+
     if (!pkg || !menu) {
       return;
     }
@@ -193,6 +222,10 @@
     installLabel = "Install";
   }
 
+  $: if (isLocked && menu) {
+    closeMenu();
+  }
+
   async function scrollFocusedVersionIntoView(versionId: string) {
     await tick();
     versionRowElements.get(versionId)?.scrollIntoView({
@@ -232,13 +265,23 @@
         <button
           class={`solid-button icon-button package-install-button ${installStatus}`}
           type="button"
+          disabled={isLocked}
           on:click={installRecommendedVersion}
         >
-          <Icon label={`Install ${installVersion?.versionNumber ?? "recommended version"}`} name="download" />
+          <Icon
+            label={`Install ${installVersion?.versionNumber ?? "recommended version"}`}
+            name="download"
+            forceWhite={true}
+          />
           <span>{installLabel}</span>
         </button>
       {/key}
-      <button class="ghost-button icon-button detail-link-button" type="button" on:click={viewPackageInBrowser}>
+      <button
+        class="ghost-button icon-button detail-link-button"
+        type="button"
+        disabled={isLocked}
+        on:click={viewPackageInBrowser}
+      >
         <Icon label="View mod in browser" name="external-link" size={16} />
         <span>View in browser</span>
       </button>
@@ -296,20 +339,25 @@
               <button
                 class="solid-button icon-button"
                 type="button"
+                disabled={isLocked}
                 on:click={() => {
+                  if (isLocked) {
+                    return;
+                  }
                   const request = buildInstallRequest(version.id);
                   if (request) {
                     onInstall(request);
                   }
                 }}
               >
-                <Icon label="Install version" name="download" />
+                <Icon label="Install version" name="download" forceWhite={true} />
                 <span>Install version</span>
               </button>
               <button
                 aria-expanded={menu?.versionId === version.id}
                 class="ghost-button icon-button version-menu-trigger"
                 type="button"
+                disabled={isLocked}
                 on:click={(event) => openOverflowMenu(event, version)}
               >
                 <Icon label="Version actions" name="three-dots-vertical" />
@@ -338,6 +386,15 @@
           <Icon label="Clear mark" name="x-close" size={16} />
           <span>Clear mark</span>
         </button>
+      </div>
+    {/if}
+
+    {#if isLocked}
+      <div class="detail-lock-overlay" aria-live="polite">
+        <div class="detail-lock-card">
+          <div class="loading-spinner" aria-hidden="true"></div>
+          <p>Searching cached mods...</p>
+        </div>
       </div>
     {/if}
   </section>

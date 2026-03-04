@@ -12,6 +12,7 @@ use crate::{
         EffectiveStatus, ReferenceState,
     },
     error::InternalError,
+    services::dependency_service::invalidate_dependency_catalog_index,
     thunderstore::{client::fetch_lethal_company_packages, models::ThunderstorePackage},
 };
 
@@ -174,6 +175,7 @@ pub fn sync_catalog(
         &serde_json::to_string(&synced_at)?,
         &synced_at,
     )?;
+    invalidate_dependency_catalog_index(&state.dependency_index_cache)?;
 
     let summary = get_catalog_summary(&connection)?;
 

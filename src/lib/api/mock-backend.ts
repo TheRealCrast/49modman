@@ -688,6 +688,10 @@ export async function getVersionDependenciesMock(
   };
 }
 
+export async function warmDependencyIndexMock(): Promise<void> {
+  return;
+}
+
 export async function listProfilesMock(): Promise<ProfileSummaryDto[]> {
   const db = normalizeDb(loadDb());
   saveDb(db);

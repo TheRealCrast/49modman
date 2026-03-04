@@ -1,7 +1,7 @@
 import { derived, get, writable } from "svelte/store";
 import { clearCache, getCacheSummary, openCacheFolder, queueInstallToCache } from "./api/cache";
 import { getCatalogSummary, getPackageDetail, searchPackages, syncCatalog } from "./api/catalog";
-import { getVersionDependencies } from "./api/dependencies";
+import { getVersionDependencies, warmDependencyIndex } from "./api/dependencies";
 import { listActiveDownloads } from "./api/downloads";
 import {
   createProfile as createProfileApi,
@@ -396,8 +396,10 @@ async function loadActiveDownloads() {
   }
 }
 
-async function loadCatalogFirstPage(options: { showLoading?: boolean } = {}) {
-  const { showLoading = true } = options;
+async function loadCatalogFirstPage(
+  options: { showLoading?: boolean; waitForSelectedPackageDetail?: boolean } = {}
+) {
+  const { showLoading = true, waitForSelectedPackageDetail = false } = options;
   const state = get(appState);
 
   if (showLoading) {
@@ -442,7 +444,11 @@ async function loadCatalogFirstPage(options: { showLoading?: boolean } = {}) {
     }));
 
     if (nextSelection) {
-      void loadSelectedPackageDetail(nextSelection);
+      if (waitForSelectedPackageDetail) {
+        await loadSelectedPackageDetail(nextSelection);
+      } else {
+        void loadSelectedPackageDetail(nextSelection);
+      }
     }
     return true;
   } catch (error) {
@@ -575,8 +581,33 @@ async function loadMoreReferenceLibrary() {
   }
 }
 
-async function refreshCatalog(force: boolean, options: { blockingOverlay?: boolean } = {}) {
-  const { blockingOverlay = false } = options;
+async function warmDependencyIndexForOverlay() {
+  appState.update((state) => ({
+    ...state,
+    catalogOverlayStep: state.isCatalogOverlayVisible ? "dependencies" : state.catalogOverlayStep,
+    catalogOverlayMessage: state.isCatalogOverlayVisible
+      ? "Preparing dependency index from cached metadata"
+      : state.catalogOverlayMessage
+  }));
+
+  await warmDependencyIndex();
+}
+
+async function refreshCatalog(
+  force: boolean,
+  options: {
+    blockingOverlay?: boolean;
+    includeDependencyWarm?: boolean;
+    showFirstPageLoading?: boolean;
+    waitForSelectedPackageDetail?: boolean;
+  } = {}
+) {
+  const {
+    blockingOverlay = false,
+    includeDependencyWarm = blockingOverlay,
+    showFirstPageLoading = !blockingOverlay,
+    waitForSelectedPackageDetail = blockingOverlay
+  } = options;
 
   appState.update((state) => ({
     ...state,
@@ -612,10 +643,17 @@ async function refreshCatalog(force: boolean, options: { blockingOverlay?: boole
         ? "Local metadata updated. Loading Browse results"
         : state.catalogOverlayMessage
     }));
-    const reloaded = await loadCatalogFirstPage({ showLoading: !blockingOverlay });
+    const reloaded = await loadCatalogFirstPage({
+      showLoading: showFirstPageLoading,
+      waitForSelectedPackageDetail
+    });
 
     if (!reloaded) {
       throw new Error("The catalog cache refreshed, but the first page could not be loaded.");
+    }
+
+    if (blockingOverlay && includeDependencyWarm) {
+      await warmDependencyIndexForOverlay();
     }
 
     appState.update((state) =>
@@ -761,16 +799,50 @@ export const actions = {
           ,
           catalogOverlayStep: "network"
         }));
-        await refreshCatalog(true, { blockingOverlay: true });
+        await refreshCatalog(true, { blockingOverlay: true, includeDependencyWarm: true });
       } else {
-        await loadCatalogFirstPage();
-        void refreshCatalog(false);
+        appState.update((state) => ({
+          ...state,
+          isCatalogOverlayVisible: true,
+          catalogOverlayTitle: "Preparing cached catalog",
+          catalogOverlayMessage: "Loading the first page of cached results",
+          catalogOverlayStep: "browse"
+        }));
+
+        await waitForNextPaint();
+
+        const loaded = await loadCatalogFirstPage({
+          showLoading: false,
+          waitForSelectedPackageDetail: true
+        });
+        if (!loaded) {
+          throw new Error("Failed to load the first page of cached results.");
+        }
+
+        await warmDependencyIndexForOverlay();
+
+        appState.update((state) => ({
+          ...state,
+          isCatalogOverlayVisible: false,
+          catalogOverlayTitle: null,
+          catalogOverlayMessage: null,
+          catalogOverlayStep: null
+        }));
+
+        void refreshCatalog(false, {
+          showFirstPageLoading: false,
+          waitForSelectedPackageDetail: false
+        });
       }
 
     } catch (error) {
       appState.update((state) => ({
         ...state,
         catalogError: error instanceof Error ? error.message : "Failed to bootstrap backend data.",
+        isCatalogOverlayVisible: false,
+        catalogOverlayTitle: null,
+        catalogOverlayMessage: null,
+        catalogOverlayStep: null,
         desktopError:
           runtimeKind === "tauri"
             ? error instanceof Error

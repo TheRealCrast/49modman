@@ -194,7 +194,7 @@
                 title={`Install ${card.recommendedVersion}`}
                 on:click={() => onInstall(buildCardInstallRequest(card))}
               >
-                <Icon label={`Install ${card.recommendedVersion}`} name="download" />
+                <Icon label={`Install ${card.recommendedVersion}`} name="download" forceWhite={true} />
               </button>
             </div>
           </article>
@@ -230,6 +230,7 @@
   <PackageDetail
     focusedVersionId={focusedVersionId}
     focusedVersionToken={focusedVersionToken}
+    isLocked={isLoadingFirstPage}
     pkg={selectedPackage}
     visibleStatuses={visibleStatuses}
     onToggleStatus={onToggleStatus}

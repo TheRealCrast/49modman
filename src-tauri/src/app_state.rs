@@ -11,6 +11,9 @@ use crate::{
     db,
     error::InternalError,
     resources::bundled_reference::{load_bundled_reference_library, BundledReferenceLibrary},
+    services::dependency_service::{
+        new_dependency_catalog_index_cache, SharedDependencyCatalogIndexCache,
+    },
 };
 
 #[derive(Clone)]
@@ -21,6 +24,7 @@ pub struct AppState {
     pub cache_dir: PathBuf,
     pub cache_archives_dir: PathBuf,
     pub cache_tmp_dir: PathBuf,
+    pub dependency_index_cache: SharedDependencyCatalogIndexCache,
 }
 
 impl AppState {
@@ -59,6 +63,7 @@ impl AppState {
             cache_dir,
             cache_archives_dir,
             cache_tmp_dir,
+            dependency_index_cache: new_dependency_catalog_index_cache(),
         })
     }
 }

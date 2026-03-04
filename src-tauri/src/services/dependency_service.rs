@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use rusqlite::Connection;
@@ -91,14 +92,22 @@ struct IndexedVersionRecord {
     version_number: String,
     effective_status: EffectiveStatus,
     reference_note: Option<String>,
-    dependencies: Vec<String>,
+    dependencies_raw: String,
+    dependencies_parsed: OnceLock<Vec<String>>,
 }
 
 #[derive(Debug, Default)]
 struct DependencyCatalogIndex {
-    versions_by_id: HashMap<String, IndexedVersionRecord>,
+    versions_by_id: HashMap<String, Arc<IndexedVersionRecord>>,
     version_id_by_dependency_raw: HashMap<String, String>,
 }
+
+#[derive(Debug, Default)]
+pub struct DependencyCatalogIndexCache {
+    index: Option<Arc<DependencyCatalogIndex>>,
+}
+
+pub type SharedDependencyCatalogIndexCache = Arc<Mutex<DependencyCatalogIndexCache>>;
 
 #[derive(Debug, Default)]
 struct SummaryCollector {
@@ -123,9 +132,10 @@ struct ResolvedSummaryPackageAccumulator {
 
 pub fn get_version_dependencies(
     connection: &Connection,
+    cache: &SharedDependencyCatalogIndexCache,
     input: GetVersionDependenciesInput,
 ) -> Result<VersionDependenciesDto, InternalError> {
-    let index = load_dependency_catalog_index(connection)?;
+    let index = get_or_build_dependency_catalog_index(connection, cache)?;
     let root = index
         .versions_by_id
         .get(&input.version_id)
@@ -145,7 +155,7 @@ pub fn get_version_dependencies(
 
     let mut summary_collector = SummaryCollector::default();
     let mut summary_ancestry = HashSet::from([root_key.clone()]);
-    for raw in &root.dependencies {
+    for raw in root.dependencies() {
         collect_summary_dependency(
             &index,
             raw,
@@ -157,8 +167,8 @@ pub fn get_version_dependencies(
 
     let mut tree_ancestry = HashSet::from([root_key]);
     let mut expanded_versions = HashSet::new();
-    let mut tree_items = Vec::with_capacity(root.dependencies.len());
-    for raw in &root.dependencies {
+    let mut tree_items = Vec::with_capacity(root.dependencies().len());
+    for raw in root.dependencies() {
         tree_items.push(build_tree_dependency_node(
             &index,
             raw,
@@ -168,13 +178,63 @@ pub fn get_version_dependencies(
     }
 
     Ok(VersionDependenciesDto {
-        root_package_id: root.package_id,
-        root_package_name: root.package_name,
-        root_version_id: root.version_id,
-        root_version_number: root.version_number,
+        root_package_id: root.package_id.clone(),
+        root_package_name: root.package_name.clone(),
+        root_version_id: root.version_id.clone(),
+        root_version_number: root.version_number.clone(),
         summary: summary_collector.into_dto(),
         tree_items,
     })
+}
+
+pub fn warm_dependency_catalog_index(
+    connection: &Connection,
+    cache: &SharedDependencyCatalogIndexCache,
+) -> Result<(), InternalError> {
+    let _ = get_or_build_dependency_catalog_index(connection, cache)?;
+    Ok(())
+}
+
+pub fn invalidate_dependency_catalog_index(
+    cache: &SharedDependencyCatalogIndexCache,
+) -> Result<(), InternalError> {
+    let mut guard = cache
+        .lock()
+        .map_err(|_| InternalError::app("DB_INIT_FAILED", "Failed to lock dependency index cache"))?;
+    guard.index = None;
+    Ok(())
+}
+
+pub fn new_dependency_catalog_index_cache() -> SharedDependencyCatalogIndexCache {
+    Arc::new(Mutex::new(DependencyCatalogIndexCache::default()))
+}
+
+fn get_or_build_dependency_catalog_index(
+    connection: &Connection,
+    cache: &SharedDependencyCatalogIndexCache,
+) -> Result<Arc<DependencyCatalogIndex>, InternalError> {
+    if let Some(existing) = cache
+        .lock()
+        .map_err(|_| InternalError::app("DB_INIT_FAILED", "Failed to lock dependency index cache"))?
+        .index
+        .clone()
+    {
+        return Ok(existing);
+    }
+
+    let built = Arc::new(load_dependency_catalog_index(connection)?);
+
+    let mut guard = cache
+        .lock()
+        .map_err(|_| InternalError::app("DB_INIT_FAILED", "Failed to lock dependency index cache"))?;
+    if guard.index.is_none() {
+        guard.index = Some(built.clone());
+    }
+
+    Ok(guard
+        .index
+        .clone()
+        .unwrap_or(built))
 }
 
 fn load_dependency_catalog_index(
@@ -225,7 +285,8 @@ fn load_dependency_catalog_index(
                 row.get::<_, Option<String>>(7)?,
                 row.get::<_, Option<String>>(9)?,
             ),
-            dependencies: parse_dependency_entries(&row.get::<_, String>(4)?),
+            dependencies_raw: row.get(4)?,
+            dependencies_parsed: OnceLock::new(),
         })
     })?;
 
@@ -237,7 +298,8 @@ fn load_dependency_catalog_index(
             .version_id_by_dependency_raw
             .entry(dependency_raw)
             .or_insert_with(|| record.version_id.clone());
-        index.versions_by_id.insert(record.version_id.clone(), record);
+        let version_id = record.version_id.clone();
+        index.versions_by_id.insert(version_id, Arc::new(record));
     }
 
     Ok(index)
@@ -273,7 +335,7 @@ fn collect_summary_dependency(
     }
 
     ancestry.insert(key.clone());
-    for child_raw in &resolved.dependencies {
+    for child_raw in resolved.dependencies() {
         collect_summary_dependency(index, child_raw, depth + 1, ancestry, collector);
     }
     ancestry.remove(&key);
@@ -312,7 +374,7 @@ fn build_tree_dependency_node(
     ancestry.insert(key.clone());
 
     let children = resolved
-        .dependencies
+        .dependencies()
         .iter()
         .map(|child_raw| build_tree_dependency_node(index, child_raw, ancestry, expanded_versions))
         .collect();
@@ -330,6 +392,7 @@ fn resolve_dependency_raw<'a>(
         .version_id_by_dependency_raw
         .get(raw)
         .and_then(|version_id| index.versions_by_id.get(version_id))
+        .map(Arc::as_ref)
 }
 
 fn resolved_dependency_node(
@@ -362,6 +425,14 @@ fn unresolved_dependency_node(raw: String) -> DependencyNodeDto {
         reference_note: None,
         resolution: DependencyResolutionKind::Unresolved,
         children: Vec::new(),
+    }
+}
+
+impl IndexedVersionRecord {
+    fn dependencies(&self) -> &[String] {
+        self.dependencies_parsed
+            .get_or_init(|| parse_dependency_entries(&self.dependencies_raw))
+            .as_slice()
     }
 }
 
@@ -569,13 +640,15 @@ mod tests {
     use rusqlite::{params, Connection};
 
     use super::{
-        get_version_dependencies, DependencyResolutionKind, GetVersionDependenciesInput,
+        get_version_dependencies, new_dependency_catalog_index_cache, DependencyResolutionKind,
+        GetVersionDependenciesInput,
     };
     use crate::{db::migrate, domain::status::EffectiveStatus};
 
     #[test]
     fn resolves_summary_tree_cycles_and_repeated_nodes() {
         let connection = setup_connection();
+        let cache = new_dependency_catalog_index_cache();
         insert_package(&connection, "pack-a", "AuthorA-PackA");
         insert_package(&connection, "pack-b", "AuthorB-PackB");
         insert_package(&connection, "pack-c", "AuthorC-PackC");
@@ -624,6 +697,7 @@ mod tests {
 
         let dependencies = get_version_dependencies(
             &connection,
+            &cache,
             GetVersionDependenciesInput {
                 package_id: "pack-a".to_string(),
                 version_id: "pack-a-100".to_string(),
@@ -682,6 +756,7 @@ mod tests {
     #[test]
     fn collapses_different_versions_of_same_package_in_summary() {
         let connection = setup_connection();
+        let cache = new_dependency_catalog_index_cache();
         insert_package(&connection, "pack-a", "AuthorA-PackA");
         insert_package(&connection, "pack-b", "AuthorB-PackB");
         insert_package(&connection, "pack-c", "AuthorC-PackC");
@@ -729,6 +804,7 @@ mod tests {
 
         let dependencies = get_version_dependencies(
             &connection,
+            &cache,
             GetVersionDependenciesInput {
                 package_id: "pack-a".to_string(),
                 version_id: "pack-a-100".to_string(),
@@ -750,10 +826,12 @@ mod tests {
     #[test]
     fn returns_not_found_for_missing_root_version() {
         let connection = setup_connection();
+        let cache = new_dependency_catalog_index_cache();
         insert_package(&connection, "pack-a", "AuthorA-PackA");
 
         let error = get_version_dependencies(
             &connection,
+            &cache,
             GetVersionDependenciesInput {
                 package_id: "pack-a".to_string(),
                 version_id: "missing".to_string(),
