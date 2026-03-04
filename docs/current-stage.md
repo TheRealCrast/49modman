@@ -15,6 +15,10 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
 - The install/cache/modpack experiment was reverted
 - The profile-only milestone is implemented
 - The cache-only milestone is now implemented and working
+- Reset-all-data UX/backend flow has been hardened:
+  - schema-safe reset for legacy tables
+  - visible progress modal during reset
+  - automatic Browse recache/refresh after reset completes
 
 ## Next Milestone
 
@@ -62,8 +66,12 @@ Current locked behavior:
 Current working tree before the next commit includes:
 
 - `docs/current-stage.md`
-- `docs/dependency-view-v1-1.md`
+- `src-tauri/src/db/mod.rs`
+- `src/App.svelte`
+- `src/app.css`
 - `src/lib/store.ts`
+- `src/lib/types.ts`
+- `src/components/ResetProgressModal.svelte`
 
 ## Profile Milestone Notes
 
@@ -71,12 +79,23 @@ Current working tree before the next commit includes:
 - `Default` cannot be deleted
 - creating a profile makes it active immediately
 - deleting the active non-default profile falls back to `Default`
-- `reset_all_data` currently resets SQLite-backed user state only:
+- `reset_all_data` now resets both:
+  - cache files on disk
+  - SQLite-backed user state:
   - profiles
   - settings
   - reference overrides
   - cached catalog metadata rows
   - sync state
+- reset flow now tolerates legacy DB history by dropping obsolete tables if present before reset seeding:
+  - `profile_mod_dependencies`
+  - `profile_mods`
+  - `local_mods`
+- reset flow now shows a blocking progress modal in Settings after confirmation:
+  1. delete local app data
+  2. restore default profile/settings
+  3. refresh Browse data from Thunderstore
+  4. finalize and return to normal UI
 - install/download/cache/modpack behavior is still intentionally not implemented on this branch
 - existing Browse install actions are placeholder-only and do not modify profile state
 

@@ -8,6 +8,7 @@
   import NavRail from "./components/NavRail.svelte";
   import OverviewScreen from "./components/OverviewScreen.svelte";
   import ProfilesScreen from "./components/ProfilesScreen.svelte";
+  import ResetProgressModal from "./components/ResetProgressModal.svelte";
   import SettingsScreen from "./components/SettingsScreen.svelte";
   import { actions, appState, selectedProfile } from "./lib/store";
   import type { AppView, EffectiveStatus } from "./lib/types";
@@ -208,6 +209,10 @@
     onConfirm={actions.confirmModal}
     title={modalCopy.title}
   />
+{/if}
+
+{#if $appState.resetProgress}
+  <ResetProgressModal state={$appState.resetProgress} />
 {/if}
 
 {#if $appState.dependencyModal}

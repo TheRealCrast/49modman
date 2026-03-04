@@ -300,6 +300,14 @@ export interface WarningPrefsDto {
   broken: boolean;
 }
 
+export type ResetProgressStep = "deleting" | "restoring" | "browse" | "finalizing";
+
+export interface ResetProgressState {
+  title: string;
+  message: string;
+  step: ResetProgressStep;
+}
+
 export interface AppState {
   view: AppView;
   runtimeKind: RuntimeKind;
@@ -317,6 +325,7 @@ export interface AppState {
   activities: ActivityItem[];
   warningPrefs: WarningPrefsDto;
   modal: WarningModalState | null;
+  resetProgress: ResetProgressState | null;
   dependencyModal: DependencyModalState | null;
   focusedVersion: FocusedVersionState | null;
   referenceSearchDraft: string;

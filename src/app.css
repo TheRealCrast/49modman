@@ -1094,6 +1094,24 @@ img {
   box-shadow: 0 12px 36px rgba(17, 24, 39, 0.12);
 }
 
+.reset-progress-card {
+  width: min(460px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.reset-progress-card h2 {
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.reset-progress-card p {
+  margin: 0;
+  color: var(--text-soft);
+}
+
 .dependency-modal {
   width: min(760px, 100%);
   max-height: min(80vh, 860px);

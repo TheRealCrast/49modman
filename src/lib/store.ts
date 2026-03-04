@@ -32,7 +32,8 @@ import type {
   InstallRequest,
   ModPackage,
   ProfileDetailDto,
-  ReferenceState
+  ReferenceState,
+  ResetProgressStep
 } from "./types";
 
 const defaultVisibleStatuses: EffectiveStatus[] = ["verified", "green", "yellow", "orange"];
@@ -62,6 +63,7 @@ const initialState: AppState = {
     broken: true
   },
   modal: null,
+  resetProgress: null,
   dependencyModal: null,
   focusedVersion: null,
   referenceSearchDraft: "",
@@ -1349,9 +1351,35 @@ export const actions = {
     }
   },
   async resetAllData() {
+    const setResetProgress = (step: ResetProgressStep, title: string, message: string) => {
+      appState.update((state) => ({
+        ...state,
+        resetProgress: {
+          step,
+          title,
+          message
+        },
+        settingsError: null,
+        desktopError: null
+      }));
+    };
+
     try {
+      setResetProgress(
+        "deleting",
+        "Resetting app data",
+        "Deleting local profiles, settings, cached metadata, and archives."
+      );
+      await waitForNextPaint();
+
       await resetAllDataApi();
       stopDownloadPolling();
+
+      setResetProgress(
+        "restoring",
+        "Resetting app data",
+        "Restoring default profile and warning settings."
+      );
 
       appState.update((state) => ({
         ...state,
@@ -1393,9 +1421,45 @@ export const actions = {
 
       clearFocusedVersionTimer();
       await Promise.all([loadProfilesState(), loadSettingsState(), loadCacheSummary(), loadActiveDownloads()]);
+
+      setResetProgress(
+        "browse",
+        "Refreshing Browse data",
+        "Downloading fresh catalog metadata and rebuilding Browse results."
+      );
+
+      await refreshCatalog(true, {
+        blockingOverlay: false,
+        includeDependencyWarm: true,
+        showFirstPageLoading: false,
+        waitForSelectedPackageDetail: true
+      });
+
+      const refreshedState = get(appState);
+      if (refreshedState.catalogError) {
+        throw new Error(refreshedState.catalogError);
+      }
+
+      setResetProgress("finalizing", "Finalizing reset", "Applying final state updates.");
+      await waitForNextPaint();
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            resetProgress: null
+          },
+          withActivity(
+            "App data reset",
+            "Local data was reset and Browse was refreshed from Thunderstore.",
+            "positive"
+          )
+        )
+      );
     } catch (error) {
       appState.update((state) => ({
         ...state,
+        resetProgress: null,
         settingsError: error instanceof Error ? error.message : "Failed to reset app data.",
         desktopError:
           state.runtimeKind === "tauri"

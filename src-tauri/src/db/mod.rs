@@ -79,11 +79,13 @@ pub fn seed_defaults(connection: &Connection) -> Result<(), InternalError> {
 pub fn reset_user_data(connection: &Connection) -> Result<(), InternalError> {
     connection.execute_batch(
         "
+        -- Legacy tables from older profile schema; remove if present.
+        DROP TABLE IF EXISTS profile_mod_dependencies;
+        DROP TABLE IF EXISTS profile_mods;
+        DROP TABLE IF EXISTS local_mods;
+
         DELETE FROM download_jobs;
         DELETE FROM install_tasks;
-        DELETE FROM profile_mod_dependencies;
-        DELETE FROM profile_mods;
-        DELETE FROM local_mods;
         DELETE FROM cached_archives;
         DELETE FROM reference_overrides;
         DELETE FROM package_versions;
