@@ -1,20 +1,30 @@
 import { derived, get, writable } from "svelte/store";
 import { getCatalogSummary, getPackageDetail, searchPackages, syncCatalog } from "./api/catalog";
+import {
+  createProfile as createProfileApi,
+  deleteProfile as deleteProfileApi,
+  getActiveProfile as getActiveProfileApi,
+  listProfiles as listProfilesApi,
+  resetAllData as resetAllDataApi,
+  setActiveProfile as setActiveProfileApi,
+  updateProfile as updateProfileApi
+} from "./api/profiles";
 import { listReferenceRows, setReferenceState as setReferenceStateApi } from "./api/reference";
 import {
   getWarningPrefs,
   setWarningPreference as setWarningPreferenceApi
 } from "./api/settings";
-import { seedActivities, seedDownloads, seedPackages, seedProfiles } from "./mock-data";
+import { seedActivities, seedDownloads, seedPackages } from "./mock-data";
 import { getRuntimeKind } from "./runtime";
 import { resolveEffectiveStatus } from "./status";
 import type {
   ActivityItem,
   AppState,
   AppView,
+  CreateProfileInput,
   EffectiveStatus,
   ModPackage,
-  Profile,
+  ProfileDetailDto,
   ReferenceState
 } from "./types";
 
@@ -29,9 +39,10 @@ const initialState: AppState = {
   browseSearchSubmitted: "",
   visibleStatuses: defaultVisibleStatuses,
   selectedPackageId: "bepinex-pack",
-  selectedProfileId: "crew-v49",
+  selectedProfileId: "default",
   packages: seedPackages,
-  profiles: seedProfiles,
+  profiles: [],
+  activeProfile: undefined,
   downloads: seedDownloads,
   activities: seedActivities,
   warningPrefs: {
@@ -50,6 +61,7 @@ const initialState: AppState = {
   isLoadingCatalogFirstPage: false,
   isLoadingCatalogNextPage: false,
   isLoadingPackageDetail: false,
+  isLoadingProfiles: false,
   isLoadingReferences: false,
   isLoadingReferencesNextPage: false,
   lastCatalogRefreshLabel: "Cached mod list ready",
@@ -64,6 +76,7 @@ const initialState: AppState = {
   referencePageSize: defaultReferencePageSize,
   catalogError: null,
   referenceError: null,
+  profileError: null,
   settingsError: null,
   desktopError: null
 };
@@ -78,6 +91,14 @@ function appendActivity(state: AppState, item: ActivityItem): AppState {
   return {
     ...state,
     activities: [item, ...state.activities].slice(0, 6)
+  };
+}
+
+function mapActiveProfile(state: AppState, activeProfile: ProfileDetailDto | undefined): AppState {
+  return {
+    ...state,
+    activeProfile,
+    selectedProfileId: activeProfile?.id ?? "default"
   };
 }
 
@@ -163,6 +184,48 @@ async function loadSelectedPackageDetail(packageId = get(appState).selectedPacka
           : current.desktopError
     }));
   }
+}
+
+async function loadProfilesState() {
+  appState.update((current) => ({
+    ...current,
+    isLoadingProfiles: true,
+    profileError: null
+  }));
+
+  try {
+    const [profiles, activeProfile] = await Promise.all([listProfilesApi(), getActiveProfileApi()]);
+
+    appState.update((current) => ({
+      ...mapActiveProfile(current, activeProfile ?? undefined),
+      profiles,
+      isLoadingProfiles: false,
+      profileError: null,
+      desktopError: null
+    }));
+  } catch (error) {
+    appState.update((current) => ({
+      ...current,
+      isLoadingProfiles: false,
+      profileError: error instanceof Error ? error.message : "Failed to load profiles.",
+      desktopError:
+        current.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to load desktop profiles."
+          : current.desktopError
+    }));
+  }
+}
+
+async function loadSettingsState() {
+  const warningPrefs = await getWarningPrefs();
+  appState.update((state) => ({
+    ...state,
+    warningPrefs,
+    settingsError: null,
+    desktopError: null
+  }));
 }
 
 async function loadCatalogFirstPage(options: { showLoading?: boolean } = {}) {
@@ -428,7 +491,7 @@ async function refreshCatalog(force: boolean, options: { blockingOverlay?: boole
 }
 
 function installVersion(state: AppState, packageId: string, versionId: string): AppState {
-  const selectedProfile = state.profiles.find((profile) => profile.id === state.selectedProfileId);
+  const selectedProfile = state.activeProfile;
   const pkg = findPackage(state, packageId);
   const version = findPackage(state, packageId)?.versions.find((entry) => entry.id === versionId);
 
@@ -436,34 +499,14 @@ function installVersion(state: AppState, packageId: string, versionId: string): 
     return state;
   }
 
-  const alreadyInstalled = selectedProfile.installedMods.some(
-    (mod) => mod.packageId === packageId && mod.versionId === versionId
-  );
-
-  const nextProfiles = state.profiles.map((profile) =>
-    profile.id !== selectedProfile.id || alreadyInstalled
-      ? profile
-      : {
-          ...profile,
-          installedMods: [
-            {
-              packageId,
-              versionId,
-              enabled: true
-            },
-            ...profile.installedMods
-          ]
-        }
-  );
-
   const nextDownloads = [
     {
       id: `${packageId}-${versionId}-${Date.now()}`,
       packageName: pkg.fullName,
       versionNumber: version.versionNumber,
-      progressLabel: "Ready for cache-backed install once download services land",
+      progressLabel: "Install pipeline is not implemented yet in this milestone",
       status: "queued" as const,
-      speedLabel: "backend install pending",
+      speedLabel: "profile milestone placeholder",
       cacheHit: false
     },
     ...state.downloads
@@ -472,13 +515,12 @@ function installVersion(state: AppState, packageId: string, versionId: string): 
   return appendActivity(
     {
       ...state,
-      profiles: nextProfiles,
       downloads: nextDownloads,
       modal: null
     },
     withActivity(
-      `Queued ${pkg.fullName} ${version.versionNumber}`,
-      `${resolveEffectiveStatus(version)} version added to ${selectedProfile.name}. Metadata is now backend-backed; install execution still uses the frontend mock.`,
+      `Install not available yet`,
+      `${pkg.fullName} ${version.versionNumber} was selected for ${selectedProfile.name}, but installs are intentionally not implemented in the profile-only milestone.`,
       resolveEffectiveStatus(version) === "broken" || resolveEffectiveStatus(version) === "red"
         ? "warning"
         : "positive"
@@ -498,16 +540,19 @@ export const actions = {
     }));
 
     try {
-      const [warningPrefs, summary] = await Promise.all([getWarningPrefs(), getCatalogSummary()]);
+      const [summary] = await Promise.all([getCatalogSummary()]);
+
+      await loadProfilesState();
 
       appState.update((state) => ({
         ...state,
         runtimeKind,
-        warningPrefs,
         settingsError: null,
         lastCatalogRefreshLabel: summary.lastSyncLabel,
         desktopError: null
       }));
+
+      await loadSettingsState();
 
       if (!summary.hasCatalog) {
         appState.update((state) => ({
@@ -590,11 +635,29 @@ export const actions = {
   async loadMoreCatalog() {
     await loadCatalogNextPage();
   },
-  selectProfile(profileId: string) {
-    appState.update((state) => ({
-      ...state,
-      selectedProfileId: profileId
-    }));
+  async selectProfile(profileId: string) {
+    try {
+      const activeProfile = await setActiveProfileApi(profileId);
+      const profiles = await listProfilesApi();
+
+      appState.update((state) => ({
+        ...mapActiveProfile(state, activeProfile ?? undefined),
+        profiles,
+        profileError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to switch profiles.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to switch desktop profiles."
+            : state.desktopError
+      }));
+    }
   },
   requestInstall(packageId: string, versionId: string) {
     appState.update((state) => {
@@ -708,88 +771,151 @@ export const actions = {
   async refreshCatalog() {
     await refreshCatalog(true, { blockingOverlay: true });
   },
-  toggleInstalledMod(packageId: string, versionId: string) {
-    appState.update((state) => {
-      const selectedProfile = state.profiles.find((profile) => profile.id === state.selectedProfileId);
-
-      if (!selectedProfile) {
-        return state;
-      }
-
-      const nextProfiles = state.profiles.map((profile) =>
-        profile.id !== selectedProfile.id
-          ? profile
-          : {
-              ...profile,
-              installedMods: profile.installedMods.map((mod) =>
-                mod.packageId === packageId && mod.versionId === versionId
-                  ? { ...mod, enabled: !mod.enabled }
-                  : mod
-              )
-            }
-      );
-
-      const pkg = findPackage(state, packageId);
-      const version = findPackage(state, packageId)?.versions.find((entry) => entry.id === versionId);
-      const toggledMod = selectedProfile.installedMods.find(
-        (mod) => mod.packageId === packageId && mod.versionId === versionId
-      );
-
-      if (!pkg || !version || !toggledMod) {
-        return state;
-      }
-
-      return appendActivity(
-        {
-          ...state,
-          profiles: nextProfiles
-        },
-        withActivity(
-          toggledMod.enabled ? "Mod disabled" : "Mod enabled",
-          `${pkg.fullName} ${version.versionNumber} was ${toggledMod.enabled ? "disabled" : "enabled"} in ${selectedProfile.name}.`,
-          "neutral"
-        )
-      );
-    });
+  toggleInstalledMod() {
+    return;
   },
-  uninstallInstalledMod(packageId: string, versionId: string) {
-    appState.update((state) => {
-      const selectedProfile = state.profiles.find((profile) => profile.id === state.selectedProfileId);
+  uninstallInstalledMod() {
+    return;
+  },
+  async createProfile(input: CreateProfileInput) {
+    try {
+      const activeProfile = await createProfileApi(input);
+      const profiles = await listProfilesApi();
 
-      if (!selectedProfile) {
-        return state;
-      }
-
-      const nextProfiles = state.profiles.map((profile) =>
-        profile.id !== selectedProfile.id
-          ? profile
-          : {
-              ...profile,
-              installedMods: profile.installedMods.filter(
-                (mod) => !(mod.packageId === packageId && mod.versionId === versionId)
-              )
-            }
-      );
-
-      const pkg = findPackage(state, packageId);
-      const version = findPackage(state, packageId)?.versions.find((entry) => entry.id === versionId);
-
-      if (!pkg || !version) {
-        return state;
-      }
-
-      return appendActivity(
-        {
-          ...state,
-          profiles: nextProfiles
-        },
-        withActivity(
-          "Mod uninstalled",
-          `${pkg.fullName} ${version.versionNumber} was removed from ${selectedProfile.name}.`,
-          "warning"
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...mapActiveProfile(state, activeProfile),
+            profiles,
+            profileError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Profile created",
+            `${activeProfile.name} is now the active profile.`,
+            "positive"
+          )
         )
       );
-    });
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to create the profile.",
+        desktopError: state.desktopError
+      }));
+    }
+  },
+  async updateProfile(input: { profileId: string; name: string; notes?: string; gamePath?: string; launchModeDefault?: "steam" | "direct" }) {
+    try {
+      const activeProfile = await updateProfileApi(input);
+      const profiles = await listProfilesApi();
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...mapActiveProfile(state, activeProfile),
+            profiles,
+            profileError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Profile updated",
+            `${activeProfile.name} was updated.`,
+            "neutral"
+          )
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to update the profile.",
+        desktopError: state.desktopError
+      }));
+    }
+  },
+  async deleteSelectedProfile() {
+    const selectedProfile = get(appState).activeProfile;
+
+    if (!selectedProfile) {
+      return;
+    }
+
+    try {
+      await deleteProfileApi(selectedProfile.id);
+      const [profiles, activeProfile] = await Promise.all([listProfilesApi(), getActiveProfileApi()]);
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...mapActiveProfile(state, activeProfile ?? undefined),
+            profiles,
+            profileError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Profile deleted",
+            `${selectedProfile.name} was removed.`,
+            "warning"
+          )
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to delete the profile.",
+        desktopError: state.desktopError
+      }));
+    }
+  },
+  async resetAllData() {
+    try {
+      await resetAllDataApi();
+
+      appState.update((state) => ({
+        ...state,
+        profiles: [],
+        activeProfile: undefined,
+        selectedProfileId: "default",
+        catalogCards: [],
+        catalogNextCursor: null,
+        catalogHasMore: false,
+        selectedPackageDetail: undefined,
+        lastCatalogRefreshLabel: "Catalog not synced yet",
+        catalogError: null,
+        referenceError: null,
+        profileError: null,
+        settingsError: null,
+        desktopError: null,
+        downloads: seedDownloads,
+        activities: seedActivities,
+        isCatalogOverlayVisible: false,
+        catalogOverlayTitle: null,
+        catalogOverlayMessage: null,
+        catalogOverlayStep: null,
+        isRefreshingCatalog: false,
+        isLoadingCatalogFirstPage: false,
+        isLoadingCatalogNextPage: false,
+        isLoadingPackageDetail: false,
+        isLoadingReferences: false,
+        isLoadingReferencesNextPage: false,
+        referenceRowsData: [],
+        referenceNextCursor: null,
+        referenceHasMore: false
+      }));
+
+      await Promise.all([loadProfilesState(), loadSettingsState()]);
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        settingsError: error instanceof Error ? error.message : "Failed to reset app data.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to reset desktop app data."
+            : state.desktopError
+      }));
+    }
   },
   async setReferenceState(packageId: string, versionId: string, referenceState: ReferenceState) {
     try {
@@ -838,6 +964,4 @@ export const actions = {
   }
 };
 
-export const selectedProfile = derived(appState, ($appState) =>
-  $appState.profiles.find((profile) => profile.id === $appState.selectedProfileId)
-);
+export const selectedProfile = derived(appState, ($appState) => $appState.activeProfile);

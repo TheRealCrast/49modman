@@ -9,6 +9,8 @@ import {
 } from "../status";
 import type {
   CatalogSummaryDto,
+  CreateProfileInput,
+  DeleteProfileResult,
   EffectiveStatus,
   ListReferenceRowsInput,
   ListReferenceRowsResult,
@@ -16,6 +18,8 @@ import type {
   ModVersion,
   PackageCardDto,
   PackageDetailDto,
+  ProfileDetailDto,
+  ProfileSummaryDto,
   ReferenceRow,
   ReferenceState,
   SearchPackagesInput,
@@ -23,6 +27,7 @@ import type {
   SetReferenceStateInput,
   SyncCatalogInput,
   SyncCatalogResult,
+  UpdateProfileInput,
   WarningPrefsDto
 } from "../types";
 
@@ -37,6 +42,16 @@ type MockDb = {
   warningPrefs: WarningPrefsDto;
   lastSyncAt: string | null;
   overrides: StoredOverride[];
+  profiles: Array<{
+    id: string;
+    name: string;
+    notes: string;
+    gamePath: string;
+    lastPlayed: string | null;
+    launchModeDefault: "steam" | "direct";
+    isBuiltinDefault: boolean;
+  }>;
+  activeProfileId: string;
 };
 
 const STORAGE_KEY = "49modman.mock-backend.v1";
@@ -47,7 +62,19 @@ const defaultDb: MockDb = {
     broken: true
   },
   lastSyncAt: null,
-  overrides: []
+  overrides: [],
+  profiles: [
+    {
+      id: "default",
+      name: "Default",
+      notes: "Built-in fallback profile.",
+      gamePath: "",
+      lastPlayed: null,
+      launchModeDefault: "steam",
+      isBuiltinDefault: true
+    }
+  ],
+  activeProfileId: "default"
 };
 
 function loadDb(): MockDb {
@@ -77,6 +104,17 @@ function saveDb(db: MockDb) {
   }
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+}
+
+function normalizeDb(db: MockDb): MockDb {
+  const profiles = db.profiles.length > 0 ? db.profiles : clone(defaultDb.profiles);
+  const hasActive = profiles.some((profile) => profile.id === db.activeProfileId);
+
+  return {
+    ...db,
+    profiles,
+    activeProfileId: hasActive ? db.activeProfileId : "default"
+  };
 }
 
 function clone<T>(value: T): T {
@@ -119,6 +157,38 @@ function applyOverrides(packages: ModPackage[]): ModPackage[] {
 
 function currentPackages(): ModPackage[] {
   return applyOverrides(seedPackages);
+}
+
+function currentProfiles(): ProfileSummaryDto[] {
+  const db = normalizeDb(loadDb());
+
+  return clone(db.profiles)
+    .sort((left, right) => {
+      if (left.isBuiltinDefault !== right.isBuiltinDefault) {
+        return left.isBuiltinDefault ? -1 : 1;
+      }
+
+      return left.name.localeCompare(right.name);
+    })
+    .map((profile) => ({
+      ...profile,
+      installedCount: 0,
+      enabledCount: 0
+    }));
+}
+
+function findActiveProfile(): ProfileDetailDto | null {
+  const db = normalizeDb(loadDb());
+  const profile = db.profiles.find((entry) => entry.id === db.activeProfileId);
+
+  if (!profile) {
+    return null;
+  }
+
+  return {
+    ...clone(profile),
+    installedMods: []
+  };
 }
 
 function nowIso(): string {
@@ -277,6 +347,145 @@ export async function searchPackagesMock(input: SearchPackagesInput): Promise<Se
 
 export async function getPackageDetailMock(packageId: string): Promise<PackageDetailDto | null> {
   return currentPackages().find((pkg) => pkg.id === packageId) ?? null;
+}
+
+export async function listProfilesMock(): Promise<ProfileSummaryDto[]> {
+  const db = normalizeDb(loadDb());
+  saveDb(db);
+  return currentProfiles();
+}
+
+export async function getActiveProfileMock(): Promise<ProfileDetailDto | null> {
+  const db = normalizeDb(loadDb());
+  saveDb(db);
+  return findActiveProfile();
+}
+
+export async function setActiveProfileMock(profileId: string): Promise<ProfileDetailDto | null> {
+  const db = normalizeDb(loadDb());
+
+  if (!db.profiles.some((profile) => profile.id === profileId)) {
+    throw new Error(`Profile ${profileId} does not exist.`);
+  }
+
+  db.activeProfileId = profileId;
+  saveDb(db);
+  return findActiveProfile();
+}
+
+export async function createProfileMock(input: CreateProfileInput): Promise<ProfileDetailDto> {
+  const db = normalizeDb(loadDb());
+  const name = input.name.trim();
+
+  if (!name) {
+    throw new Error("Profile name cannot be empty.");
+  }
+
+  if (db.profiles.some((profile) => profile.name.toLowerCase() === name.toLowerCase())) {
+    throw new Error("A profile with that name already exists.");
+  }
+
+  const profile = {
+    id: `profile-${Date.now()}`,
+    name,
+    notes: input.notes ?? "",
+    gamePath: input.gamePath ?? "",
+    lastPlayed: null,
+    launchModeDefault: input.launchModeDefault ?? "steam",
+    isBuiltinDefault: false
+  } as const;
+
+  db.profiles = [profile, ...db.profiles];
+  db.activeProfileId = profile.id;
+  saveDb(db);
+
+  return {
+    ...profile,
+    installedMods: []
+  };
+}
+
+export async function updateProfileMock(input: UpdateProfileInput): Promise<ProfileDetailDto> {
+  const db = normalizeDb(loadDb());
+  const profile = db.profiles.find((entry) => entry.id === input.profileId);
+
+  if (!profile) {
+    throw new Error("That profile does not exist.");
+  }
+
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Profile name cannot be empty.");
+  }
+
+  if (
+    db.profiles.some(
+      (entry) => entry.id !== input.profileId && entry.name.toLowerCase() === name.toLowerCase()
+    )
+  ) {
+    throw new Error("A profile with that name already exists.");
+  }
+
+  if (profile.isBuiltinDefault && name !== "Default") {
+    throw new Error("The built-in Default profile name cannot be changed.");
+  }
+
+  Object.assign(profile, {
+    name,
+    notes: input.notes ?? "",
+    gamePath: input.gamePath ?? "",
+    launchModeDefault: input.launchModeDefault ?? "steam"
+  });
+
+  saveDb(db);
+
+  return {
+    ...clone(profile),
+    installedMods: []
+  };
+}
+
+export async function deleteProfileMock(profileId: string): Promise<DeleteProfileResult> {
+  const db = normalizeDb(loadDb());
+  const profile = db.profiles.find((entry) => entry.id === profileId);
+
+  if (!profile) {
+    throw new Error("That profile does not exist.");
+  }
+
+  if (profile.isBuiltinDefault) {
+    throw new Error("The built-in Default profile cannot be deleted.");
+  }
+
+  db.profiles = db.profiles.filter((entry) => entry.id !== profileId);
+
+  if (db.activeProfileId === profileId) {
+    db.activeProfileId = "default";
+  }
+
+  saveDb(db);
+
+  return {
+    deletedId: profileId,
+    nextActiveProfileId: db.activeProfileId
+  };
+}
+
+export async function getProfileDetailMock(profileId: string): Promise<ProfileDetailDto | null> {
+  const db = normalizeDb(loadDb());
+  saveDb(db);
+  const profile = db.profiles.find((entry) => entry.id === profileId);
+
+  return profile
+    ? {
+        ...clone(profile),
+        installedMods: []
+      }
+    : null;
+}
+
+export async function resetAllDataMock(): Promise<void> {
+  saveDb(clone(defaultDb));
 }
 
 export async function listReferenceRowsMock(input: ListReferenceRowsInput): Promise<ListReferenceRowsResult> {

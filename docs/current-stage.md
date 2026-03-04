@@ -12,23 +12,100 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
 - Current recorded baseline commit: `3826f97` (`Initial frontend and backend scaffold`)
 - The app now runs as a real Tauri desktop window instead of only as a browser/Vite page
 - The current frontend is still visually close to the browser prototype, but it is now being exercised through the desktop app runtime
+- The install/cache/modpack experiment was reverted
+- The profile-only milestone is now implemented and working
+
+## Next Milestone
+
+Implemented from:
+
+- [profile-system-m1.md](./profile-system-m1.md)
+
+Current state:
+
+- real backend-backed profiles in SQLite
+- built-in undeletable `Default` profile
+- active profile persisted in `settings["profiles.active_id"]`
+- Profiles tab supports:
+  - real create
+  - real delete
+  - real active-profile switching
+- Overview now uses the real active profile and shows empty installed-mod state
+- Settings now includes:
+  - `Warn options`
+  - `Cache` is not implemented yet
+  - `Danger zone`
+  - `Reset all data`
+
+Next planned milestone:
+
+- [cache-system-m1.md](./cache-system-m1.md)
+
+Locked next-step focus:
+
+- real global Thunderstore archive cache
+- cache-aware `Install` / `Install version`
+- active-only Downloads tab backed by real task rows
+- Settings support to:
+  - open cache folder
+  - clear cache
+- `Reset all data` upgraded to clear cache files too
+- no profile/modpack install state changes yet
 
 ## Current Uncommitted Work
 
 At the time these notes were written, the working tree was dirty with:
 
-- `package-lock.json`
-- `package.json`
-- `src-tauri/Cargo.toml`
-- `src-tauri/tauri.conf.json`
+- `docs/current-stage.md`
+- `docs/profile-system-m1.md`
 - `src/App.svelte`
 - `src/app.css`
+- `src/components/OverviewScreen.svelte`
+- `src/components/ProfilesScreen.svelte`
+- `src/components/SettingsScreen.svelte`
 - `src/lib/api/client.ts`
+- `src/lib/api/mock-backend.ts`
+- `src/lib/api/profiles.ts`
+- `src/lib/mock-data.ts`
 - `src/lib/store.ts`
 - `src/lib/types.ts`
-- `vite.config.ts`
-- `scripts/`
-- `src/lib/runtime.ts`
+- `src-tauri/migrations/0003_profiles.sql`
+- `src-tauri/src/commands/mod.rs`
+- `src-tauri/src/commands/profiles.rs`
+- `src-tauri/src/db/mod.rs`
+- `src-tauri/src/main.rs`
+- `src-tauri/src/services/mod.rs`
+- `src-tauri/src/services/profile_service.rs`
+
+## Profile Milestone Notes
+
+- `Default` uses fixed id `default`
+- `Default` cannot be deleted
+- creating a profile makes it active immediately
+- deleting the active non-default profile falls back to `Default`
+- `reset_all_data` currently resets SQLite-backed user state only:
+  - profiles
+  - settings
+  - reference overrides
+  - cached catalog metadata rows
+  - sync state
+- install/download/cache/modpack behavior is still intentionally not implemented on this branch
+- existing Browse install actions are placeholder-only and do not modify profile state
+
+## Cache Milestone Notes
+
+- this will be the first real install-adjacent filesystem work since the revert
+- install scope is `cache only`
+- Downloads behavior is `active only`
+- Browse labels stay as `Install` / `Install version`
+- the current local SQLite DB still contains legacy tables from the reverted experiment:
+  - `cached_archives`
+  - `install_tasks`
+  - `download_jobs`
+  - `profile_mods`
+  - `profile_mod_dependencies`
+  - `local_mods`
+- the cache milestone must stay compatible with that DB shape rather than assuming a clean slate
 
 ## Desktop Runtime Status
 

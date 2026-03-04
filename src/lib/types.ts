@@ -92,14 +92,54 @@ export interface InstalledMod {
   enabled: boolean;
 }
 
-export interface Profile {
+export interface ProfileInstalledModDto {
+  id?: string;
+  packageId?: string;
+  versionId?: string;
+  enabled?: boolean;
+}
+
+export interface ProfileSummaryDto {
   id: string;
   name: string;
-  gamePath: string;
-  lastPlayed: string;
-  launchModeDefault: LaunchMode;
   notes: string;
-  installedMods: InstalledMod[];
+  gamePath: string;
+  lastPlayed: string | null;
+  launchModeDefault: LaunchMode;
+  installedCount: number;
+  enabledCount: number;
+  isBuiltinDefault: boolean;
+}
+
+export interface ProfileDetailDto {
+  id: string;
+  name: string;
+  notes: string;
+  gamePath: string;
+  lastPlayed: string | null;
+  launchModeDefault: LaunchMode;
+  isBuiltinDefault: boolean;
+  installedMods: ProfileInstalledModDto[];
+}
+
+export interface CreateProfileInput {
+  name: string;
+  notes?: string;
+  gamePath?: string;
+  launchModeDefault?: LaunchMode;
+}
+
+export interface UpdateProfileInput {
+  profileId: string;
+  name: string;
+  notes?: string;
+  gamePath?: string;
+  launchModeDefault?: LaunchMode;
+}
+
+export interface DeleteProfileResult {
+  deletedId: string;
+  nextActiveProfileId: string | null;
 }
 
 export interface DownloadItem {
@@ -152,7 +192,8 @@ export interface AppState {
   selectedPackageId: string;
   selectedProfileId: string;
   packages: ModPackage[];
-  profiles: Profile[];
+  profiles: ProfileSummaryDto[];
+  activeProfile?: ProfileDetailDto;
   downloads: DownloadItem[];
   activities: ActivityItem[];
   warningPrefs: WarningPrefsDto;
@@ -168,6 +209,7 @@ export interface AppState {
   isLoadingCatalogFirstPage: boolean;
   isLoadingCatalogNextPage: boolean;
   isLoadingPackageDetail: boolean;
+  isLoadingProfiles: boolean;
   isLoadingReferences: boolean;
   isLoadingReferencesNextPage: boolean;
   lastCatalogRefreshLabel: string;
@@ -182,6 +224,7 @@ export interface AppState {
   referencePageSize: number;
   catalogError: string | null;
   referenceError: string | null;
+  profileError: string | null;
   settingsError: string | null;
   desktopError: string | null;
 }

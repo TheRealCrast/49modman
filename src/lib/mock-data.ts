@@ -1,4 +1,4 @@
-import type { ActivityItem, DownloadItem, ModPackage, Profile } from "./types";
+import type { ActivityItem, DownloadItem, ModPackage } from "./types";
 
 export const seedPackages: ModPackage[] = [
   {
@@ -164,40 +164,6 @@ export const seedPackages: ModPackage[] = [
         baseZone: "green"
       }
     ]
-  }
-];
-
-export const seedProfiles: Profile[] = [
-  {
-    id: "crew-v49",
-    name: "Crew Night v49",
-    gamePath: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Lethal Company",
-    lastPlayed: "2026-03-01",
-    launchModeDefault: "steam",
-    notes: "Primary profile for friend group sessions.",
-    installedMods: [
-      { packageId: "bepinex-pack", versionId: "bepinex-5417", enabled: true },
-      { packageId: "more-company", versionId: "more-176", enabled: true },
-      { packageId: "mimics", versionId: "mimics-220", enabled: false }
-    ]
-  },
-  {
-    id: "vanilla-baseline",
-    name: "Vanilla Baseline",
-    gamePath: "/home/crast/.steam/steam/steamapps/common/Lethal Company",
-    lastPlayed: "2026-02-25",
-    launchModeDefault: "direct",
-    notes: "Clean profile used to compare launch performance and crash reports.",
-    installedMods: []
-  },
-  {
-    id: "beta-lab",
-    name: "Beta Lab",
-    gamePath: "/home/crast/.steam/steam/steamapps/common/Lethal Company",
-    lastPlayed: "2026-02-27",
-    launchModeDefault: "direct",
-    notes: "Used for yellow-zone experiments and broken-version checks.",
-    installedMods: [{ packageId: "lc-api", versionId: "lcapi-345", enabled: true }]
   }
 ];
 

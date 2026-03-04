@@ -72,7 +72,7 @@
           <span>Profile</span>
           <select
             value={$appState.selectedProfileId}
-            on:change={(event) => actions.selectProfile((event.currentTarget as HTMLSelectElement).value)}
+            on:change={(event) => void actions.selectProfile((event.currentTarget as HTMLSelectElement).value)}
           >
             {#each $appState.profiles as profile}
               <option value={profile.id}>{profile.name}</option>
@@ -106,10 +106,7 @@
     {#if $appState.view === "overview"}
       <OverviewScreen
         activeProfile={$selectedProfile}
-        packages={$appState.packages}
         lastCatalogRefreshLabel={$appState.lastCatalogRefreshLabel}
-        onToggleMod={actions.toggleInstalledMod}
-        onUninstallMod={actions.uninstallInstalledMod}
       />
     {:else if $appState.view === "browse"}
       <BrowseScreen
@@ -134,7 +131,11 @@
       />
     {:else if $appState.view === "profiles"}
       <ProfilesScreen
+        onCreateProfile={actions.createProfile}
+        onDeleteSelectedProfile={actions.deleteSelectedProfile}
         onSelectProfile={actions.selectProfile}
+        onUpdateProfile={actions.updateProfile}
+        profileError={$appState.profileError}
         profiles={$appState.profiles}
         selectedProfile={$selectedProfile}
       />
@@ -142,7 +143,9 @@
       <DownloadsScreen downloads={$appState.downloads} />
     {:else if $appState.view === "settings"}
       <SettingsScreen
+        onResetAllData={actions.resetAllData}
         onWarningPrefChange={actions.setWarningPreference}
+        settingsError={$appState.settingsError}
         warningPrefs={$appState.warningPrefs}
       />
     {/if}
