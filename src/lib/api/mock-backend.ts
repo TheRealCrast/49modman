@@ -1,5 +1,6 @@
 import { seedPackages } from "../mock-data";
 import {
+  compareVersionNumbers,
   currentReferenceNote,
   currentReferenceSource,
   currentReferenceState,
@@ -10,12 +11,14 @@ import {
 import type {
   CacheSummaryDto,
   CatalogSummaryDto,
+  DependencySummaryItemDto,
   CreateProfileInput,
   DependencyNodeDto,
   DeleteProfileResult,
   DownloadJobDto,
   EffectiveStatus,
   GetVersionDependenciesInput,
+  DependencyResolutionKind,
   InstallTaskDto,
   ListReferenceRowsInput,
   ListReferenceRowsResult,
@@ -35,7 +38,8 @@ import type {
   SyncCatalogInput,
   SyncCatalogResult,
   UpdateProfileInput,
-  VersionDependencyTreeDto,
+  UnresolvedDependencySummaryItemDto,
+  VersionDependenciesDto,
   WarningPrefsDto
 } from "../types";
 
@@ -189,66 +193,218 @@ function findPackageVersion(packageId: string, versionId: string) {
   return pkg && version ? { pkg, version } : null;
 }
 
-function findDependencyTarget(raw: string) {
-  const normalized = raw.trim();
+type IndexedVersionRecord = {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  effectiveStatus: EffectiveStatus;
+  referenceNote?: string;
+  dependencies: string[];
+};
 
-  if (!normalized) {
-    return null;
-  }
+type DependencyCatalogIndex = {
+  versionsById: Map<string, IndexedVersionRecord>;
+  versionIdByDependencyRaw: Map<string, string>;
+};
 
-  for (const pkg of currentPackages()) {
+type ResolvedSummaryPackageAccumulator = {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  effectiveStatus: EffectiveStatus;
+  referenceNote?: string;
+  minDepth: number;
+  collapsedVersionNumbers: Set<string>;
+};
+
+function buildDependencyCatalogIndex(packages: ModPackage[]): DependencyCatalogIndex {
+  const versionsById = new Map<string, IndexedVersionRecord>();
+  const versionIdByDependencyRaw = new Map<string, string>();
+
+  for (const pkg of packages) {
     for (const version of pkg.versions) {
-      if (`${pkg.fullName}-${version.versionNumber}` === normalized) {
-        return { pkg, version };
+      const record: IndexedVersionRecord = {
+        packageId: pkg.id,
+        packageName: pkg.fullName,
+        versionId: version.id,
+        versionNumber: version.versionNumber,
+        effectiveStatus: version.effectiveStatus ?? resolveEffectiveStatus(version),
+        referenceNote: currentReferenceNote(version),
+        dependencies: [...(version.dependencies ?? [])]
+      };
+      const dependencyRaw = `${pkg.fullName}-${version.versionNumber}`;
+
+      versionsById.set(version.id, record);
+      if (!versionIdByDependencyRaw.has(dependencyRaw)) {
+        versionIdByDependencyRaw.set(dependencyRaw, version.id);
       }
     }
   }
 
-  return null;
+  return {
+    versionsById,
+    versionIdByDependencyRaw
+  };
 }
 
-function buildDependencyNode(raw: string, ancestry: Set<string>): DependencyNodeDto {
-  const target = findDependencyTarget(raw);
+function resolveIndexedDependency(
+  index: DependencyCatalogIndex,
+  raw: string
+): IndexedVersionRecord | undefined {
+  const versionId = index.versionIdByDependencyRaw.get(raw);
+  return versionId ? index.versionsById.get(versionId) : undefined;
+}
 
-  if (!target) {
-    return {
-      raw,
-      resolution: "unresolved",
-      children: []
-    };
-  }
-
-  const versionKey = `${target.pkg.id}:${target.version.id}`;
-  if (ancestry.has(versionKey)) {
-    return {
-      raw,
-      packageId: target.pkg.id,
-      packageName: target.pkg.fullName,
-      versionId: target.version.id,
-      versionNumber: target.version.versionNumber,
-      effectiveStatus: resolveEffectiveStatus(target.version),
-      referenceNote: currentReferenceNote(target.version),
-      resolution: "cycle",
-      children: []
-    };
-  }
-
-  const nextAncestry = new Set(ancestry);
-  nextAncestry.add(versionKey);
-
+function buildResolvedDependencyNode(
+  raw: string,
+  record: IndexedVersionRecord,
+  resolution: DependencyResolutionKind,
+  children: DependencyNodeDto[]
+): DependencyNodeDto {
   return {
     raw,
-    packageId: target.pkg.id,
-    packageName: target.pkg.fullName,
-    versionId: target.version.id,
-    versionNumber: target.version.versionNumber,
-    effectiveStatus: resolveEffectiveStatus(target.version),
-    referenceNote: currentReferenceNote(target.version),
-    resolution: "resolved",
-    children: (target.version.dependencies ?? []).map((dependency) =>
-      buildDependencyNode(dependency, nextAncestry)
-    )
+    packageId: record.packageId,
+    packageName: record.packageName,
+    versionId: record.versionId,
+    versionNumber: record.versionNumber,
+    effectiveStatus: record.effectiveStatus,
+    referenceNote: record.referenceNote,
+    resolution,
+    children
   };
+}
+
+function buildUnresolvedDependencyNode(raw: string): DependencyNodeDto {
+  return {
+    raw,
+    resolution: "unresolved",
+    children: []
+  };
+}
+
+function collectSummaryDependency(
+  index: DependencyCatalogIndex,
+  raw: string,
+  depth: number,
+  ancestry: Set<string>,
+  visitedResolved: Set<string>,
+  resolvedByPackage: Map<string, ResolvedSummaryPackageAccumulator>,
+  unresolvedByRaw: Map<string, UnresolvedDependencySummaryItemDto>,
+  resolvedOrder: string[],
+  unresolvedOrder: string[]
+) {
+  const normalized = raw.trim();
+  if (!normalized) {
+    if (!unresolvedByRaw.has(raw)) {
+      unresolvedOrder.push(raw);
+      unresolvedByRaw.set(raw, { raw, minDepth: depth });
+    } else {
+      unresolvedByRaw.get(raw)!.minDepth = Math.min(unresolvedByRaw.get(raw)!.minDepth, depth);
+    }
+    return;
+  }
+
+  const resolved = resolveIndexedDependency(index, normalized);
+  if (!resolved) {
+    if (!unresolvedByRaw.has(raw)) {
+      unresolvedOrder.push(raw);
+      unresolvedByRaw.set(raw, { raw, minDepth: depth });
+    } else {
+      unresolvedByRaw.get(raw)!.minDepth = Math.min(unresolvedByRaw.get(raw)!.minDepth, depth);
+    }
+    return;
+  }
+
+  const versionKey = `${resolved.packageId}:${resolved.versionId}`;
+  if (ancestry.has(versionKey)) {
+    return;
+  }
+
+  const existing = resolvedByPackage.get(resolved.packageId);
+  if (!existing) {
+    resolvedOrder.push(resolved.packageId);
+    resolvedByPackage.set(resolved.packageId, {
+      packageId: resolved.packageId,
+      packageName: resolved.packageName,
+      versionId: resolved.versionId,
+      versionNumber: resolved.versionNumber,
+      effectiveStatus: resolved.effectiveStatus,
+      referenceNote: resolved.referenceNote,
+      minDepth: depth,
+      collapsedVersionNumbers: new Set<string>()
+    });
+  } else {
+    existing.minDepth = Math.min(existing.minDepth, depth);
+    const versionDelta = compareVersionNumbers(resolved.versionNumber, existing.versionNumber);
+    if (versionDelta > 0) {
+      existing.collapsedVersionNumbers.add(existing.versionNumber);
+      existing.versionId = resolved.versionId;
+      existing.versionNumber = resolved.versionNumber;
+      existing.effectiveStatus = resolved.effectiveStatus;
+      existing.referenceNote = resolved.referenceNote;
+      existing.collapsedVersionNumbers.delete(existing.versionNumber);
+    } else if (versionDelta < 0) {
+      existing.collapsedVersionNumbers.add(resolved.versionNumber);
+    }
+  }
+
+  if (visitedResolved.has(versionKey)) {
+    return;
+  }
+
+  visitedResolved.add(versionKey);
+  ancestry.add(versionKey);
+  for (const dependency of resolved.dependencies) {
+    collectSummaryDependency(
+      index,
+      dependency,
+      depth + 1,
+      ancestry,
+      visitedResolved,
+      resolvedByPackage,
+      unresolvedByRaw,
+      resolvedOrder,
+      unresolvedOrder
+    );
+  }
+  ancestry.delete(versionKey);
+}
+
+function buildDependencyTreeNode(
+  index: DependencyCatalogIndex,
+  raw: string,
+  ancestry: Set<string>,
+  expandedVersions: Set<string>
+): DependencyNodeDto {
+  const normalized = raw.trim();
+  if (!normalized) {
+    return buildUnresolvedDependencyNode(raw);
+  }
+
+  const resolved = resolveIndexedDependency(index, normalized);
+  if (!resolved) {
+    return buildUnresolvedDependencyNode(raw);
+  }
+
+  const versionKey = `${resolved.packageId}:${resolved.versionId}`;
+  if (ancestry.has(versionKey)) {
+    return buildResolvedDependencyNode(raw, resolved, "cycle", []);
+  }
+
+  if (expandedVersions.has(versionKey)) {
+    return buildResolvedDependencyNode(raw, resolved, "repeated", []);
+  }
+
+  expandedVersions.add(versionKey);
+  ancestry.add(versionKey);
+  const children = resolved.dependencies.map((dependency) =>
+    buildDependencyTreeNode(index, dependency, ancestry, expandedVersions)
+  );
+  ancestry.delete(versionKey);
+
+  return buildResolvedDependencyNode(raw, resolved, "resolved", children);
 }
 
 function currentProfiles(): ProfileSummaryDto[] {
@@ -444,22 +600,90 @@ export async function getPackageDetailMock(packageId: string): Promise<PackageDe
 
 export async function getVersionDependenciesMock(
   input: GetVersionDependenciesInput
-): Promise<VersionDependencyTreeDto> {
+): Promise<VersionDependenciesDto> {
+  const packages = currentPackages();
   const resolved = findPackageVersion(input.packageId, input.versionId);
 
   if (!resolved) {
     throw new Error("That package version is not available in the cached Thunderstore catalog.");
   }
 
-  const ancestry = new Set([`${resolved.pkg.id}:${resolved.version.id}`]);
+  const index = buildDependencyCatalogIndex(packages);
+  const rootKey = `${resolved.pkg.id}:${resolved.version.id}`;
+  const summaryAncestry = new Set([rootKey]);
+  const visitedResolved = new Set<string>();
+  const resolvedByPackage = new Map<string, ResolvedSummaryPackageAccumulator>();
+  const unresolvedByRaw = new Map<string, UnresolvedDependencySummaryItemDto>();
+  const resolvedOrder: string[] = [];
+  const unresolvedOrder: string[] = [];
+
+  for (const dependency of resolved.version.dependencies ?? []) {
+    collectSummaryDependency(
+      index,
+      dependency,
+      1,
+      summaryAncestry,
+      visitedResolved,
+      resolvedByPackage,
+      unresolvedByRaw,
+      resolvedOrder,
+      unresolvedOrder
+    );
+  }
+
+  const treeAncestry = new Set([rootKey]);
+  const expandedVersions = new Set<string>();
 
   return {
     rootPackageId: resolved.pkg.id,
     rootPackageName: resolved.pkg.fullName,
     rootVersionId: resolved.version.id,
     rootVersionNumber: resolved.version.versionNumber,
-    items: (resolved.version.dependencies ?? []).map((dependency) =>
-      buildDependencyNode(dependency, ancestry)
+    summary: {
+      direct: resolvedOrder
+        .map((packageId) => resolvedByPackage.get(packageId))
+        .filter(
+          (item): item is ResolvedSummaryPackageAccumulator => Boolean(item && item.minDepth <= 1)
+        )
+        .map(
+          (item): DependencySummaryItemDto => ({
+            packageId: item.packageId,
+            packageName: item.packageName,
+            versionId: item.versionId,
+            versionNumber: item.versionNumber,
+            effectiveStatus: item.effectiveStatus,
+            referenceNote: item.referenceNote,
+            minDepth: item.minDepth,
+            collapsedVersionNumbers: [...item.collapsedVersionNumbers].sort((left, right) =>
+              compareVersionNumbers(right, left)
+            )
+          })
+        ),
+      transitive: resolvedOrder
+        .map((packageId) => resolvedByPackage.get(packageId))
+        .filter(
+          (item): item is ResolvedSummaryPackageAccumulator => Boolean(item && item.minDepth >= 2)
+        )
+        .map(
+          (item): DependencySummaryItemDto => ({
+            packageId: item.packageId,
+            packageName: item.packageName,
+            versionId: item.versionId,
+            versionNumber: item.versionNumber,
+            effectiveStatus: item.effectiveStatus,
+            referenceNote: item.referenceNote,
+            minDepth: item.minDepth,
+            collapsedVersionNumbers: [...item.collapsedVersionNumbers].sort((left, right) =>
+              compareVersionNumbers(right, left)
+            )
+          })
+        ),
+      unresolved: unresolvedOrder
+        .map((raw) => unresolvedByRaw.get(raw))
+        .filter((item): item is UnresolvedDependencySummaryItemDto => Boolean(item))
+    },
+    treeItems: (resolved.version.dependencies ?? []).map((dependency) =>
+      buildDependencyTreeNode(index, dependency, treeAncestry, expandedVersions)
     )
   };
 }

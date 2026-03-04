@@ -5,7 +5,7 @@ use crate::{
     error::AppError,
     services::dependency_service::{
         get_version_dependencies as get_version_dependencies_service, GetVersionDependenciesInput,
-        VersionDependencyTreeDto,
+        VersionDependenciesDto,
     },
 };
 
@@ -13,7 +13,7 @@ use crate::{
 pub async fn get_version_dependencies(
     state: State<'_, AppState>,
     input: GetVersionDependenciesInput,
-) -> Result<VersionDependencyTreeDto, AppError> {
+) -> Result<VersionDependenciesDto, AppError> {
     let connection = state.connection.clone();
 
     async_runtime::spawn_blocking(move || {

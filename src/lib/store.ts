@@ -913,7 +913,7 @@ export const actions = {
       packageId: request.packageId,
       versionId: request.versionId
     })
-      .then((tree) => {
+      .then((data) => {
         appState.update((state) =>
           dependencyModalMatches(state.dependencyModal, request.packageId, request.versionId)
             ? {
@@ -921,7 +921,7 @@ export const actions = {
                 dependencyModal: {
                   ...request,
                   isLoading: false,
-                  tree,
+                  data,
                   error: null
                 }
               }

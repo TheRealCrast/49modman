@@ -1,8 +1,8 @@
 import { invokeCommand } from "./client";
-import type { GetVersionDependenciesInput, VersionDependencyTreeDto } from "../types";
+import type { GetVersionDependenciesInput, VersionDependenciesDto } from "../types";
 
 export function getVersionDependencies(
   input: GetVersionDependenciesInput
-): Promise<VersionDependencyTreeDto> {
+): Promise<VersionDependenciesDto> {
   return invokeCommand("get_version_dependencies", { input });
 }

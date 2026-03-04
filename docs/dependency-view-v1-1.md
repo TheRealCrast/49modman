@@ -4,18 +4,40 @@
 
 Rework the dependency inspection flow so it is easier for casual users to read and significantly cheaper to resolve.
 
-This is the next planned pass after the first implemented dependency modal.
+This pass is now implemented.
 
 Locked decisions:
 
 - the modal should default to a deduplicated `Summary` view
 - the recursive `Tree` view should remain available as an advanced inspection mode
-- deduplication identity is the exact package version, not package-only
+- Summary deduplication identity is package-level, not exact-version-level
+- for each package in Summary, the highest required version is used as the primary row target
+- lower required versions for that package remain visible as strikethrough metadata in the row
 - repeated nodes in the advanced tree should collapse into lightweight `Already shown above` reference rows
 - backend optimization should stay within the current schema for now
 - resolver optimization should use request-local in-memory indexes and memoized traversal, not a new persistent dependency edge table yet
 
-## Current Implemented State
+## Implementation Status (2026-03-04)
+
+Implemented behavior:
+
+- dependency modal opens on `Summary` by default and supports `Summary` / `Tree` switching
+- backend command `get_version_dependencies` now resolves from request-local in-memory indexes
+- response shape is summary + compact tree
+- Summary sections are `Direct`, `Indirect`, and `Unresolved`
+- Summary resolved rows are deduplicated by package:
+  - highest required version shown as the row target
+  - lower required versions shown with strikethrough in the same row
+- repeated exact-version tree nodes are marked `repeated` and do not expand duplicate subtrees
+- Tree stays exact-version for inspection/jump behavior
+- lower-version rows in Tree are visually de-emphasized:
+  - italic title
+  - strikethrough + italic version
+  - muted grey row background
+- unresolved rows remain visible in both Summary and Tree
+- jump-to-exact-version still closes modal, opens Browse, and highlights the target row
+
+## Original Plan Context
 
 The existing dependency view already provides:
 
@@ -68,24 +90,26 @@ Default view:
 Show three sections:
 
 1. `Direct dependencies`
-2. `Transitive dependencies`
+2. `Indirect dependencies`
 3. `Unresolved`
 
 Rules:
 
-- deduplicate resolved dependencies by exact `(package_id, version_id)`
+- deduplicate resolved dependencies by `package_id`
+- choose the highest required version per package as the primary row target
+- keep lower required versions in that same row as strikethrough metadata
 - deduplicate unresolved dependencies by exact raw dependency string
 - classify a resolved dependency as `Direct` if minimum depth is `1`
-- classify a resolved dependency as `Transitive` if minimum depth is `2+`
-- if the same package appears in two different exact versions, keep them as separate entries
+- classify a resolved dependency as `Indirect` if minimum depth is `2+`
 
 Resolved summary rows should show:
 
 - package name
-- exact version
+- selected highest required version
+- lower required versions in strikethrough when present
 - compatibility/status pill
 - optional local reference note
-- short helper copy indicating whether the dependency is direct or transitive
+- short helper copy indicating whether the dependency is direct or indirect
 
 Unresolved summary rows should show:
 
@@ -230,15 +254,17 @@ The existing entry point should stay the same:
 This pass is complete when:
 
 1. dependency modal opens on `Summary` by default
-2. summary deduplicates resolved dependencies by exact version
-3. unresolved dependencies remain visible in both summary and tree modes
-4. advanced tree still supports exact dependency-path inspection
-5. repeated exact-version nodes in tree mode no longer render full duplicate subtrees
-6. repeated exact-version nodes are clearly labeled
-7. jump-to-exact-version still works from the modal
-8. backend resolution no longer performs one SQLite lookup per dependency edge
-9. one dependency request expands a given exact version at most once in tree construction
-10. heavy dependency queries no longer peg one worker thread for long periods in normal use
+2. summary deduplicates resolved dependencies by package
+3. summary rows choose the highest required version per package
+4. summary rows preserve lower required versions as strikethrough metadata
+5. unresolved dependencies remain visible in both summary and tree modes
+6. advanced tree still supports exact dependency-path inspection
+7. repeated exact-version nodes in tree mode no longer render full duplicate subtrees
+8. repeated exact-version nodes are clearly labeled
+9. jump-to-exact-version still works from the modal
+10. backend resolution no longer performs one SQLite lookup per dependency edge
+11. one dependency request expands a given exact version at most once in tree construction
+12. heavy dependency queries no longer peg one worker thread for long periods in normal use
 
 ## Validation
 
@@ -250,9 +276,9 @@ Cover:
 - unresolved dependency handling
 - cycle detection
 - repeated-node compaction
-- summary deduplication by exact version
-- same package with different versions remaining split in summary
-- direct vs transitive classification by minimum depth
+- summary deduplication by package with highest-version selection
+- lower required versions retained in summary row metadata
+- direct vs indirect classification by minimum depth
 - malformed dependency entries degrading to unresolved rather than failing the response
 
 ### Manual Validation

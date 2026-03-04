@@ -1,10 +1,16 @@
-use std::collections::HashSet;
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::Connection;
+use semver::{BuildMetadata, Prerelease, Version};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    domain::status::{parse_reference_state, resolve_effective_status, EffectiveStatus},
+    domain::status::{
+        parse_reference_state, resolve_effective_status, EffectiveStatus, ReferenceState,
+    },
     error::InternalError,
 };
 
@@ -21,6 +27,7 @@ pub enum DependencyResolutionKind {
     Resolved,
     Unresolved,
     Cycle,
+    Repeated,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,16 +46,45 @@ pub struct DependencyNodeDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VersionDependencyTreeDto {
+pub struct DependencySummaryItemDto {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+    pub effective_status: EffectiveStatus,
+    pub reference_note: Option<String>,
+    pub min_depth: usize,
+    pub collapsed_version_numbers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnresolvedDependencySummaryItemDto {
+    pub raw: String,
+    pub min_depth: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencySummaryDto {
+    pub direct: Vec<DependencySummaryItemDto>,
+    pub transitive: Vec<DependencySummaryItemDto>,
+    pub unresolved: Vec<UnresolvedDependencySummaryItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionDependenciesDto {
     pub root_package_id: String,
     pub root_package_name: String,
     pub root_version_id: String,
     pub root_version_number: String,
-    pub items: Vec<DependencyNodeDto>,
+    pub summary: DependencySummaryDto,
+    pub tree_items: Vec<DependencyNodeDto>,
 }
 
 #[derive(Debug, Clone)]
-struct ResolvedVersionRecord {
+struct IndexedVersionRecord {
     package_id: String,
     package_name: String,
     version_id: String,
@@ -58,11 +94,42 @@ struct ResolvedVersionRecord {
     dependencies: Vec<String>,
 }
 
+#[derive(Debug, Default)]
+struct DependencyCatalogIndex {
+    versions_by_id: HashMap<String, IndexedVersionRecord>,
+    version_id_by_dependency_raw: HashMap<String, String>,
+}
+
+#[derive(Debug, Default)]
+struct SummaryCollector {
+    resolved_by_package: HashMap<String, ResolvedSummaryPackageAccumulator>,
+    unresolved_by_raw: HashMap<String, UnresolvedDependencySummaryItemDto>,
+    resolved_order: Vec<String>,
+    unresolved_order: Vec<String>,
+    visited_resolved: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedSummaryPackageAccumulator {
+    package_id: String,
+    package_name: String,
+    version_id: String,
+    version_number: String,
+    effective_status: EffectiveStatus,
+    reference_note: Option<String>,
+    min_depth: usize,
+    collapsed_version_numbers: HashSet<String>,
+}
+
 pub fn get_version_dependencies(
     connection: &Connection,
     input: GetVersionDependenciesInput,
-) -> Result<VersionDependencyTreeDto, InternalError> {
-    let root = load_version_record_by_ids(connection, &input.package_id, &input.version_id)?
+) -> Result<VersionDependenciesDto, InternalError> {
+    let index = load_dependency_catalog_index(connection)?;
+    let root = index
+        .versions_by_id
+        .get(&input.version_id)
+        .filter(|record| record.package_id == input.package_id)
         .ok_or_else(|| {
             InternalError::app(
                 "CATALOG_NOT_FOUND",
@@ -71,74 +138,217 @@ pub fn get_version_dependencies(
                     input.package_id, input.version_id
                 ),
             )
-        })?;
+        })?
+        .clone();
 
-    let mut ancestry = HashSet::new();
-    ancestry.insert(version_key(&root));
+    let root_key = version_key(&root.package_id, &root.version_id);
 
-    let mut items = Vec::with_capacity(root.dependencies.len());
+    let mut summary_collector = SummaryCollector::default();
+    let mut summary_ancestry = HashSet::from([root_key.clone()]);
     for raw in &root.dependencies {
-        items.push(resolve_dependency_node(connection, raw, &ancestry)?);
+        collect_summary_dependency(
+            &index,
+            raw,
+            1,
+            &mut summary_ancestry,
+            &mut summary_collector,
+        );
     }
 
-    Ok(VersionDependencyTreeDto {
+    let mut tree_ancestry = HashSet::from([root_key]);
+    let mut expanded_versions = HashSet::new();
+    let mut tree_items = Vec::with_capacity(root.dependencies.len());
+    for raw in &root.dependencies {
+        tree_items.push(build_tree_dependency_node(
+            &index,
+            raw,
+            &mut tree_ancestry,
+            &mut expanded_versions,
+        ));
+    }
+
+    Ok(VersionDependenciesDto {
         root_package_id: root.package_id,
         root_package_name: root.package_name,
         root_version_id: root.version_id,
         root_version_number: root.version_number,
-        items,
+        summary: summary_collector.into_dto(),
+        tree_items,
     })
 }
 
-fn resolve_dependency_node(
+fn load_dependency_catalog_index(
     connection: &Connection,
-    raw: &str,
-    ancestry: &HashSet<String>,
-) -> Result<DependencyNodeDto, InternalError> {
-    let normalized_raw = raw.trim();
+) -> Result<DependencyCatalogIndex, InternalError> {
+    let mut statement = connection.prepare(
+        "SELECT
+            p.id,
+            p.full_name,
+            pv.id,
+            pv.version_number,
+            pv.dependencies_json,
+            pv.base_zone,
+            pv.bundled_reference_state,
+            pv.bundled_reference_note,
+            ro.reference_state,
+            ro.note
+         FROM packages p
+         INNER JOIN package_versions pv
+           ON pv.package_id = p.id
+         LEFT JOIN reference_overrides ro
+           ON ro.package_id = pv.package_id AND ro.version_id = pv.id",
+    )?;
 
-    if normalized_raw.is_empty() {
-        return Ok(unresolved_dependency_node(raw.to_string()));
+    let records = statement.query_map([], |row| {
+        let bundled_reference_state = row
+            .get::<_, Option<String>>(6)?
+            .as_deref()
+            .and_then(parse_reference_state);
+        let override_reference_state = row
+            .get::<_, Option<String>>(8)?
+            .as_deref()
+            .and_then(parse_reference_state);
+
+        Ok(IndexedVersionRecord {
+            package_id: row.get(0)?,
+            package_name: row.get(1)?,
+            version_id: row.get(2)?,
+            version_number: row.get(3)?,
+            effective_status: resolve_effective_status(
+                parse_base_zone(&row.get::<_, String>(5)?),
+                bundled_reference_state,
+                override_reference_state,
+            ),
+            reference_note: resolve_reference_note(
+                bundled_reference_state,
+                override_reference_state,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(9)?,
+            ),
+            dependencies: parse_dependency_entries(&row.get::<_, String>(4)?),
+        })
+    })?;
+
+    let mut index = DependencyCatalogIndex::default();
+    for record in records {
+        let record = record?;
+        let dependency_raw = dependency_raw_key(&record.package_name, &record.version_number);
+        index
+            .version_id_by_dependency_raw
+            .entry(dependency_raw)
+            .or_insert_with(|| record.version_id.clone());
+        index.versions_by_id.insert(record.version_id.clone(), record);
     }
 
-    let Some(resolved) = load_version_record_by_dependency_raw(connection, normalized_raw)? else {
-        return Ok(unresolved_dependency_node(raw.to_string()));
+    Ok(index)
+}
+
+fn collect_summary_dependency(
+    index: &DependencyCatalogIndex,
+    raw: &str,
+    depth: usize,
+    ancestry: &mut HashSet<String>,
+    collector: &mut SummaryCollector,
+) {
+    let normalized_raw = raw.trim();
+    if normalized_raw.is_empty() {
+        collector.record_unresolved(raw.to_string(), depth);
+        return;
+    }
+
+    let Some(resolved) = resolve_dependency_raw(index, normalized_raw) else {
+        collector.record_unresolved(raw.to_string(), depth);
+        return;
     };
 
-    let key = version_key(&resolved);
+    let key = version_key(&resolved.package_id, &resolved.version_id);
     if ancestry.contains(&key) {
-        return Ok(DependencyNodeDto {
-            raw: raw.to_string(),
-            package_id: Some(resolved.package_id),
-            package_name: Some(resolved.package_name),
-            version_id: Some(resolved.version_id),
-            version_number: Some(resolved.version_number),
-            effective_status: Some(resolved.effective_status),
-            reference_note: resolved.reference_note,
-            resolution: DependencyResolutionKind::Cycle,
-            children: Vec::new(),
-        });
+        return;
     }
 
-    let mut next_ancestry = ancestry.clone();
-    next_ancestry.insert(key);
+    collector.record_resolved(resolved, depth);
 
-    let mut children = Vec::with_capacity(resolved.dependencies.len());
+    if !collector.visited_resolved.insert(key.clone()) {
+        return;
+    }
+
+    ancestry.insert(key.clone());
     for child_raw in &resolved.dependencies {
-        children.push(resolve_dependency_node(connection, child_raw, &next_ancestry)?);
+        collect_summary_dependency(index, child_raw, depth + 1, ancestry, collector);
+    }
+    ancestry.remove(&key);
+}
+
+fn build_tree_dependency_node(
+    index: &DependencyCatalogIndex,
+    raw: &str,
+    ancestry: &mut HashSet<String>,
+    expanded_versions: &mut HashSet<String>,
+) -> DependencyNodeDto {
+    let normalized_raw = raw.trim();
+    if normalized_raw.is_empty() {
+        return unresolved_dependency_node(raw.to_string());
     }
 
-    Ok(DependencyNodeDto {
-        raw: raw.to_string(),
-        package_id: Some(resolved.package_id),
-        package_name: Some(resolved.package_name),
-        version_id: Some(resolved.version_id),
-        version_number: Some(resolved.version_number),
+    let Some(resolved) = resolve_dependency_raw(index, normalized_raw) else {
+        return unresolved_dependency_node(raw.to_string());
+    };
+
+    let key = version_key(&resolved.package_id, &resolved.version_id);
+    if ancestry.contains(&key) {
+        return resolved_dependency_node(raw.to_string(), resolved, DependencyResolutionKind::Cycle, Vec::new());
+    }
+
+    if expanded_versions.contains(&key) {
+        return resolved_dependency_node(
+            raw.to_string(),
+            resolved,
+            DependencyResolutionKind::Repeated,
+            Vec::new(),
+        );
+    }
+
+    expanded_versions.insert(key.clone());
+    ancestry.insert(key.clone());
+
+    let children = resolved
+        .dependencies
+        .iter()
+        .map(|child_raw| build_tree_dependency_node(index, child_raw, ancestry, expanded_versions))
+        .collect();
+
+    ancestry.remove(&key);
+
+    resolved_dependency_node(raw.to_string(), resolved, DependencyResolutionKind::Resolved, children)
+}
+
+fn resolve_dependency_raw<'a>(
+    index: &'a DependencyCatalogIndex,
+    raw: &str,
+) -> Option<&'a IndexedVersionRecord> {
+    index
+        .version_id_by_dependency_raw
+        .get(raw)
+        .and_then(|version_id| index.versions_by_id.get(version_id))
+}
+
+fn resolved_dependency_node(
+    raw: String,
+    resolved: &IndexedVersionRecord,
+    resolution: DependencyResolutionKind,
+    children: Vec<DependencyNodeDto>,
+) -> DependencyNodeDto {
+    DependencyNodeDto {
+        raw,
+        package_id: Some(resolved.package_id.clone()),
+        package_name: Some(resolved.package_name.clone()),
+        version_id: Some(resolved.version_id.clone()),
+        version_number: Some(resolved.version_number.clone()),
         effective_status: Some(resolved.effective_status),
-        reference_note: resolved.reference_note,
-        resolution: DependencyResolutionKind::Resolved,
+        reference_note: resolved.reference_note.clone(),
+        resolution,
         children,
-    })
+    }
 }
 
 fn unresolved_dependency_node(raw: String) -> DependencyNodeDto {
@@ -155,100 +365,141 @@ fn unresolved_dependency_node(raw: String) -> DependencyNodeDto {
     }
 }
 
-fn load_version_record_by_ids(
-    connection: &Connection,
-    package_id: &str,
-    version_id: &str,
-) -> Result<Option<ResolvedVersionRecord>, InternalError> {
-    load_version_record(
-        connection,
-        "WHERE p.id = ?1 AND pv.id = ?2",
-        params![package_id, version_id],
-    )
-}
+impl SummaryCollector {
+    fn record_resolved(&mut self, record: &IndexedVersionRecord, depth: usize) {
+        let package_id = record.package_id.clone();
+        let entry = self.resolved_by_package.entry(package_id.clone());
 
-fn load_version_record_by_dependency_raw(
-    connection: &Connection,
-    dependency_raw: &str,
-) -> Result<Option<ResolvedVersionRecord>, InternalError> {
-    load_version_record(
-        connection,
-        "WHERE p.full_name || '-' || pv.version_number = ?1",
-        params![dependency_raw],
-    )
-}
+        match entry {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                self.resolved_order.push(package_id.clone());
+                entry.insert(ResolvedSummaryPackageAccumulator {
+                    package_id,
+                    package_name: record.package_name.clone(),
+                    version_id: record.version_id.clone(),
+                    version_number: record.version_number.clone(),
+                    effective_status: record.effective_status,
+                    reference_note: record.reference_note.clone(),
+                    min_depth: depth,
+                    collapsed_version_numbers: HashSet::new(),
+                });
+            }
+            std::collections::hash_map::Entry::Occupied(mut occupied) => {
+                let entry = occupied.get_mut();
+                entry.min_depth = entry.min_depth.min(depth);
 
-fn load_version_record<P>(
-    connection: &Connection,
-    where_clause: &str,
-    params: P,
-) -> Result<Option<ResolvedVersionRecord>, InternalError>
-where
-    P: rusqlite::Params,
-{
-    let query = format!(
-        "SELECT
-            p.id,
-            p.full_name,
-            pv.id,
-            pv.version_number,
-            pv.dependencies_json,
-            pv.base_zone,
-            pv.bundled_reference_state,
-            pv.bundled_reference_note,
-            ro.reference_state,
-            ro.note
-         FROM packages p
-         INNER JOIN package_versions pv
-           ON pv.package_id = p.id
-         LEFT JOIN reference_overrides ro
-           ON ro.package_id = pv.package_id AND ro.version_id = pv.id
-         {where_clause}
-         LIMIT 1"
-    );
-
-    connection
-        .query_row(&query, params, |row| {
-            let bundled_reference_state = row
-                .get::<_, Option<String>>(6)?
-                .as_deref()
-                .and_then(parse_reference_state);
-            let override_reference_state = row
-                .get::<_, Option<String>>(8)?
-                .as_deref()
-                .and_then(parse_reference_state);
-            let effective_status = resolve_effective_status(
-                parse_base_zone(&row.get::<_, String>(5)?),
-                bundled_reference_state,
-                override_reference_state,
-            );
-            let reference_note = match override_reference_state {
-                Some(crate::domain::status::ReferenceState::Broken)
-                | Some(crate::domain::status::ReferenceState::Verified) => {
-                    row.get::<_, Option<String>>(9)?
-                }
-                Some(crate::domain::status::ReferenceState::Neutral) => None,
-                None => match bundled_reference_state {
-                    Some(crate::domain::status::ReferenceState::Broken)
-                    | Some(crate::domain::status::ReferenceState::Verified) => {
-                        row.get::<_, Option<String>>(7)?
+                match compare_version_number_strings(&record.version_number, &entry.version_number) {
+                    Ordering::Greater => {
+                        entry
+                            .collapsed_version_numbers
+                            .insert(entry.version_number.clone());
+                        entry.version_id = record.version_id.clone();
+                        entry.version_number = record.version_number.clone();
+                        entry.effective_status = record.effective_status;
+                        entry.reference_note = record.reference_note.clone();
+                        entry
+                            .collapsed_version_numbers
+                            .remove(&entry.version_number);
                     }
-                    _ => None,
+                    Ordering::Less => {
+                        entry
+                            .collapsed_version_numbers
+                            .insert(record.version_number.clone());
+                    }
+                    Ordering::Equal => {}
+                }
+            }
+        }
+    }
+
+    fn record_unresolved(&mut self, raw: String, depth: usize) {
+        if !self.unresolved_by_raw.contains_key(&raw) {
+            self.unresolved_order.push(raw.clone());
+            self.unresolved_by_raw.insert(
+                raw.clone(),
+                UnresolvedDependencySummaryItemDto {
+                    raw,
+                    min_depth: depth,
                 },
+            );
+            return;
+        }
+
+        if let Some(entry) = self.unresolved_by_raw.get_mut(&raw) {
+            entry.min_depth = entry.min_depth.min(depth);
+        }
+    }
+
+    fn into_dto(self) -> DependencySummaryDto {
+        let mut direct = Vec::new();
+        let mut transitive = Vec::new();
+
+        for package_id in self.resolved_order {
+            let Some(entry) = self.resolved_by_package.get(&package_id) else {
+                continue;
             };
 
-            Ok(ResolvedVersionRecord {
-                package_id: row.get(0)?,
-                package_name: row.get(1)?,
-                version_id: row.get(2)?,
-                version_number: row.get(3)?,
-                effective_status,
-                reference_note,
-                dependencies: parse_dependency_entries(&row.get::<_, String>(4)?),
-            })
-        })
-        .optional()
-        .map_err(InternalError::from)
+            let mut collapsed_version_numbers =
+                entry.collapsed_version_numbers.iter().cloned().collect::<Vec<_>>();
+            collapsed_version_numbers.sort_by(|left, right| {
+                compare_version_number_strings(right, left).then_with(|| right.cmp(left))
+            });
+
+            let item = DependencySummaryItemDto {
+                package_id: entry.package_id.clone(),
+                package_name: entry.package_name.clone(),
+                version_id: entry.version_id.clone(),
+                version_number: entry.version_number.clone(),
+                effective_status: entry.effective_status,
+                reference_note: entry.reference_note.clone(),
+                min_depth: entry.min_depth,
+                collapsed_version_numbers,
+            };
+
+            if entry.min_depth <= 1 {
+                direct.push(item);
+            } else {
+                transitive.push(item);
+            }
+        }
+
+        let mut unresolved = Vec::new();
+        for raw in self.unresolved_order {
+            if let Some(item) = self.unresolved_by_raw.get(&raw) {
+                unresolved.push(item.clone());
+            }
+        }
+
+        DependencySummaryDto {
+            direct,
+            transitive,
+            unresolved,
+        }
+    }
+}
+
+fn resolve_reference_note(
+    bundled_reference_state: Option<ReferenceState>,
+    override_reference_state: Option<ReferenceState>,
+    bundled_reference_note: Option<String>,
+    override_reference_note: Option<String>,
+) -> Option<String> {
+    match override_reference_state {
+        Some(ReferenceState::Broken) | Some(ReferenceState::Verified) => override_reference_note,
+        Some(ReferenceState::Neutral) => None,
+        None => match bundled_reference_state {
+            Some(ReferenceState::Broken) | Some(ReferenceState::Verified) => bundled_reference_note,
+            _ => None,
+        },
+    }
+}
+
+fn dependency_raw_key(package_name: &str, version_number: &str) -> String {
+    format!("{package_name}-{version_number}")
+}
+
+fn version_key(package_id: &str, version_id: &str) -> String {
+    format!("{package_id}:{version_id}")
 }
 
 fn parse_dependency_entries(value: &str) -> Vec<String> {
@@ -274,19 +525,162 @@ fn parse_base_zone(value: &str) -> crate::domain::status::BaseZone {
     }
 }
 
-fn version_key(record: &ResolvedVersionRecord) -> String {
-    format!("{}:{}", record.package_id, record.version_id)
+fn compare_version_number_strings(left: &str, right: &str) -> Ordering {
+    match (parse_semverish(left), parse_semverish(right)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        _ => left.cmp(right),
+    }
+}
+
+fn parse_semverish(value: &str) -> Option<Version> {
+    let trimmed = value.trim().trim_start_matches('v');
+    let (without_build, build) = match trimmed.split_once('+') {
+        Some((core, build)) => (core, Some(build)),
+        None => (trimmed, None),
+    };
+    let (core, prerelease) = match without_build.split_once('-') {
+        Some((core, prerelease)) => (core, Some(prerelease)),
+        None => (without_build, None),
+    };
+
+    let mut components = core.split('.').collect::<Vec<_>>();
+    if components.is_empty() || components.len() > 3 {
+        return None;
+    }
+
+    while components.len() < 3 {
+        components.push("0");
+    }
+
+    let normalized = components.join(".");
+    let mut version = Version::parse(&normalized).ok()?;
+    if let Some(prerelease) = prerelease {
+        version.pre = Prerelease::new(prerelease).ok()?;
+    }
+    if let Some(build) = build {
+        version.build = BuildMetadata::new(build).ok()?;
+    }
+
+    Some(version)
 }
 
 #[cfg(test)]
 mod tests {
     use rusqlite::{params, Connection};
 
-    use super::{get_version_dependencies, DependencyResolutionKind, GetVersionDependenciesInput};
+    use super::{
+        get_version_dependencies, DependencyResolutionKind, GetVersionDependenciesInput,
+    };
     use crate::{db::migrate, domain::status::EffectiveStatus};
 
     #[test]
-    fn resolves_nested_dependencies_and_cycles() {
+    fn resolves_summary_tree_cycles_and_repeated_nodes() {
+        let connection = setup_connection();
+        insert_package(&connection, "pack-a", "AuthorA-PackA");
+        insert_package(&connection, "pack-b", "AuthorB-PackB");
+        insert_package(&connection, "pack-c", "AuthorC-PackC");
+        insert_package(&connection, "pack-d", "AuthorD-PackD");
+
+        insert_version(
+            &connection,
+            "pack-a",
+            "pack-a-100",
+            "1.0.0",
+            "green",
+            &["AuthorB-PackB-1.0.0", "AuthorC-PackC-1.0.0", "Missing-Pack-9.9.9"],
+            Some(("verified", "Root note")),
+            None,
+        );
+        insert_version(
+            &connection,
+            "pack-b",
+            "pack-b-100",
+            "1.0.0",
+            "yellow",
+            &["AuthorD-PackD-1.0.0"],
+            None,
+            Some(("broken", "Broken override note")),
+        );
+        insert_version(
+            &connection,
+            "pack-c",
+            "pack-c-100",
+            "1.0.0",
+            "orange",
+            &["AuthorD-PackD-1.0.0"],
+            None,
+            None,
+        );
+        insert_version(
+            &connection,
+            "pack-d",
+            "pack-d-100",
+            "1.0.0",
+            "green",
+            &["AuthorA-PackA-1.0.0"],
+            None,
+            None,
+        );
+
+        let dependencies = get_version_dependencies(
+            &connection,
+            GetVersionDependenciesInput {
+                package_id: "pack-a".to_string(),
+                version_id: "pack-a-100".to_string(),
+            },
+        )
+        .expect("dependencies should resolve");
+
+        assert_eq!(dependencies.root_package_id, "pack-a");
+        assert_eq!(dependencies.summary.direct.len(), 2);
+        assert_eq!(dependencies.summary.transitive.len(), 1);
+        assert_eq!(dependencies.summary.unresolved.len(), 1);
+
+        assert_eq!(dependencies.summary.direct[0].package_id, "pack-b");
+        assert_eq!(
+            dependencies.summary.direct[0].reference_note.as_deref(),
+            Some("Broken override note")
+        );
+        assert_eq!(
+            dependencies.summary.direct[0].effective_status,
+            EffectiveStatus::Broken
+        );
+        assert!(dependencies.summary.direct[0]
+            .collapsed_version_numbers
+            .is_empty());
+        assert_eq!(dependencies.summary.direct[1].package_id, "pack-c");
+        assert_eq!(dependencies.summary.transitive[0].package_id, "pack-d");
+        assert_eq!(dependencies.summary.transitive[0].min_depth, 2);
+        assert!(dependencies.summary.transitive[0]
+            .collapsed_version_numbers
+            .is_empty());
+        assert_eq!(dependencies.summary.unresolved[0].raw, "Missing-Pack-9.9.9");
+
+        assert_eq!(dependencies.tree_items.len(), 3);
+        let first = &dependencies.tree_items[0];
+        assert!(matches!(first.resolution, DependencyResolutionKind::Resolved));
+        assert_eq!(first.package_id.as_deref(), Some("pack-b"));
+        assert_eq!(first.children.len(), 1);
+
+        let nested = &first.children[0];
+        assert!(matches!(nested.resolution, DependencyResolutionKind::Resolved));
+        assert_eq!(nested.package_id.as_deref(), Some("pack-d"));
+
+        let cycle = &nested.children[0];
+        assert!(matches!(cycle.resolution, DependencyResolutionKind::Cycle));
+        assert_eq!(cycle.package_id.as_deref(), Some("pack-a"));
+
+        let repeated = &dependencies.tree_items[1].children[0];
+        assert!(matches!(
+            repeated.resolution,
+            DependencyResolutionKind::Repeated
+        ));
+        assert_eq!(repeated.package_id.as_deref(), Some("pack-d"));
+        assert!(repeated.children.is_empty());
+    }
+
+    #[test]
+    fn collapses_different_versions_of_same_package_in_summary() {
         let connection = setup_connection();
         insert_package(&connection, "pack-a", "AuthorA-PackA");
         insert_package(&connection, "pack-b", "AuthorB-PackB");
@@ -298,8 +692,8 @@ mod tests {
             "pack-a-100",
             "1.0.0",
             "green",
-            &["AuthorB-PackB-1.0.0", "Missing-Pack-9.9.9"],
-            Some(("verified", "Root note")),
+            &["AuthorB-PackB-1.0.0", "AuthorC-PackC-1.0.0"],
+            None,
             None,
         );
         insert_version(
@@ -307,10 +701,20 @@ mod tests {
             "pack-b",
             "pack-b-100",
             "1.0.0",
-            "yellow",
-            &["AuthorC-PackC-1.0.0"],
+            "green",
+            &[],
             None,
-            Some(("broken", "Broken override note")),
+            None,
+        );
+        insert_version(
+            &connection,
+            "pack-b",
+            "pack-b-200",
+            "2.0.0",
+            "yellow",
+            &[],
+            None,
+            None,
         );
         insert_version(
             &connection,
@@ -318,40 +722,29 @@ mod tests {
             "pack-c-100",
             "1.0.0",
             "orange",
-            &["AuthorA-PackA-1.0.0"],
+            &["AuthorB-PackB-2.0.0"],
             None,
             None,
         );
 
-        let tree = get_version_dependencies(
+        let dependencies = get_version_dependencies(
             &connection,
             GetVersionDependenciesInput {
                 package_id: "pack-a".to_string(),
                 version_id: "pack-a-100".to_string(),
             },
         )
-        .expect("dependency tree should resolve");
+        .expect("dependencies should resolve");
 
-        assert_eq!(tree.root_package_id, "pack-a");
-        assert_eq!(tree.items.len(), 2);
-
-        let first = &tree.items[0];
-        assert!(matches!(first.resolution, DependencyResolutionKind::Resolved));
-        assert_eq!(first.package_id.as_deref(), Some("pack-b"));
-        assert_eq!(first.reference_note.as_deref(), Some("Broken override note"));
-        assert_eq!(first.children.len(), 1);
-        assert_eq!(first.effective_status, Some(EffectiveStatus::Broken));
-
-        let cycle = &first.children[0].children[0];
-        assert!(matches!(cycle.resolution, DependencyResolutionKind::Cycle));
-        assert_eq!(cycle.package_id.as_deref(), Some("pack-a"));
-
-        let unresolved = &tree.items[1];
-        assert!(matches!(
-            unresolved.resolution,
-            DependencyResolutionKind::Unresolved
-        ));
-        assert_eq!(unresolved.raw, "Missing-Pack-9.9.9");
+        assert_eq!(dependencies.summary.direct.len(), 2);
+        assert_eq!(dependencies.summary.transitive.len(), 0);
+        assert_eq!(dependencies.summary.direct[0].package_id, "pack-b");
+        assert_eq!(dependencies.summary.direct[0].version_id, "pack-b-200");
+        assert_eq!(dependencies.summary.direct[0].version_number, "2.0.0");
+        assert_eq!(
+            dependencies.summary.direct[0].collapsed_version_numbers,
+            vec!["1.0.0".to_string()]
+        );
     }
 
     #[test]

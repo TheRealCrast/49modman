@@ -200,7 +200,7 @@ export interface InstallRequest {
   referenceNote?: string;
 }
 
-export type DependencyResolutionKind = "resolved" | "unresolved" | "cycle";
+export type DependencyResolutionKind = "resolved" | "unresolved" | "cycle" | "repeated";
 
 export interface DependencyNodeDto {
   raw: string;
@@ -214,12 +214,35 @@ export interface DependencyNodeDto {
   children: DependencyNodeDto[];
 }
 
-export interface VersionDependencyTreeDto {
+export interface DependencySummaryItemDto {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  effectiveStatus: EffectiveStatus;
+  referenceNote?: string;
+  minDepth: number;
+  collapsedVersionNumbers: string[];
+}
+
+export interface UnresolvedDependencySummaryItemDto {
+  raw: string;
+  minDepth: number;
+}
+
+export interface DependencySummaryDto {
+  direct: DependencySummaryItemDto[];
+  transitive: DependencySummaryItemDto[];
+  unresolved: UnresolvedDependencySummaryItemDto[];
+}
+
+export interface VersionDependenciesDto {
   rootPackageId: string;
   rootPackageName: string;
   rootVersionId: string;
   rootVersionNumber: string;
-  items: DependencyNodeDto[];
+  summary: DependencySummaryDto;
+  treeItems: DependencyNodeDto[];
 }
 
 export interface GetVersionDependenciesInput {
@@ -242,7 +265,7 @@ export interface DependencyModalState {
   versionId: string;
   versionNumber: string;
   isLoading: boolean;
-  tree?: VersionDependencyTreeDto;
+  data?: VersionDependenciesDto;
   error?: string | null;
 }
 
