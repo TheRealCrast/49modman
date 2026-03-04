@@ -142,14 +142,51 @@ export interface DeleteProfileResult {
   nextActiveProfileId: string | null;
 }
 
-export interface DownloadItem {
+export interface CacheSummaryDto {
+  archiveCount: number;
+  totalBytes: number;
+  cachePath: string;
+  hasActiveDownloads: boolean;
+}
+
+export interface InstallTaskDto {
+  id: string;
+  kind: "cache_version";
+  status: "queued" | "running" | "succeeded" | "failed";
+  title: string;
+  detail: string;
+  progressStep?: "queued" | "checking_cache" | "downloading" | "verifying" | "finalizing";
+  progressCurrent: number;
+  progressTotal: number;
+  errorMessage?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface DownloadJobDto {
   id: string;
   packageName: string;
-  versionNumber: string;
+  versionLabel: string;
+  taskId: string;
+  sourceKind: "thunderstore";
   progressLabel: string;
-  status: "cached" | "active" | "queued" | "failed";
-  speedLabel: string;
+  status: "queued" | "checking_cache" | "downloading" | "verifying" | "cached" | "failed";
+  bytesDownloaded: number;
+  totalBytes?: number;
+  speedBps?: number;
   cacheHit: boolean;
+  errorMessage?: string;
+  updatedAt: string;
+}
+
+export interface QueueInstallToCacheInput {
+  packageId: string;
+  versionId: string;
+}
+
+export interface QueueInstallToCacheResult {
+  taskId: string;
 }
 
 export interface WarningModalState {
@@ -194,7 +231,9 @@ export interface AppState {
   packages: ModPackage[];
   profiles: ProfileSummaryDto[];
   activeProfile?: ProfileDetailDto;
-  downloads: DownloadItem[];
+  downloads: DownloadJobDto[];
+  cacheSummary?: CacheSummaryDto;
+  activeCacheTaskIds: string[];
   activities: ActivityItem[];
   warningPrefs: WarningPrefsDto;
   modal: WarningModalState | null;
@@ -210,6 +249,8 @@ export interface AppState {
   isLoadingCatalogNextPage: boolean;
   isLoadingPackageDetail: boolean;
   isLoadingProfiles: boolean;
+  isLoadingDownloads: boolean;
+  isLoadingCacheSummary: boolean;
   isLoadingReferences: boolean;
   isLoadingReferencesNextPage: boolean;
   lastCatalogRefreshLabel: string;
@@ -225,6 +266,8 @@ export interface AppState {
   catalogError: string | null;
   referenceError: string | null;
   profileError: string | null;
+  downloadError: string | null;
+  cacheError: string | null;
   settingsError: string | null;
   desktopError: string | null;
 }

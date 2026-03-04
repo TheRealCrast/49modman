@@ -18,10 +18,16 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::cache::queue_install_to_cache,
+            commands::cache::get_cache_summary,
+            commands::cache::open_cache_folder,
+            commands::cache::clear_cache,
             commands::catalog::sync_catalog,
             commands::catalog::get_catalog_summary,
             commands::catalog::search_packages,
             commands::catalog::get_package_detail,
+            commands::downloads::list_active_downloads,
+            commands::downloads::get_task,
             commands::profiles::list_profiles,
             commands::profiles::get_active_profile,
             commands::profiles::set_active_profile,

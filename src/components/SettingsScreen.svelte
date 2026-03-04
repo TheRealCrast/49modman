@@ -1,13 +1,41 @@
 <script lang="ts">
+  import type { CacheSummaryDto } from "../lib/types";
   import Icon from "./Icon.svelte";
 
   export let warningPrefs: {
     red: boolean;
     broken: boolean;
   };
+  export let cacheSummary: CacheSummaryDto | undefined;
   export let settingsError: string | null = null;
   export let onWarningPrefChange: (kind: "red" | "broken", enabled: boolean) => void | Promise<void>;
+  export let onOpenCacheFolder: () => void | Promise<void>;
+  export let onClearCache: () => void | Promise<void>;
   export let onResetAllData: () => void | Promise<void>;
+
+  function formatCacheBytes(value = 0) {
+    if (value < 1024) {
+      return `${value} B`;
+    }
+
+    if (value < 1024 * 1024) {
+      return `${(value / 1024).toFixed(0)} KB`;
+    }
+
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  async function confirmClearCache() {
+    if (
+      !window.confirm(
+        "Clear all cached mod archives? This will remove downloaded versions from local storage, but it will not delete profiles."
+      )
+    ) {
+      return;
+    }
+
+    await onClearCache();
+  }
 
   async function confirmReset() {
     if (!window.confirm("Reset all app data and return to a clean first-launch state?")) {
@@ -65,6 +93,32 @@
       </div>
     </div>
 
+    <div class="settings-section">
+      <div class="settings-subheading">
+        <h3>Cache</h3>
+      </div>
+
+      <div class="preference-list">
+        <div class="switch-row">
+          <div>
+            <strong>Cached archives</strong>
+            <p>{cacheSummary ? `${cacheSummary.archiveCount} archives · ${formatCacheBytes(cacheSummary.totalBytes)}` : "Loading cache summary..."}</p>
+          </div>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>Open cache folder</strong>
+            <p>View the shared archive cache in the system file explorer.</p>
+          </div>
+          <button class="ghost-button icon-button" type="button" on:click={onOpenCacheFolder}>
+            <Icon label="Open cache folder" name="folder" />
+            <span>Open</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div class="settings-section danger-zone">
       <div class="settings-subheading">
         <h3>Danger zone</h3>
@@ -72,8 +126,23 @@
 
       <div class="switch-row danger-row">
         <div>
+          <strong>Clear cache</strong>
+          <p>Remove all cached mod archives from local storage.</p>
+        </div>
+        <button
+          class="ghost-button danger-outline"
+          disabled={cacheSummary?.hasActiveDownloads}
+          type="button"
+          on:click={confirmClearCache}
+        >
+          Clear cache
+        </button>
+      </div>
+
+      <div class="switch-row danger-row">
+        <div>
           <strong>Reset all data</strong>
-          <p>Clear profiles, settings, local overrides, and cached catalog metadata.</p>
+          <p>Clear profiles, settings, local overrides, cached catalog metadata, and cached archives.</p>
         </div>
         <button class="ghost-button danger-outline" type="button" on:click={confirmReset}>
           Reset

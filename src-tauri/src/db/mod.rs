@@ -6,12 +6,15 @@ use crate::error::InternalError;
 const MIGRATION_0001: &str = include_str!("../../migrations/0001_init.sql");
 const MIGRATION_0002: &str = include_str!("../../migrations/0002_catalog_indexes.sql");
 const MIGRATION_0003: &str = include_str!("../../migrations/0003_profiles.sql");
+const MIGRATION_0004: &str = include_str!("../../migrations/0004_cache_downloads.sql");
 
 pub fn migrate(connection: &Connection) -> Result<(), InternalError> {
     connection.execute_batch(MIGRATION_0001)?;
     connection.execute_batch(MIGRATION_0002)?;
     connection.execute_batch(MIGRATION_0003)?;
+    connection.execute_batch(MIGRATION_0004)?;
     repair_profiles_schema(connection)?;
+    repair_cache_schema(connection)?;
     Ok(())
 }
 
@@ -125,13 +128,11 @@ pub fn now_rfc3339() -> Result<String, InternalError> {
 }
 
 fn profile_exists(connection: &Connection, profile_id: &str) -> Result<bool, InternalError> {
-    Ok(connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM profiles WHERE id = ?1)",
-            params![profile_id],
-            |row| row.get::<_, i64>(0),
-        )?
-        != 0)
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM profiles WHERE id = ?1)",
+        params![profile_id],
+        |row| row.get::<_, i64>(0),
+    )? != 0)
 }
 
 fn repair_profiles_schema(connection: &Connection) -> Result<(), InternalError> {
@@ -161,6 +162,37 @@ fn repair_profiles_schema(connection: &Connection) -> Result<(), InternalError> 
     connection.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_name_nocase
          ON profiles (name COLLATE NOCASE)",
+        [],
+    )?;
+
+    Ok(())
+}
+
+fn repair_cache_schema(connection: &Connection) -> Result<(), InternalError> {
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cached_archives_version_id
+         ON cached_archives(version_id)
+         WHERE version_id IS NOT NULL",
+        [],
+    )?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cached_archives_sha256
+         ON cached_archives(sha256)",
+        [],
+    )?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cached_archives_last_used_at
+         ON cached_archives(last_used_at)",
+        [],
+    )?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_install_tasks_kind_status
+         ON install_tasks(kind, status)",
+        [],
+    )?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_download_jobs_task_id
+         ON download_jobs(task_id)",
         [],
     )?;
 

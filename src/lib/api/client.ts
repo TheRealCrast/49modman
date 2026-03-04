@@ -1,13 +1,19 @@
 import {
+  clearCacheMock,
   createProfileMock,
   deleteProfileMock,
+  getCacheSummaryMock,
   getActiveProfileMock,
   getCatalogSummaryMock,
+  getTaskMock,
   getPackageDetailMock,
   getProfileDetailMock,
   getWarningPrefsMock,
+  listActiveDownloadsMock,
   listProfilesMock,
   listReferenceRowsMock,
+  openCacheFolderMock,
+  queueInstallToCacheMock,
   resetAllDataMock,
   searchPackagesMock,
   setActiveProfileMock,
@@ -35,6 +41,12 @@ type CommandMap = {
   set_reference_state: typeof setReferenceStateMock;
   get_warning_prefs: typeof getWarningPrefsMock;
   set_warning_preference: typeof setWarningPreferenceMock;
+  queue_install_to_cache: typeof queueInstallToCacheMock;
+  get_cache_summary: typeof getCacheSummaryMock;
+  open_cache_folder: typeof openCacheFolderMock;
+  clear_cache: typeof clearCacheMock;
+  list_active_downloads: typeof listActiveDownloadsMock;
+  get_task: typeof getTaskMock;
   open_external_url: (url: string) => Promise<void>;
 };
 
@@ -55,6 +67,12 @@ const mockCommands: CommandMap = {
   set_reference_state: setReferenceStateMock,
   get_warning_prefs: getWarningPrefsMock,
   set_warning_preference: setWarningPreferenceMock,
+  queue_install_to_cache: queueInstallToCacheMock,
+  get_cache_summary: getCacheSummaryMock,
+  open_cache_folder: openCacheFolderMock,
+  clear_cache: clearCacheMock,
+  list_active_downloads: listActiveDownloadsMock,
+  get_task: getTaskMock,
   open_external_url: async () => {}
 };
 
@@ -106,6 +124,10 @@ export async function invokeCommand<T>(
 
   if (args && "url" in args) {
     return handler(args.url);
+  }
+
+  if (args && "taskId" in args) {
+    return handler(args.taskId);
   }
 
   if (args && "kind" in args && "enabled" in args) {

@@ -13,7 +13,8 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
 - The app now runs as a real Tauri desktop window instead of only as a browser/Vite page
 - The current frontend is still visually close to the browser prototype, but it is now being exercised through the desktop app runtime
 - The install/cache/modpack experiment was reverted
-- The profile-only milestone is now implemented and working
+- The profile-only milestone is implemented
+- The cache-only milestone is now implemented and working
 
 ## Next Milestone
 
@@ -33,23 +34,22 @@ Current state:
 - Overview now uses the real active profile and shows empty installed-mod state
 - Settings now includes:
   - `Warn options`
-  - `Cache` is not implemented yet
+  - `Cache`
   - `Danger zone`
   - `Reset all data`
+- Browse `Install` / `Install version` now queue real cache tasks
+- Downloads now shows real active cache/download work
+- cache is global, exact-version, and stored in app data
 
-Next planned milestone:
+Last completed milestone:
 
 - [cache-system-m1.md](./cache-system-m1.md)
 
-Locked next-step focus:
+Current locked behavior:
 
-- real global Thunderstore archive cache
-- cache-aware `Install` / `Install version`
-- active-only Downloads tab backed by real task rows
-- Settings support to:
-  - open cache folder
-  - clear cache
-- `Reset all data` upgraded to clear cache files too
+- cache scope is still `cache only`
+- Browse `Install` labels are unchanged
+- Downloads is still `active only`
 - no profile/modpack install state changes yet
 
 ## Current Uncommitted Work
@@ -94,7 +94,7 @@ At the time these notes were written, the working tree was dirty with:
 
 ## Cache Milestone Notes
 
-- this will be the first real install-adjacent filesystem work since the revert
+- this is the first real install-adjacent filesystem work since the revert
 - install scope is `cache only`
 - Downloads behavior is `active only`
 - Browse labels stay as `Install` / `Install version`
@@ -105,7 +105,7 @@ At the time these notes were written, the working tree was dirty with:
   - `profile_mods`
   - `profile_mod_dependencies`
   - `local_mods`
-- the cache milestone must stay compatible with that DB shape rather than assuming a clean slate
+- cache implementation was written to stay compatible with that DB shape rather than assuming a clean slate
 
 ## Desktop Runtime Status
 

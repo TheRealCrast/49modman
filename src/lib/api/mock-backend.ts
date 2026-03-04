@@ -8,10 +8,13 @@ import {
   resolveEffectiveStatus
 } from "../status";
 import type {
+  CacheSummaryDto,
   CatalogSummaryDto,
   CreateProfileInput,
   DeleteProfileResult,
+  DownloadJobDto,
   EffectiveStatus,
+  InstallTaskDto,
   ListReferenceRowsInput,
   ListReferenceRowsResult,
   ModPackage,
@@ -25,6 +28,8 @@ import type {
   SearchPackagesInput,
   SearchPackagesResult,
   SetReferenceStateInput,
+  QueueInstallToCacheInput,
+  QueueInstallToCacheResult,
   SyncCatalogInput,
   SyncCatalogResult,
   UpdateProfileInput,
@@ -52,6 +57,15 @@ type MockDb = {
     isBuiltinDefault: boolean;
   }>;
   activeProfileId: string;
+  cachedVersions: Array<{
+    packageId: string;
+    versionId: string;
+    packageName: string;
+    versionLabel: string;
+    fileSize: number;
+  }>;
+  tasks: InstallTaskDto[];
+  downloads: DownloadJobDto[];
 };
 
 const STORAGE_KEY = "49modman.mock-backend.v1";
@@ -74,7 +88,10 @@ const defaultDb: MockDb = {
       isBuiltinDefault: true
     }
   ],
-  activeProfileId: "default"
+  activeProfileId: "default",
+  cachedVersions: [],
+  tasks: [],
+  downloads: []
 };
 
 function loadDb(): MockDb {
@@ -113,7 +130,10 @@ function normalizeDb(db: MockDb): MockDb {
   return {
     ...db,
     profiles,
-    activeProfileId: hasActive ? db.activeProfileId : "default"
+    activeProfileId: hasActive ? db.activeProfileId : "default",
+    cachedVersions: db.cachedVersions ?? [],
+    tasks: db.tasks ?? [],
+    downloads: db.downloads ?? []
   };
 }
 
@@ -486,6 +506,158 @@ export async function getProfileDetailMock(profileId: string): Promise<ProfileDe
 
 export async function resetAllDataMock(): Promise<void> {
   saveDb(clone(defaultDb));
+}
+
+function taskForVersion(db: MockDb, versionId: string): InstallTaskDto | undefined {
+  return db.tasks.find(
+    (task) => task.kind === "cache_version" && task.detail === versionId && (task.status === "queued" || task.status === "running")
+  );
+}
+
+function finishMockTask(taskId: string, cached: boolean) {
+  const db = normalizeDb(loadDb());
+  const task = db.tasks.find((entry) => entry.id === taskId);
+  const download = db.downloads.find((entry) => entry.taskId === taskId);
+
+  if (!task || !download) {
+    return;
+  }
+
+  task.status = "succeeded";
+  task.progressStep = "finalizing";
+  task.progressCurrent = 4;
+  task.progressTotal = 4;
+  task.finishedAt = nowIso();
+
+  download.status = cached ? "cached" : "verifying";
+  download.cacheHit = cached;
+  download.progressLabel = cached ? "Already cached locally" : "Archive cached successfully";
+  download.updatedAt = nowIso();
+
+  saveDb(db);
+
+  window.setTimeout(() => {
+    const nextDb = normalizeDb(loadDb());
+    nextDb.downloads = nextDb.downloads.filter((entry) => entry.taskId !== taskId);
+    saveDb(nextDb);
+  }, 800);
+}
+
+export async function queueInstallToCacheMock(
+  input: QueueInstallToCacheInput
+): Promise<QueueInstallToCacheResult> {
+  const db = normalizeDb(loadDb());
+  const pkg = currentPackages().find((entry) => entry.id === input.packageId);
+  const version = pkg?.versions.find((entry) => entry.id === input.versionId);
+
+  if (!pkg || !version) {
+    throw new Error("That package version is not available in the cached Thunderstore catalog.");
+  }
+
+  const existingTask = taskForVersion(db, input.versionId);
+  if (existingTask) {
+    return {
+      taskId: existingTask.id
+    };
+  }
+
+  const taskId = `task-${Date.now()}`;
+  const cached = db.cachedVersions.some((entry) => entry.versionId === input.versionId);
+  db.tasks.unshift({
+    id: taskId,
+    kind: "cache_version",
+    status: "running",
+    title: `Caching ${pkg.fullName} ${version.versionNumber}`,
+    detail: input.versionId,
+    progressStep: cached ? "checking_cache" : "downloading",
+    progressCurrent: cached ? 1 : 2,
+    progressTotal: 4,
+    createdAt: nowIso(),
+    startedAt: nowIso()
+  });
+  db.downloads.unshift({
+    id: `job-${Date.now()}`,
+    taskId,
+    packageName: pkg.fullName,
+    versionLabel: version.versionNumber,
+    sourceKind: "thunderstore",
+    status: cached ? "checking_cache" : "downloading",
+    cacheHit: false,
+    bytesDownloaded: cached ? 0 : 524288,
+    totalBytes: cached ? 0 : 1048576,
+    speedBps: cached ? undefined : 262144,
+    progressLabel: cached ? "Checking the shared cache" : "Downloading from Thunderstore",
+    updatedAt: nowIso()
+  });
+  saveDb(db);
+
+  if (cached) {
+    window.setTimeout(() => finishMockTask(taskId, true), 120);
+  } else {
+    window.setTimeout(() => {
+      const nextDb = normalizeDb(loadDb());
+      const job = nextDb.downloads.find((entry) => entry.taskId === taskId);
+      if (job) {
+        job.bytesDownloaded = job.totalBytes ?? job.bytesDownloaded;
+        job.progressLabel = "Verifying cached archive";
+        job.status = "verifying";
+        job.updatedAt = nowIso();
+      }
+      if (!nextDb.cachedVersions.some((entry) => entry.versionId === input.versionId)) {
+        nextDb.cachedVersions.push({
+          packageId: input.packageId,
+          versionId: input.versionId,
+          packageName: pkg.fullName,
+          versionLabel: version.versionNumber,
+          fileSize: 1048576
+        });
+      }
+      saveDb(nextDb);
+    }, 450);
+    window.setTimeout(() => finishMockTask(taskId, false), 900);
+  }
+
+  return {
+    taskId
+  };
+}
+
+export async function getCacheSummaryMock(): Promise<CacheSummaryDto> {
+  const db = normalizeDb(loadDb());
+  return {
+    archiveCount: db.cachedVersions.length,
+    totalBytes: db.cachedVersions.reduce((sum, entry) => sum + entry.fileSize, 0),
+    cachePath: "/mock/cache",
+    hasActiveDownloads: db.tasks.some((task) => task.status === "queued" || task.status === "running")
+  };
+}
+
+export async function openCacheFolderMock(): Promise<void> {
+  return;
+}
+
+export async function clearCacheMock(): Promise<CacheSummaryDto> {
+  const db = normalizeDb(loadDb());
+  if (db.tasks.some((task) => task.status === "queued" || task.status === "running")) {
+    throw new Error("Cannot clear the cache while downloads are active.");
+  }
+
+  db.cachedVersions = [];
+  db.downloads = db.downloads.filter((entry) => {
+    const task = db.tasks.find((taskEntry) => taskEntry.id === entry.taskId);
+    return task?.status === "failed";
+  });
+  db.tasks = db.tasks.filter((task) => task.status === "failed");
+  saveDb(db);
+  return getCacheSummaryMock();
+}
+
+export async function listActiveDownloadsMock(): Promise<DownloadJobDto[]> {
+  return normalizeDb(loadDb()).downloads;
+}
+
+export async function getTaskMock(taskId: string): Promise<InstallTaskDto | null> {
+  return normalizeDb(loadDb()).tasks.find((entry) => entry.id === taskId) ?? null;
 }
 
 export async function listReferenceRowsMock(input: ListReferenceRowsInput): Promise<ListReferenceRowsResult> {

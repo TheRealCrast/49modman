@@ -1,5 +1,7 @@
 import { derived, get, writable } from "svelte/store";
+import { clearCache, getCacheSummary, openCacheFolder, queueInstallToCache } from "./api/cache";
 import { getCatalogSummary, getPackageDetail, searchPackages, syncCatalog } from "./api/catalog";
+import { listActiveDownloads } from "./api/downloads";
 import {
   createProfile as createProfileApi,
   deleteProfile as deleteProfileApi,
@@ -14,14 +16,16 @@ import {
   getWarningPrefs,
   setWarningPreference as setWarningPreferenceApi
 } from "./api/settings";
-import { seedActivities, seedDownloads, seedPackages } from "./mock-data";
+import { seedActivities, seedPackages } from "./mock-data";
 import { getRuntimeKind } from "./runtime";
 import { resolveEffectiveStatus } from "./status";
 import type {
   ActivityItem,
   AppState,
   AppView,
+  CacheSummaryDto,
   CreateProfileInput,
+  DownloadJobDto,
   EffectiveStatus,
   ModPackage,
   ProfileDetailDto,
@@ -31,6 +35,8 @@ import type {
 const defaultVisibleStatuses: EffectiveStatus[] = ["verified", "green", "yellow", "orange"];
 const defaultCatalogPageSize = 40;
 const defaultReferencePageSize = 50;
+const downloadPollIntervalMs = 500;
+let downloadPollHandle: number | null = null;
 
 const initialState: AppState = {
   view: "browse",
@@ -43,7 +49,9 @@ const initialState: AppState = {
   packages: seedPackages,
   profiles: [],
   activeProfile: undefined,
-  downloads: seedDownloads,
+  downloads: [],
+  cacheSummary: undefined,
+  activeCacheTaskIds: [],
   activities: seedActivities,
   warningPrefs: {
     red: true,
@@ -62,6 +70,8 @@ const initialState: AppState = {
   isLoadingCatalogNextPage: false,
   isLoadingPackageDetail: false,
   isLoadingProfiles: false,
+  isLoadingDownloads: false,
+  isLoadingCacheSummary: false,
   isLoadingReferences: false,
   isLoadingReferencesNextPage: false,
   lastCatalogRefreshLabel: "Cached mod list ready",
@@ -77,6 +87,8 @@ const initialState: AppState = {
   catalogError: null,
   referenceError: null,
   profileError: null,
+  downloadError: null,
+  cacheError: null,
   settingsError: null,
   desktopError: null
 };
@@ -144,6 +156,53 @@ function waitForNextPaint() {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => resolve());
   });
+}
+
+function stopDownloadPolling() {
+  if (downloadPollHandle !== null) {
+    window.clearInterval(downloadPollHandle);
+    downloadPollHandle = null;
+  }
+}
+
+function startDownloadPolling() {
+  if (downloadPollHandle !== null) {
+    return;
+  }
+
+  downloadPollHandle = window.setInterval(() => {
+    void loadActiveDownloads();
+  }, downloadPollIntervalMs);
+}
+
+function appendDownloadActivity(downloads: DownloadJobDto[], taskIds: string[]) {
+  if (taskIds.length !== 0) {
+    return;
+  }
+
+  const latest = downloads[0];
+  if (!latest) {
+    return;
+  }
+
+  appState.update((state) =>
+    appendActivity(
+      state,
+      withActivity(
+        latest.status === "failed"
+          ? "Cache task failed"
+          : latest.cacheHit
+            ? "Already cached"
+            : "Cache updated",
+        latest.status === "failed"
+          ? latest.errorMessage ?? `Failed to cache ${latest.packageName} ${latest.versionLabel}.`
+          : latest.cacheHit
+            ? `${latest.packageName} ${latest.versionLabel} was already in the shared cache.`
+            : `${latest.packageName} ${latest.versionLabel} was cached locally.`,
+        latest.status === "failed" ? "warning" : "positive"
+      )
+    )
+  );
 }
 
 async function loadSelectedPackageDetail(packageId = get(appState).selectedPackageId) {
@@ -226,6 +285,85 @@ async function loadSettingsState() {
     settingsError: null,
     desktopError: null
   }));
+}
+
+async function loadCacheSummary() {
+  appState.update((current) => ({
+    ...current,
+    isLoadingCacheSummary: true,
+    cacheError: null
+  }));
+
+  try {
+    const cacheSummary = await getCacheSummary();
+    appState.update((current) => ({
+      ...current,
+      cacheSummary,
+      isLoadingCacheSummary: false,
+      cacheError: null,
+      desktopError: null
+    }));
+  } catch (error) {
+    appState.update((current) => ({
+      ...current,
+      isLoadingCacheSummary: false,
+      cacheError: error instanceof Error ? error.message : "Failed to load the cache summary.",
+      desktopError:
+        current.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to load desktop cache data."
+          : current.desktopError
+    }));
+  }
+}
+
+async function loadActiveDownloads() {
+  const previous = get(appState);
+  appState.update((current) => ({
+    ...current,
+    isLoadingDownloads: true
+  }));
+
+  try {
+    const downloads = await listActiveDownloads();
+    const activeTaskIds = [
+      ...new Set(downloads.filter((entry) => entry.status !== "failed").map((entry) => entry.taskId))
+    ];
+    const hadActiveTasks = previous.activeCacheTaskIds.length > 0;
+
+    appState.update((current) => ({
+      ...current,
+      downloads,
+      activeCacheTaskIds: activeTaskIds,
+      isLoadingDownloads: false,
+      downloadError: null,
+      desktopError: null
+    }));
+
+    if (activeTaskIds.length > 0) {
+      startDownloadPolling();
+    } else {
+      stopDownloadPolling();
+      if (hadActiveTasks) {
+        await loadCacheSummary();
+        appendDownloadActivity(previous.downloads, activeTaskIds);
+      }
+    }
+  } catch (error) {
+    stopDownloadPolling();
+    appState.update((current) => ({
+      ...current,
+      isLoadingDownloads: false,
+      downloadError: error instanceof Error ? error.message : "Failed to load active downloads.",
+      desktopError:
+        current.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to load active desktop downloads."
+          : current.desktopError
+    }));
+  }
 }
 
 async function loadCatalogFirstPage(options: { showLoading?: boolean } = {}) {
@@ -491,41 +629,61 @@ async function refreshCatalog(force: boolean, options: { blockingOverlay?: boole
 }
 
 function installVersion(state: AppState, packageId: string, versionId: string): AppState {
-  const selectedProfile = state.activeProfile;
-  const pkg = findPackage(state, packageId);
-  const version = findPackage(state, packageId)?.versions.find((entry) => entry.id === versionId);
+  return {
+    ...state,
+    modal: null
+  };
+}
 
-  if (!selectedProfile || !pkg || !version) {
-    return state;
+async function queueVersionForCache(packageId: string, versionId: string) {
+  const state = get(appState);
+  const pkg =
+    state.selectedPackageDetail?.id === packageId
+      ? state.selectedPackageDetail
+      : findPackage(state, packageId);
+  const version = pkg?.versions.find((entry) => entry.id === versionId);
+
+  if (!pkg || !version) {
+    return;
   }
 
-  const nextDownloads = [
-    {
-      id: `${packageId}-${versionId}-${Date.now()}`,
-      packageName: pkg.fullName,
-      versionNumber: version.versionNumber,
-      progressLabel: "Install pipeline is not implemented yet in this milestone",
-      status: "queued" as const,
-      speedLabel: "profile milestone placeholder",
-      cacheHit: false
-    },
-    ...state.downloads
-  ].slice(0, 8);
+  try {
+    const result = await queueInstallToCache({ packageId, versionId });
 
-  return appendActivity(
-    {
-      ...state,
-      downloads: nextDownloads,
-      modal: null
-    },
-    withActivity(
-      `Install not available yet`,
-      `${pkg.fullName} ${version.versionNumber} was selected for ${selectedProfile.name}, but installs are intentionally not implemented in the profile-only milestone.`,
-      resolveEffectiveStatus(version) === "broken" || resolveEffectiveStatus(version) === "red"
-        ? "warning"
-        : "positive"
-    )
-  );
+    appState.update((current) =>
+      appendActivity(
+        {
+          ...current,
+          modal: null,
+          downloadError: null,
+          cacheError: null,
+          desktopError: null,
+          activeCacheTaskIds: current.activeCacheTaskIds.includes(result.taskId)
+            ? current.activeCacheTaskIds
+            : [result.taskId, ...current.activeCacheTaskIds]
+        },
+        withActivity(
+          "Caching mod archive",
+          `Caching ${pkg.fullName} ${version.versionNumber} in the shared archive cache.`,
+          "neutral"
+        )
+      )
+    );
+
+    startDownloadPolling();
+    await Promise.all([loadActiveDownloads(), loadCacheSummary()]);
+  } catch (error) {
+    appState.update((current) => ({
+      ...current,
+      downloadError: error instanceof Error ? error.message : "Failed to start the cache task.",
+      desktopError:
+        current.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to start the desktop cache task."
+          : current.desktopError
+    }));
+  }
 }
 
 export const actions = {
@@ -552,7 +710,7 @@ export const actions = {
         desktopError: null
       }));
 
-      await loadSettingsState();
+      await Promise.all([loadSettingsState(), loadCacheSummary(), loadActiveDownloads()]);
 
       if (!summary.hasCatalog) {
         appState.update((state) => ({
@@ -592,11 +750,6 @@ export const actions = {
       ...state,
       view
     }));
-
-    const state = get(appState);
-    if (view === "settings" && state.referenceRowsData.length === 0 && !state.isLoadingReferences) {
-      void loadReferenceLibrary();
-    }
   },
   setBrowseSearchDraft(search: string) {
     appState.update((state) => ({
@@ -691,6 +844,10 @@ export const actions = {
 
       return installVersion(state, packageId, versionId);
     });
+
+    if (!get(appState).modal) {
+      void queueVersionForCache(packageId, versionId);
+    }
   },
   dismissModal() {
     appState.update((state) => ({
@@ -725,6 +882,10 @@ export const actions = {
           warningPrefs: prefs
         }));
       });
+    }
+
+    if (modal) {
+      void queueVersionForCache(modal.packageId, modal.versionId);
     }
   },
   async setWarningPreference(kind: "red" | "broken", enabled: boolean) {
@@ -867,9 +1028,70 @@ export const actions = {
       }));
     }
   },
+  async openCacheFolder() {
+    try {
+      await openCacheFolder();
+      appState.update((state) => ({
+        ...state,
+        settingsError: null,
+        cacheError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        settingsError: error instanceof Error ? error.message : "Failed to open the cache folder.",
+        cacheError: error instanceof Error ? error.message : "Failed to open the cache folder.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to open the desktop cache folder."
+            : state.desktopError
+      }));
+    }
+  },
+  async clearCache() {
+    try {
+      const cacheSummary = await clearCache();
+      stopDownloadPolling();
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            cacheSummary,
+            downloads: [],
+            activeCacheTaskIds: [],
+            downloadError: null,
+            cacheError: null,
+            settingsError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Cache cleared",
+            "All cached mod archives were removed from local storage.",
+            "warning"
+          )
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        settingsError: error instanceof Error ? error.message : "Failed to clear the cache.",
+        cacheError: error instanceof Error ? error.message : "Failed to clear the cache.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to clear the desktop cache."
+            : state.desktopError
+      }));
+    }
+  },
   async resetAllData() {
     try {
       await resetAllDataApi();
+      stopDownloadPolling();
 
       appState.update((state) => ({
         ...state,
@@ -884,9 +1106,13 @@ export const actions = {
         catalogError: null,
         referenceError: null,
         profileError: null,
+        downloadError: null,
+        cacheError: null,
         settingsError: null,
         desktopError: null,
-        downloads: seedDownloads,
+        downloads: [],
+        cacheSummary: undefined,
+        activeCacheTaskIds: [],
         activities: seedActivities,
         isCatalogOverlayVisible: false,
         catalogOverlayTitle: null,
@@ -903,7 +1129,7 @@ export const actions = {
         referenceHasMore: false
       }));
 
-      await Promise.all([loadProfilesState(), loadSettingsState()]);
+      await Promise.all([loadProfilesState(), loadSettingsState(), loadCacheSummary(), loadActiveDownloads()]);
     } catch (error) {
       appState.update((state) => ({
         ...state,

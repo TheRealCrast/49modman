@@ -143,6 +143,9 @@
       <DownloadsScreen downloads={$appState.downloads} />
     {:else if $appState.view === "settings"}
       <SettingsScreen
+        cacheSummary={$appState.cacheSummary}
+        onClearCache={actions.clearCache}
+        onOpenCacheFolder={actions.openCacheFolder}
         onResetAllData={actions.resetAllData}
         onWarningPrefChange={actions.setWarningPreference}
         settingsError={$appState.settingsError}

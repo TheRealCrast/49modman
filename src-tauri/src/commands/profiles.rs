@@ -3,13 +3,17 @@ use tauri::{async_runtime, State};
 use crate::{
     app_state::AppState,
     error::AppError,
-    services::profile_service::{
-        create_profile as create_profile_service, delete_profile as delete_profile_service,
-        get_active_profile as get_active_profile_service,
-        get_profile_detail as get_profile_detail_service, list_profiles as list_profiles_service,
-        reset_all_data as reset_all_data_service, set_active_profile as set_active_profile_service,
-        update_profile as update_profile_service, CreateProfileInput, DeleteProfileResult,
-        ProfileDetailDto, ProfileSummaryDto, UpdateProfileInput,
+    services::{
+        cache_service::clear_cache_files,
+        profile_service::{
+            create_profile as create_profile_service, delete_profile as delete_profile_service,
+            get_active_profile as get_active_profile_service,
+            get_profile_detail as get_profile_detail_service,
+            list_profiles as list_profiles_service, reset_all_data as reset_all_data_service,
+            set_active_profile as set_active_profile_service,
+            update_profile as update_profile_service, CreateProfileInput, DeleteProfileResult,
+            ProfileDetailDto, ProfileSummaryDto, UpdateProfileInput,
+        },
     },
 };
 
@@ -137,10 +141,13 @@ pub async fn get_profile_detail(
 
 #[tauri::command]
 pub async fn reset_all_data(state: State<'_, AppState>) -> Result<(), AppError> {
-    let connection = state.connection.clone();
+    let state = state.inner().clone();
 
     async_runtime::spawn_blocking(move || {
-        let connection = connection
+        clear_cache_files(&state).map_err(AppError::from)?;
+
+        let connection = state
+            .connection
             .lock()
             .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
 
