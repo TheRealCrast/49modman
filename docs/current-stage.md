@@ -49,6 +49,21 @@ Current state:
 - Browse package cards now expose a quick-install button for the recommended version
 - Downloads now shows real active cache/download work
 - cache is global, exact-version, and stored in app data
+- profile storage folders are now scaffolded under app data and reconciled at startup:
+  - `$APP_DATA/profiles/<profile_id>/manifest.json`
+  - `$APP_DATA/profiles/<profile_id>/mods/`
+  - `$APP_DATA/profiles/<profile_id>/runtime/BepInEx/plugins/`
+  - `$APP_DATA/profiles/<profile_id>/runtime/BepInEx/config/`
+- profile manifests are now maintained as schema v1 metadata + empty `mods` list
+- deleting a profile now also deletes its profile folder on disk
+- Settings now includes a `Profiles` subcategory with:
+  - `Open profiles folder`
+  - `Open active profile folder`
+  - profile storage summary row:
+    - profile count
+    - total profiles-folder size
+    - active profile-folder size
+- Profiles tab cards now show each profile's own storage size
 
 Last completed milestone:
 
@@ -102,6 +117,23 @@ Current working tree before the next commit includes:
   4. finalize and return to normal UI
 - install/download/cache/modpack behavior is still intentionally not implemented on this branch
 - existing Browse install actions are placeholder-only and do not modify profile state
+
+## Profile Storage And Manifest Notes (Post Cache-Only)
+
+- profile folders are keyed by profile id, not profile name
+- profile storage is ensured in these flows:
+  - app startup (reconciliation across all profiles)
+  - profile create
+  - profile update
+  - opening active profile folder
+- current scaffolded runtime path is:
+  - `runtime/BepInEx/plugins`
+  - `runtime/BepInEx/config`
+- `manifest.json` is rewritten atomically for profile metadata updates
+- `reset_all_data` now clears profile folders and then reseeds + re-ensures `default` profile storage
+- per-profile storage size is computed from profile directory bytes and returned in `list_profiles`
+- Settings profile summary is returned via backend command:
+  - `get_profiles_storage_summary`
 
 ## Cache Milestone Notes
 

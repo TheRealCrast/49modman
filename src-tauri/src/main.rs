@@ -8,12 +8,24 @@ mod services;
 mod thunderstore;
 
 use app_state::AppState;
+use services::profile_service::ensure_all_profile_storage;
 use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let state = AppState::new(&app.handle())?;
+
+            {
+                let connection = state.connection.lock().map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Failed to lock the SQLite connection",
+                    )
+                })?;
+                ensure_all_profile_storage(&state, &connection)?;
+            }
+
             app.manage(state);
             Ok(())
         })
@@ -38,6 +50,9 @@ fn main() {
             commands::profiles::delete_profile,
             commands::profiles::get_profile_detail,
             commands::profiles::reset_all_data,
+            commands::profiles::open_profiles_folder,
+            commands::profiles::open_active_profile_folder,
+            commands::profiles::get_profiles_storage_summary,
             commands::reference::list_reference_rows,
             commands::reference::set_reference_state,
             commands::settings::get_warning_prefs,

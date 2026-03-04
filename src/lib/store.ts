@@ -7,7 +7,10 @@ import {
   createProfile as createProfileApi,
   deleteProfile as deleteProfileApi,
   getActiveProfile as getActiveProfileApi,
+  getProfilesStorageSummary as getProfilesStorageSummaryApi,
   listProfiles as listProfilesApi,
+  openActiveProfileFolder as openActiveProfileFolderApi,
+  openProfilesFolder as openProfilesFolderApi,
   resetAllData as resetAllDataApi,
   setActiveProfile as setActiveProfileApi,
   updateProfile as updateProfileApi
@@ -56,6 +59,7 @@ const initialState: AppState = {
   activeProfile: undefined,
   downloads: [],
   cacheSummary: undefined,
+  profilesStorageSummary: undefined,
   activeCacheTaskIds: [],
   activities: seedActivities,
   warningPrefs: {
@@ -80,6 +84,7 @@ const initialState: AppState = {
   isLoadingProfiles: false,
   isLoadingDownloads: false,
   isLoadingCacheSummary: false,
+  isLoadingProfilesStorageSummary: false,
   isLoadingReferences: false,
   isLoadingReferencesNextPage: false,
   lastCatalogRefreshLabel: "Cached mod list ready",
@@ -317,6 +322,37 @@ async function loadSettingsState() {
     settingsError: null,
     desktopError: null
   }));
+}
+
+async function loadProfilesStorageSummary() {
+  appState.update((current) => ({
+    ...current,
+    isLoadingProfilesStorageSummary: true
+  }));
+
+  try {
+    const profilesStorageSummary = await getProfilesStorageSummaryApi();
+    appState.update((current) => ({
+      ...current,
+      profilesStorageSummary,
+      isLoadingProfilesStorageSummary: false,
+      settingsError: null,
+      desktopError: null
+    }));
+  } catch (error) {
+    appState.update((current) => ({
+      ...current,
+      isLoadingProfilesStorageSummary: false,
+      settingsError:
+        error instanceof Error ? error.message : "Failed to load profile storage summary.",
+      desktopError:
+        current.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to load desktop profile storage summary."
+          : current.desktopError
+    }));
+  }
 }
 
 async function loadCacheSummary() {
@@ -851,7 +887,12 @@ export const actions = {
         desktopError: null
       }));
 
-      await Promise.all([loadSettingsState(), loadCacheSummary(), loadActiveDownloads()]);
+      await Promise.all([
+        loadSettingsState(),
+        loadProfilesStorageSummary(),
+        loadCacheSummary(),
+        loadActiveDownloads()
+      ]);
 
       if (!summary.hasCatalog) {
         appState.update((state) => ({
@@ -963,10 +1004,12 @@ export const actions = {
     try {
       const activeProfile = await setActiveProfileApi(profileId);
       const profiles = await listProfilesApi();
+      const profilesStorageSummary = await getProfilesStorageSummaryApi();
 
       appState.update((state) => ({
         ...mapActiveProfile(state, activeProfile ?? undefined),
         profiles,
+        profilesStorageSummary,
         profileError: null,
         desktopError: null
       }));
@@ -1204,12 +1247,14 @@ export const actions = {
     try {
       const activeProfile = await createProfileApi(input);
       const profiles = await listProfilesApi();
+      const profilesStorageSummary = await getProfilesStorageSummaryApi();
 
       appState.update((state) =>
         appendActivity(
           {
             ...mapActiveProfile(state, activeProfile),
             profiles,
+            profilesStorageSummary,
             profileError: null,
             desktopError: null
           },
@@ -1232,12 +1277,14 @@ export const actions = {
     try {
       const activeProfile = await updateProfileApi(input);
       const profiles = await listProfilesApi();
+      const profilesStorageSummary = await getProfilesStorageSummaryApi();
 
       appState.update((state) =>
         appendActivity(
           {
             ...mapActiveProfile(state, activeProfile),
             profiles,
+            profilesStorageSummary,
             profileError: null,
             desktopError: null
           },
@@ -1266,12 +1313,14 @@ export const actions = {
     try {
       await deleteProfileApi(selectedProfile.id);
       const [profiles, activeProfile] = await Promise.all([listProfilesApi(), getActiveProfileApi()]);
+      const profilesStorageSummary = await getProfilesStorageSummaryApi();
 
       appState.update((state) =>
         appendActivity(
           {
             ...mapActiveProfile(state, activeProfile ?? undefined),
             profiles,
+            profilesStorageSummary,
             profileError: null,
             desktopError: null
           },
@@ -1309,6 +1358,49 @@ export const actions = {
             ? error instanceof Error
               ? error.message
               : "Failed to open the desktop cache folder."
+            : state.desktopError
+      }));
+    }
+  },
+  async openProfilesFolder() {
+    try {
+      await openProfilesFolderApi();
+      appState.update((state) => ({
+        ...state,
+        settingsError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        settingsError: error instanceof Error ? error.message : "Failed to open the profiles folder.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to open the desktop profiles folder."
+            : state.desktopError
+      }));
+    }
+  },
+  async openActiveProfileFolder() {
+    try {
+      await openActiveProfileFolderApi();
+      appState.update((state) => ({
+        ...state,
+        settingsError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        settingsError:
+          error instanceof Error ? error.message : "Failed to open the active profile folder.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to open the desktop active profile folder."
             : state.desktopError
       }));
     }
@@ -1402,6 +1494,7 @@ export const actions = {
         desktopError: null,
         downloads: [],
         cacheSummary: undefined,
+        profilesStorageSummary: undefined,
         activeCacheTaskIds: [],
         activities: seedActivities,
         isCatalogOverlayVisible: false,
@@ -1412,6 +1505,7 @@ export const actions = {
         isLoadingCatalogFirstPage: false,
         isLoadingCatalogNextPage: false,
         isLoadingPackageDetail: false,
+        isLoadingProfilesStorageSummary: false,
         isLoadingReferences: false,
         isLoadingReferencesNextPage: false,
         referenceRowsData: [],
@@ -1420,7 +1514,13 @@ export const actions = {
       }));
 
       clearFocusedVersionTimer();
-      await Promise.all([loadProfilesState(), loadSettingsState(), loadCacheSummary(), loadActiveDownloads()]);
+      await Promise.all([
+        loadProfilesState(),
+        loadSettingsState(),
+        loadProfilesStorageSummary(),
+        loadCacheSummary(),
+        loadActiveDownloads()
+      ]);
 
       setResetProgress(
         "browse",

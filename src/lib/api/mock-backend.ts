@@ -27,6 +27,7 @@ import type {
   PackageCardDto,
   PackageDetailDto,
   ProfileDetailDto,
+  ProfilesStorageSummaryDto,
   ProfileSummaryDto,
   ReferenceRow,
   ReferenceState,
@@ -421,7 +422,8 @@ function currentProfiles(): ProfileSummaryDto[] {
     .map((profile) => ({
       ...profile,
       installedCount: 0,
-      enabledCount: 0
+      enabledCount: 0,
+      profileSizeBytes: 1024
     }));
 }
 
@@ -829,6 +831,26 @@ export async function getProfileDetailMock(profileId: string): Promise<ProfileDe
 
 export async function resetAllDataMock(): Promise<void> {
   saveDb(clone(defaultDb));
+}
+
+export async function openProfilesFolderMock(): Promise<void> {
+  return;
+}
+
+export async function openActiveProfileFolderMock(): Promise<void> {
+  return;
+}
+
+export async function getProfilesStorageSummaryMock(): Promise<ProfilesStorageSummaryDto> {
+  const db = normalizeDb(loadDb());
+  const profileCount = db.profiles.length;
+
+  // Browser mock has no real profile filesystem; provide deterministic pseudo totals.
+  return {
+    profileCount,
+    profilesTotalBytes: profileCount * 1024,
+    activeProfileBytes: 1024
+  };
 }
 
 function taskForVersion(db: MockDb, versionId: string): InstallTaskDto | undefined {

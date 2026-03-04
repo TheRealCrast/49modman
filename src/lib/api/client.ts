@@ -10,11 +10,14 @@ import {
   getTaskMock,
   getPackageDetailMock,
   getProfileDetailMock,
+  getProfilesStorageSummaryMock,
   getWarningPrefsMock,
   listActiveDownloadsMock,
   listProfilesMock,
   listReferenceRowsMock,
   openCacheFolderMock,
+  openActiveProfileFolderMock,
+  openProfilesFolderMock,
   queueInstallToCacheMock,
   resetAllDataMock,
   searchPackagesMock,
@@ -41,6 +44,9 @@ type CommandMap = {
   delete_profile: typeof deleteProfileMock;
   get_profile_detail: typeof getProfileDetailMock;
   reset_all_data: typeof resetAllDataMock;
+  open_profiles_folder: typeof openProfilesFolderMock;
+  open_active_profile_folder: typeof openActiveProfileFolderMock;
+  get_profiles_storage_summary: typeof getProfilesStorageSummaryMock;
   list_reference_rows: typeof listReferenceRowsMock;
   set_reference_state: typeof setReferenceStateMock;
   get_warning_prefs: typeof getWarningPrefsMock;
@@ -69,6 +75,9 @@ const mockCommands: CommandMap = {
   delete_profile: deleteProfileMock,
   get_profile_detail: getProfileDetailMock,
   reset_all_data: resetAllDataMock,
+  open_profiles_folder: openProfilesFolderMock,
+  open_active_profile_folder: openActiveProfileFolderMock,
+  get_profiles_storage_summary: getProfilesStorageSummaryMock,
   list_reference_rows: listReferenceRowsMock,
   set_reference_state: setReferenceStateMock,
   get_warning_prefs: getWarningPrefsMock,

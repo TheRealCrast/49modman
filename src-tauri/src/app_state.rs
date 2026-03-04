@@ -21,6 +21,7 @@ pub struct AppState {
     pub connection: Arc<Mutex<Connection>>,
     pub http_client: Client,
     pub bundled_references: BundledReferenceLibrary,
+    pub profiles_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub cache_archives_dir: PathBuf,
     pub cache_tmp_dir: PathBuf,
@@ -37,6 +38,7 @@ impl AppState {
             )
         })?;
 
+        let profiles_dir = app_data_dir.join("profiles");
         let cache_dir = app_data_dir.join("cache");
         let cache_archives_dir = cache_dir.join("archives");
         let cache_tmp_dir = cache_dir.join("tmp");
@@ -44,6 +46,7 @@ impl AppState {
         std::fs::create_dir_all(app_data_dir.join("db"))?;
         std::fs::create_dir_all(app_data_dir.join("logs"))?;
         std::fs::create_dir_all(app_data_dir.join("state"))?;
+        std::fs::create_dir_all(&profiles_dir)?;
         std::fs::create_dir_all(&cache_archives_dir)?;
         std::fs::create_dir_all(cache_archives_dir.join("thunderstore"))?;
         std::fs::create_dir_all(&cache_tmp_dir)?;
@@ -60,6 +63,7 @@ impl AppState {
                 .build()
                 .map_err(InternalError::from)?,
             bundled_references: load_bundled_reference_library()?,
+            profiles_dir,
             cache_dir,
             cache_archives_dir,
             cache_tmp_dir,

@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap};
 
-use semver::{BuildMetadata, Prerelease, Version};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use semver::{BuildMetadata, Prerelease, Version};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -617,10 +617,7 @@ fn pick_recommended_version(versions: &[PackageVersionDto]) -> Option<&PackageVe
         .max_by(|left, right| compare_recommended_versions(left, right))
 }
 
-fn compare_recommended_versions(
-    left: &PackageVersionDto,
-    right: &PackageVersionDto,
-) -> Ordering {
+fn compare_recommended_versions(left: &PackageVersionDto, right: &PackageVersionDto) -> Ordering {
     effective_status_rank(left.effective_status)
         .cmp(&effective_status_rank(right.effective_status))
         .then_with(|| compare_version_number_strings(&left.version_number, &right.version_number))

@@ -198,9 +198,9 @@ pub fn warm_dependency_catalog_index(
 pub fn invalidate_dependency_catalog_index(
     cache: &SharedDependencyCatalogIndexCache,
 ) -> Result<(), InternalError> {
-    let mut guard = cache
-        .lock()
-        .map_err(|_| InternalError::app("DB_INIT_FAILED", "Failed to lock dependency index cache"))?;
+    let mut guard = cache.lock().map_err(|_| {
+        InternalError::app("DB_INIT_FAILED", "Failed to lock dependency index cache")
+    })?;
     guard.index = None;
     Ok(())
 }
@@ -224,17 +224,14 @@ fn get_or_build_dependency_catalog_index(
 
     let built = Arc::new(load_dependency_catalog_index(connection)?);
 
-    let mut guard = cache
-        .lock()
-        .map_err(|_| InternalError::app("DB_INIT_FAILED", "Failed to lock dependency index cache"))?;
+    let mut guard = cache.lock().map_err(|_| {
+        InternalError::app("DB_INIT_FAILED", "Failed to lock dependency index cache")
+    })?;
     if guard.index.is_none() {
         guard.index = Some(built.clone());
     }
 
-    Ok(guard
-        .index
-        .clone()
-        .unwrap_or(built))
+    Ok(guard.index.clone().unwrap_or(built))
 }
 
 fn load_dependency_catalog_index(
@@ -358,7 +355,12 @@ fn build_tree_dependency_node(
 
     let key = version_key(&resolved.package_id, &resolved.version_id);
     if ancestry.contains(&key) {
-        return resolved_dependency_node(raw.to_string(), resolved, DependencyResolutionKind::Cycle, Vec::new());
+        return resolved_dependency_node(
+            raw.to_string(),
+            resolved,
+            DependencyResolutionKind::Cycle,
+            Vec::new(),
+        );
     }
 
     if expanded_versions.contains(&key) {
@@ -381,7 +383,12 @@ fn build_tree_dependency_node(
 
     ancestry.remove(&key);
 
-    resolved_dependency_node(raw.to_string(), resolved, DependencyResolutionKind::Resolved, children)
+    resolved_dependency_node(
+        raw.to_string(),
+        resolved,
+        DependencyResolutionKind::Resolved,
+        children,
+    )
 }
 
 fn resolve_dependency_raw<'a>(
@@ -459,7 +466,8 @@ impl SummaryCollector {
                 let entry = occupied.get_mut();
                 entry.min_depth = entry.min_depth.min(depth);
 
-                match compare_version_number_strings(&record.version_number, &entry.version_number) {
+                match compare_version_number_strings(&record.version_number, &entry.version_number)
+                {
                     Ordering::Greater => {
                         entry
                             .collapsed_version_numbers
@@ -510,8 +518,11 @@ impl SummaryCollector {
                 continue;
             };
 
-            let mut collapsed_version_numbers =
-                entry.collapsed_version_numbers.iter().cloned().collect::<Vec<_>>();
+            let mut collapsed_version_numbers = entry
+                .collapsed_version_numbers
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
             collapsed_version_numbers.sort_by(|left, right| {
                 compare_version_number_strings(right, left).then_with(|| right.cmp(left))
             });
@@ -660,7 +671,11 @@ mod tests {
             "pack-a-100",
             "1.0.0",
             "green",
-            &["AuthorB-PackB-1.0.0", "AuthorC-PackC-1.0.0", "Missing-Pack-9.9.9"],
+            &[
+                "AuthorB-PackB-1.0.0",
+                "AuthorC-PackC-1.0.0",
+                "Missing-Pack-9.9.9",
+            ],
             Some(("verified", "Root note")),
             None,
         );
@@ -732,12 +747,18 @@ mod tests {
 
         assert_eq!(dependencies.tree_items.len(), 3);
         let first = &dependencies.tree_items[0];
-        assert!(matches!(first.resolution, DependencyResolutionKind::Resolved));
+        assert!(matches!(
+            first.resolution,
+            DependencyResolutionKind::Resolved
+        ));
         assert_eq!(first.package_id.as_deref(), Some("pack-b"));
         assert_eq!(first.children.len(), 1);
 
         let nested = &first.children[0];
-        assert!(matches!(nested.resolution, DependencyResolutionKind::Resolved));
+        assert!(matches!(
+            nested.resolution,
+            DependencyResolutionKind::Resolved
+        ));
         assert_eq!(nested.package_id.as_deref(), Some("pack-d"));
 
         let cycle = &nested.children[0];

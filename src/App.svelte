@@ -146,8 +146,12 @@
     {:else if $appState.view === "settings"}
       <SettingsScreen
         cacheSummary={$appState.cacheSummary}
+        isLoadingProfilesStorageSummary={$appState.isLoadingProfilesStorageSummary}
+        profilesStorageSummary={$appState.profilesStorageSummary}
+        onOpenActiveProfileFolder={actions.openActiveProfileFolder}
         onClearCache={actions.clearCache}
         onOpenCacheFolder={actions.openCacheFolder}
+        onOpenProfilesFolder={actions.openProfilesFolder}
         onResetAllData={actions.resetAllData}
         onWarningPrefChange={actions.setWarningPreference}
         settingsError={$appState.settingsError}

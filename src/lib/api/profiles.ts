@@ -3,6 +3,7 @@ import type {
   CreateProfileInput,
   DeleteProfileResult,
   ProfileDetailDto,
+  ProfilesStorageSummaryDto,
   ProfileSummaryDto,
   UpdateProfileInput
 } from "../types";
@@ -37,4 +38,16 @@ export function getProfileDetail(profileId: string): Promise<ProfileDetailDto | 
 
 export function resetAllData(): Promise<void> {
   return invokeCommand("reset_all_data");
+}
+
+export function openProfilesFolder(): Promise<void> {
+  return invokeCommand("open_profiles_folder");
+}
+
+export function openActiveProfileFolder(): Promise<void> {
+  return invokeCommand("open_active_profile_folder");
+}
+
+export function getProfilesStorageSummary(): Promise<ProfilesStorageSummaryDto> {
+  return invokeCommand("get_profiles_storage_summary");
 }

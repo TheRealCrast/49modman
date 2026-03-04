@@ -4,8 +4,8 @@ use crate::{
     app_state::AppState,
     error::AppError,
     services::dependency_service::{
-        get_version_dependencies as get_version_dependencies_service, GetVersionDependenciesInput,
-        VersionDependenciesDto, warm_dependency_catalog_index,
+        get_version_dependencies as get_version_dependencies_service,
+        warm_dependency_catalog_index, GetVersionDependenciesInput, VersionDependenciesDto,
     },
 };
 

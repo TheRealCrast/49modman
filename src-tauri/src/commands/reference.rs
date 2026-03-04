@@ -43,7 +43,8 @@ pub async fn set_reference_state(
             .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
 
         let row = set_reference_state_service(&connection, input).map_err(AppError::from)?;
-        invalidate_dependency_catalog_index(&state.dependency_index_cache).map_err(AppError::from)?;
+        invalidate_dependency_catalog_index(&state.dependency_index_cache)
+            .map_err(AppError::from)?;
         Ok(row)
     })
     .await

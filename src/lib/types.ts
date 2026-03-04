@@ -111,6 +111,7 @@ export interface ProfileSummaryDto {
   installedCount: number;
   enabledCount: number;
   isBuiltinDefault: boolean;
+  profileSizeBytes: number;
 }
 
 export interface ProfileDetailDto {
@@ -149,6 +150,12 @@ export interface CacheSummaryDto {
   totalBytes: number;
   cachePath: string;
   hasActiveDownloads: boolean;
+}
+
+export interface ProfilesStorageSummaryDto {
+  profileCount: number;
+  profilesTotalBytes: number;
+  activeProfileBytes: number;
 }
 
 export interface InstallTaskDto {
@@ -321,6 +328,7 @@ export interface AppState {
   activeProfile?: ProfileDetailDto;
   downloads: DownloadJobDto[];
   cacheSummary?: CacheSummaryDto;
+  profilesStorageSummary?: ProfilesStorageSummaryDto;
   activeCacheTaskIds: string[];
   activities: ActivityItem[];
   warningPrefs: WarningPrefsDto;
@@ -342,6 +350,7 @@ export interface AppState {
   isLoadingProfiles: boolean;
   isLoadingDownloads: boolean;
   isLoadingCacheSummary: boolean;
+  isLoadingProfilesStorageSummary: boolean;
   isLoadingReferences: boolean;
   isLoadingReferencesNextPage: boolean;
   lastCatalogRefreshLabel: string;

@@ -24,6 +24,18 @@
   let gamePath = "";
   let launchModeDefault: "steam" | "direct" = "steam";
 
+  function formatBytes(value = 0) {
+    if (value < 1024) {
+      return `${value} B`;
+    }
+
+    if (value < 1024 * 1024) {
+      return `${(value / 1024).toFixed(0)} KB`;
+    }
+
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   function resetForm() {
     name = "";
     notes = "";
@@ -265,7 +277,9 @@
           </div>
           <div class="profile-card-footer">
             <span>{profile.gamePath || "No game path set"}</span>
-            <span>{profile.isBuiltinDefault ? "Built-in default" : "Custom profile"}</span>
+            <span>
+              {profile.isBuiltinDefault ? "Built-in default" : "Custom profile"} · {formatBytes(profile.profileSizeBytes)}
+            </span>
           </div>
         </button>
       {/each}

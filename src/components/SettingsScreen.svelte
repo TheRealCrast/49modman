@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CacheSummaryDto } from "../lib/types";
+  import type { CacheSummaryDto, ProfilesStorageSummaryDto } from "../lib/types";
   import Icon from "./Icon.svelte";
 
   export let warningPrefs: {
@@ -7,13 +7,17 @@
     broken: boolean;
   };
   export let cacheSummary: CacheSummaryDto | undefined;
+  export let profilesStorageSummary: ProfilesStorageSummaryDto | undefined;
+  export let isLoadingProfilesStorageSummary = false;
   export let settingsError: string | null = null;
   export let onWarningPrefChange: (kind: "red" | "broken", enabled: boolean) => void | Promise<void>;
   export let onOpenCacheFolder: () => void | Promise<void>;
+  export let onOpenProfilesFolder: () => void | Promise<void>;
+  export let onOpenActiveProfileFolder: () => void | Promise<void>;
   export let onClearCache: () => void | Promise<void>;
   export let onResetAllData: () => void | Promise<void>;
 
-  function formatCacheBytes(value = 0) {
+  function formatBytes(value = 0) {
     if (value < 1024) {
       return `${value} B`;
     }
@@ -102,7 +106,7 @@
         <div class="switch-row">
           <div>
             <strong>Cached archives</strong>
-            <p>{cacheSummary ? `${cacheSummary.archiveCount} archives · ${formatCacheBytes(cacheSummary.totalBytes)}` : "Loading cache summary..."}</p>
+            <p>{cacheSummary ? `${cacheSummary.archiveCount} archives · ${formatBytes(cacheSummary.totalBytes)}` : "Loading cache summary..."}</p>
           </div>
         </div>
 
@@ -113,6 +117,51 @@
           </div>
           <button class="ghost-button icon-button" type="button" on:click={onOpenCacheFolder}>
             <Icon label="Open cache folder" name="folder" />
+            <span>Open</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-subheading">
+        <h3>Profiles</h3>
+      </div>
+
+      <div class="preference-list">
+        <div class="switch-row">
+          <div>
+            <strong>Profile storage</strong>
+            <p>
+              {#if isLoadingProfilesStorageSummary}
+                Loading profile summary...
+              {:else if profilesStorageSummary}
+                {profilesStorageSummary.profileCount} profiles · {formatBytes(profilesStorageSummary.profilesTotalBytes)} total · {formatBytes(profilesStorageSummary.activeProfileBytes)} active
+              {:else}
+                Profile summary unavailable.
+              {/if}
+            </p>
+          </div>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>Open profiles folder</strong>
+            <p>Open the root directory that contains all local profile folders.</p>
+          </div>
+          <button class="ghost-button icon-button" type="button" on:click={onOpenProfilesFolder}>
+            <Icon label="Open profiles folder" name="folder" />
+            <span>Open</span>
+          </button>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>Open active profile folder</strong>
+            <p>Open the currently active profile folder and its manifest files.</p>
+          </div>
+          <button class="ghost-button icon-button" type="button" on:click={onOpenActiveProfileFolder}>
+            <Icon label="Open active profile folder" name="folder" />
             <span>Open</span>
           </button>
         </div>

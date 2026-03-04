@@ -1,11 +1,21 @@
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::{
+    app_state::AppState,
     db::{get_setting, now_rfc3339, reset_user_data, upsert_setting},
     error::InternalError,
 };
+
+const PROFILE_MANIFEST_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +29,7 @@ pub struct ProfileSummaryDto {
     pub installed_count: usize,
     pub enabled_count: usize,
     pub is_builtin_default: bool,
+    pub profile_size_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +69,34 @@ pub struct UpdateProfileInput {
 pub struct DeleteProfileResult {
     pub deleted_id: String,
     pub next_active_profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfilesStorageSummaryDto {
+    pub profile_count: usize,
+    pub profiles_total_bytes: i64,
+    pub active_profile_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileManifest {
+    pub schema_version: u32,
+    pub updated_at: String,
+    pub profile: ProfileManifestProfile,
+    pub mods: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileManifestProfile {
+    pub id: String,
+    pub name: String,
+    pub notes: String,
+    pub game_path: String,
+    pub launch_mode_default: String,
+    pub is_builtin_default: bool,
 }
 
 pub fn list_profiles(connection: &Connection) -> Result<Vec<ProfileSummaryDto>, InternalError> {
@@ -354,6 +393,226 @@ pub fn reset_all_data(connection: &Connection) -> Result<(), InternalError> {
     reset_user_data(connection)
 }
 
+pub fn ensure_all_profile_storage(
+    state: &AppState,
+    connection: &Connection,
+) -> Result<(), InternalError> {
+    fs::create_dir_all(&state.profiles_dir)?;
+
+    let mut statement = connection.prepare("SELECT id FROM profiles ORDER BY id ASC")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+
+    for row in rows {
+        ensure_profile_storage(state, connection, &row?)?;
+    }
+
+    Ok(())
+}
+
+pub fn ensure_profile_storage(
+    state: &AppState,
+    connection: &Connection,
+    profile_id: &str,
+) -> Result<(), InternalError> {
+    let profile = get_profile_detail(connection, profile_id)?.ok_or_else(|| {
+        InternalError::app(
+            "PROFILE_NOT_FOUND",
+            format!("Profile {profile_id} does not exist."),
+        )
+    })?;
+
+    let profile_dir = profile_dir(state, profile_id);
+    fs::create_dir_all(profile_dir.join("mods"))?;
+    fs::create_dir_all(profile_dir.join("runtime"))?;
+    fs::create_dir_all(profile_dir.join("runtime").join("BepInEx").join("plugins"))?;
+    fs::create_dir_all(profile_dir.join("runtime").join("BepInEx").join("config"))?;
+    write_profile_manifest(state, &profile)
+}
+
+pub fn delete_profile_storage(state: &AppState, profile_id: &str) -> Result<(), InternalError> {
+    let profile_dir = profile_dir(state, profile_id);
+
+    if profile_dir.exists() {
+        fs::remove_dir_all(profile_dir)?;
+    }
+
+    Ok(())
+}
+
+pub fn clear_profiles_storage(state: &AppState) -> Result<(), InternalError> {
+    clear_directory_contents(&state.profiles_dir)
+}
+
+pub fn open_profiles_folder(state: &AppState) -> Result<(), InternalError> {
+    fs::create_dir_all(&state.profiles_dir)?;
+    open_folder_path(
+        &state.profiles_dir,
+        "OPEN_PROFILES_FOLDER_FAILED",
+        "Failed to open the profiles folder in the system file explorer.",
+    )
+}
+
+pub fn open_active_profile_folder(
+    state: &AppState,
+    connection: &Connection,
+) -> Result<(), InternalError> {
+    let active_profile_id = get_active_profile_id(connection)?.ok_or_else(|| {
+        InternalError::app(
+            "PROFILE_NOT_FOUND",
+            "The active profile could not be resolved from settings.",
+        )
+    })?;
+
+    ensure_profile_storage(state, connection, &active_profile_id)?;
+    open_folder_path(
+        &profile_dir(state, &active_profile_id),
+        "OPEN_ACTIVE_PROFILE_FOLDER_FAILED",
+        "Failed to open the active profile folder in the system file explorer.",
+    )
+}
+
+pub fn get_profiles_storage_summary(
+    state: &AppState,
+    connection: &Connection,
+) -> Result<ProfilesStorageSummaryDto, InternalError> {
+    fs::create_dir_all(&state.profiles_dir)?;
+
+    let profile_count = connection.query_row("SELECT COUNT(*) FROM profiles", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+
+    let active_profile_id =
+        get_active_profile_id(connection)?.unwrap_or_else(|| "default".to_string());
+    ensure_profile_storage(state, connection, &active_profile_id)?;
+
+    let profiles_total_bytes = directory_size_bytes(&state.profiles_dir)?;
+    let active_profile_bytes = directory_size_bytes(&profile_dir(state, &active_profile_id))?;
+
+    Ok(ProfilesStorageSummaryDto {
+        profile_count: profile_count.max(0) as usize,
+        profiles_total_bytes: profiles_total_bytes.min(i64::MAX as u64) as i64,
+        active_profile_bytes: active_profile_bytes.min(i64::MAX as u64) as i64,
+    })
+}
+
+pub fn get_profile_storage_size_bytes(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<i64, InternalError> {
+    let bytes = directory_size_bytes(&profile_dir(state, profile_id))?;
+    Ok(bytes.min(i64::MAX as u64) as i64)
+}
+
+fn write_profile_manifest(
+    state: &AppState,
+    profile: &ProfileDetailDto,
+) -> Result<(), InternalError> {
+    let manifest = ProfileManifest {
+        schema_version: PROFILE_MANIFEST_SCHEMA_VERSION,
+        updated_at: now_rfc3339()?,
+        profile: ProfileManifestProfile {
+            id: profile.id.clone(),
+            name: profile.name.clone(),
+            notes: profile.notes.clone(),
+            game_path: profile.game_path.clone(),
+            launch_mode_default: profile.launch_mode_default.clone(),
+            is_builtin_default: profile.is_builtin_default,
+        },
+        mods: Vec::new(),
+    };
+
+    let manifest_path = profile_manifest_path(state, &profile.id);
+    let profile_dir = manifest_path.parent().ok_or_else(|| {
+        InternalError::app(
+            "RESOURCE_LOAD_FAILED",
+            "Failed to resolve profile manifest parent directory.",
+        )
+    })?;
+
+    fs::create_dir_all(profile_dir.join("mods"))?;
+
+    let temp_manifest_path = profile_dir.join(format!(
+        "manifest.json.tmp-{}",
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    ));
+    let manifest_json = serde_json::to_vec_pretty(&manifest)?;
+
+    let mut temp_file = fs::File::create(&temp_manifest_path)?;
+    temp_file.write_all(&manifest_json)?;
+    temp_file.write_all(b"\n")?;
+    temp_file.sync_all()?;
+
+    fs::rename(temp_manifest_path, manifest_path)?;
+    Ok(())
+}
+
+fn profile_dir(state: &AppState, profile_id: &str) -> PathBuf {
+    state.profiles_dir.join(profile_id)
+}
+
+fn profile_manifest_path(state: &AppState, profile_id: &str) -> PathBuf {
+    profile_dir(state, profile_id).join("manifest.json")
+}
+
+fn open_folder_path(
+    folder_path: &Path,
+    code: &'static str,
+    message: &'static str,
+) -> Result<(), InternalError> {
+    let status = if cfg!(target_os = "windows") {
+        Command::new("explorer").arg(folder_path).status()?
+    } else if cfg!(target_os = "macos") {
+        Command::new("open").arg(folder_path).status()?
+    } else {
+        Command::new("xdg-open").arg(folder_path).status()?
+    };
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(InternalError::app(code, message))
+    }
+}
+
+fn clear_directory_contents(path: &Path) -> Result<(), InternalError> {
+    fs::create_dir_all(path)?;
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+
+        if entry_path.is_dir() {
+            fs::remove_dir_all(&entry_path)?;
+        } else if entry_path.exists() {
+            fs::remove_file(&entry_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn directory_size_bytes(path: &Path) -> Result<u64, InternalError> {
+    if !path.exists() {
+        return Ok(0);
+    }
+
+    let mut total = 0_u64;
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let metadata = entry.metadata()?;
+
+        if metadata.is_dir() {
+            total = total.saturating_add(directory_size_bytes(&entry_path)?);
+        } else if metadata.is_file() {
+            total = total.saturating_add(metadata.len());
+        }
+    }
+
+    Ok(total)
+}
+
 fn get_active_profile_id(connection: &Connection) -> Result<Option<String>, InternalError> {
     let active_profile_id = get_setting(connection, "profiles.active_id")?
         .and_then(|value_json| serde_json::from_str::<String>(&value_json).ok());
@@ -391,6 +650,7 @@ fn map_profile_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProfileS
         installed_count: 0,
         enabled_count: 0,
         is_builtin_default: row.get::<_, i64>(6)? != 0,
+        profile_size_bytes: 0,
     })
 }
 
