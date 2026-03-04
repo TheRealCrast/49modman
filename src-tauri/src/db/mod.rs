@@ -4,9 +4,11 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use crate::error::InternalError;
 
 const MIGRATION_0001: &str = include_str!("../../migrations/0001_init.sql");
+const MIGRATION_0002: &str = include_str!("../../migrations/0002_catalog_indexes.sql");
 
 pub fn migrate(connection: &Connection) -> Result<(), InternalError> {
     connection.execute_batch(MIGRATION_0001)?;
+    connection.execute_batch(MIGRATION_0002)?;
     Ok(())
 }
 

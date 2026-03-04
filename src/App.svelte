@@ -50,9 +50,9 @@
 </script>
 
 <svelte:head>
-  <title>49modman Prototype</title>
+  <title>49modman</title>
   <meta
-    content="Frontend-first UX prototype for a lightweight Lethal Company v49 mod manager."
+    content="Lightweight desktop mod manager for Lethal Company v49."
     name="description"
   />
 </svelte:head>
@@ -93,6 +93,16 @@
       </div>
     </header>
 
+    {#if $appState.desktopError}
+      <section class="panel desktop-error-panel">
+        <div class="compact-heading compact-heading-left">
+          <Icon label="Warning" name="warning" />
+          <h3>Desktop backend error</h3>
+        </div>
+        <p>{$appState.desktopError}</p>
+      </section>
+    {/if}
+
     {#if $appState.view === "overview"}
       <OverviewScreen
         activeProfile={$selectedProfile}
@@ -104,8 +114,13 @@
     {:else if $appState.view === "browse"}
       <BrowseScreen
         cards={$appState.catalogCards}
+        catalogError={$appState.catalogError}
+        hasMore={$appState.catalogHasMore}
+        isLoadingFirstPage={$appState.isLoadingCatalogFirstPage}
+        isLoadingNextPage={$appState.isLoadingCatalogNextPage}
         isRefreshingCatalog={$appState.isRefreshingCatalog}
         onInstall={actions.requestInstall}
+        onLoadMore={actions.loadMoreCatalog}
         onRefresh={actions.refreshCatalog}
         onSelectPackage={actions.selectPackage}
         onSetReference={actions.setReferenceState}
@@ -127,17 +142,36 @@
       <DownloadsScreen downloads={$appState.downloads} />
     {:else if $appState.view === "settings"}
       <SettingsScreen
-        onReferenceSearchDraftChange={actions.setReferenceSearchDraft}
-        onSetReference={actions.setReferenceState}
-        onSubmitReferenceSearch={actions.submitReferenceSearch}
         onWarningPrefChange={actions.setWarningPreference}
-        referenceSearchDraft={$appState.referenceSearchDraft}
-        rows={$appState.referenceRowsData}
         warningPrefs={$appState.warningPrefs}
       />
     {/if}
   </main>
 </div>
+
+{#if $appState.isCatalogOverlayVisible}
+  <div class="app-loading-overlay">
+    <div class="loading-card panel">
+      <div class="loading-spinner" aria-hidden="true"></div>
+      <h3>{$appState.catalogOverlayTitle ?? "Retrieving Thunderstore catalog"}</h3>
+      <p>{$appState.catalogOverlayMessage ?? "Building local cache for Browse"}</p>
+      <div class="loading-steps" aria-label="Catalog refresh progress">
+        <div class:active={$appState.catalogOverlayStep === "network"} class:done={$appState.catalogOverlayStep !== "network" && $appState.catalogOverlayStep !== null} class="loading-step">
+          <span class="loading-step-dot"></span>
+          <span>Contact Thunderstore</span>
+        </div>
+        <div class:active={$appState.catalogOverlayStep === "cache"} class:done={$appState.catalogOverlayStep === "browse"} class="loading-step">
+          <span class="loading-step-dot"></span>
+          <span>Update local cache</span>
+        </div>
+        <div class:active={$appState.catalogOverlayStep === "browse"} class="loading-step">
+          <span class="loading-step-dot"></span>
+          <span>Load Browse results</span>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if $appState.modal && modalCopy}
   <InstallWarningModal

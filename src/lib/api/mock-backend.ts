@@ -10,6 +10,8 @@ import {
 import type {
   CatalogSummaryDto,
   EffectiveStatus,
+  ListReferenceRowsInput,
+  ListReferenceRowsResult,
   ModPackage,
   ModVersion,
   PackageCardDto,
@@ -17,6 +19,7 @@ import type {
   ReferenceRow,
   ReferenceState,
   SearchPackagesInput,
+  SearchPackagesResult,
   SetReferenceStateInput,
   SyncCatalogInput,
   SyncCatalogResult,
@@ -257,16 +260,38 @@ export async function getCatalogSummaryMock(): Promise<CatalogSummaryDto> {
   };
 }
 
-export async function searchPackagesMock(input: SearchPackagesInput): Promise<PackageCardDto[]> {
-  return searchPackagesInternal(input);
+export async function searchPackagesMock(input: SearchPackagesInput): Promise<SearchPackagesResult> {
+  const pageSize = Math.max(1, input.pageSize ?? 40);
+  const cursor = Math.max(0, input.cursor ?? 0);
+  const cards = searchPackagesInternal(input);
+  const window = cards.slice(cursor, cursor + pageSize + 1);
+  const hasMore = window.length > pageSize;
+
+  return {
+    items: hasMore ? window.slice(0, pageSize) : window,
+    nextCursor: hasMore ? cursor + pageSize : null,
+    hasMore,
+    pageSize
+  };
 }
 
 export async function getPackageDetailMock(packageId: string): Promise<PackageDetailDto | null> {
   return currentPackages().find((pkg) => pkg.id === packageId) ?? null;
 }
 
-export async function listReferenceRowsMock(query: string): Promise<ReferenceRow[]> {
-  return referenceRowsInternal(query);
+export async function listReferenceRowsMock(input: ListReferenceRowsInput): Promise<ListReferenceRowsResult> {
+  const pageSize = Math.max(1, input.pageSize ?? 50);
+  const cursor = Math.max(0, input.cursor ?? 0);
+  const rows = referenceRowsInternal(input.query);
+  const window = rows.slice(cursor, cursor + pageSize + 1);
+  const hasMore = window.length > pageSize;
+
+  return {
+    items: hasMore ? window.slice(0, pageSize) : window,
+    nextCursor: hasMore ? cursor + pageSize : null,
+    hasMore,
+    pageSize
+  };
 }
 
 export async function setReferenceStateMock(input: SetReferenceStateInput): Promise<ReferenceRow> {

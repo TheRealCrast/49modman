@@ -1,8 +1,8 @@
 import { invokeCommand } from "./client";
-import type { ReferenceRow, SetReferenceStateInput } from "../types";
+import type { ListReferenceRowsInput, ListReferenceRowsResult, ReferenceRow, SetReferenceStateInput } from "../types";
 
-export function listReferenceRows(query: string): Promise<ReferenceRow[]> {
-  return invokeCommand("list_reference_rows", { query });
+export function listReferenceRows(input: ListReferenceRowsInput): Promise<ListReferenceRowsResult> {
+  return invokeCommand("list_reference_rows", { input });
 }
 
 export function setReferenceState(input: SetReferenceStateInput): Promise<ReferenceRow> {

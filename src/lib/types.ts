@@ -1,4 +1,5 @@
 export type AppView = "overview" | "browse" | "profiles" | "downloads" | "settings";
+export type RuntimeKind = "tauri" | "browser-mock";
 
 export type BaseZone = "orange" | "green" | "yellow" | "red";
 export type ReferenceState = "verified" | "broken" | "neutral";
@@ -45,6 +46,26 @@ export interface PackageCardDto {
   recommendedVersion: string;
   effectiveStatus: EffectiveStatus;
   everyRelevantVersionBroken: boolean;
+}
+
+export interface SearchPackagesResult {
+  items: PackageCardDto[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  pageSize: number;
+}
+
+export interface ListReferenceRowsInput {
+  query: string;
+  cursor?: number | null;
+  pageSize?: number;
+}
+
+export interface ListReferenceRowsResult {
+  items: ReferenceRow[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  pageSize: number;
 }
 
 export type PackageDetailDto = ModPackage;
@@ -124,6 +145,7 @@ export interface WarningPrefsDto {
 
 export interface AppState {
   view: AppView;
+  runtimeKind: RuntimeKind;
   browseSearchDraft: string;
   browseSearchSubmitted: string;
   visibleStatuses: EffectiveStatus[];
@@ -139,15 +161,29 @@ export interface AppState {
   referenceSearchSubmitted: string;
   isRefreshingCatalog: boolean;
   isBootstrapping: boolean;
+  isCatalogOverlayVisible: boolean;
+  catalogOverlayTitle: string | null;
+  catalogOverlayMessage: string | null;
+  catalogOverlayStep: "network" | "cache" | "browse" | null;
+  isLoadingCatalogFirstPage: boolean;
+  isLoadingCatalogNextPage: boolean;
   isLoadingPackageDetail: boolean;
   isLoadingReferences: boolean;
+  isLoadingReferencesNextPage: boolean;
   lastCatalogRefreshLabel: string;
   catalogCards: PackageCardDto[];
+  catalogNextCursor: number | null;
+  catalogHasMore: boolean;
+  catalogPageSize: number;
   selectedPackageDetail?: PackageDetailDto;
   referenceRowsData: ReferenceRow[];
+  referenceNextCursor: number | null;
+  referenceHasMore: boolean;
+  referencePageSize: number;
   catalogError: string | null;
   referenceError: string | null;
   settingsError: string | null;
+  desktopError: string | null;
 }
 
 export interface SyncCatalogInput {
@@ -157,6 +193,8 @@ export interface SyncCatalogInput {
 export interface SearchPackagesInput {
   query: string;
   visibleStatuses: EffectiveStatus[];
+  cursor?: number | null;
+  pageSize?: number;
 }
 
 export interface SetReferenceStateInput {

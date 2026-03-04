@@ -1,12 +1,12 @@
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     app_state::AppState,
     db::{get_setting, now_rfc3339, upsert_setting},
     domain::status::{
-        browse_status_priority, classify_base_zone, parse_reference_state,
-        resolve_effective_status, BaseZone, EffectiveStatus, ReferenceState,
+        classify_base_zone, parse_reference_state, resolve_effective_status, BaseZone,
+        EffectiveStatus, ReferenceState,
     },
     error::InternalError,
     thunderstore::{client::fetch_lethal_company_packages, models::ThunderstorePackage},
@@ -45,6 +45,17 @@ pub struct CatalogSummaryDto {
 pub struct SearchPackagesInput {
     pub query: String,
     pub visible_statuses: Vec<EffectiveStatus>,
+    pub cursor: Option<usize>,
+    pub page_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPackagesResult {
+    pub items: Vec<PackageCardDto>,
+    pub next_cursor: Option<usize>,
+    pub has_more: bool,
+    pub page_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +115,21 @@ pub(crate) struct PackageRecord {
     pub rating: f64,
     pub website_url: String,
     pub versions: Vec<PackageVersionDto>,
+}
+
+#[derive(Debug, Clone)]
+struct RawPackageCardRow {
+    id: String,
+    full_name: String,
+    author: String,
+    summary: String,
+    categories: Vec<String>,
+    total_downloads: i64,
+    rating: f64,
+    version_count: usize,
+    recommended_version: String,
+    effective_status: String,
+    every_relevant_version_broken: bool,
 }
 
 pub fn sync_catalog(
@@ -180,104 +206,176 @@ pub fn get_catalog_summary(connection: &Connection) -> Result<CatalogSummaryDto,
 pub fn search_packages(
     connection: &Connection,
     input: SearchPackagesInput,
-) -> Result<Vec<PackageCardDto>, InternalError> {
+) -> Result<SearchPackagesResult, InternalError> {
     let query = input.query.trim().to_lowercase();
-    let visible_statuses = input.visible_statuses;
+    let page_size = input.page_size.unwrap_or(40).clamp(1, 100);
+    let cursor = input.cursor.unwrap_or(0);
 
-    let mut cards = load_package_records(connection)?
-        .into_iter()
-        .filter_map(|package| {
-            let recommended = pick_recommended_version(&package.versions)?;
-            let effective_status = recommended.effective_status;
+    if input.visible_statuses.is_empty() {
+        return Ok(SearchPackagesResult {
+            items: Vec::new(),
+            next_cursor: None,
+            has_more: false,
+            page_size,
+        });
+    }
 
-            if !visible_statuses
-                .iter()
-                .any(|status| *status == effective_status)
-            {
-                return None;
-            }
+    let mut statement = connection.prepare(
+        "WITH version_states AS (
+            SELECT
+                pv.package_id,
+                pv.version_number,
+                pv.published_at,
+                pv.base_zone,
+                CASE
+                    WHEN ro.reference_state = 'broken' THEN 'broken'
+                    WHEN ro.reference_state = 'verified' THEN 'verified'
+                    WHEN ro.reference_state = 'neutral' THEN pv.base_zone
+                    WHEN pv.bundled_reference_state = 'broken' THEN 'broken'
+                    WHEN pv.bundled_reference_state = 'verified' THEN 'verified'
+                    WHEN pv.bundled_reference_state = 'neutral' THEN pv.base_zone
+                    ELSE pv.base_zone
+                END AS effective_status
+            FROM package_versions pv
+            LEFT JOIN reference_overrides ro
+                ON ro.package_id = pv.package_id AND ro.version_id = pv.id
+        ),
+        ranked_versions AS (
+            SELECT
+                version_states.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY package_id
+                    ORDER BY
+                        CASE effective_status
+                            WHEN 'verified' THEN 0
+                            WHEN 'green' THEN 1
+                            WHEN 'yellow' THEN 2
+                            WHEN 'orange' THEN 3
+                            WHEN 'broken' THEN 4
+                            ELSE 5
+                        END ASC,
+                        published_at DESC
+                ) AS recommended_row,
+                COUNT(*) OVER (PARTITION BY package_id) AS version_count,
+                SUM(CASE WHEN base_zone != 'red' THEN 1 ELSE 0 END) OVER (PARTITION BY package_id) AS relevant_version_count,
+                SUM(CASE WHEN base_zone != 'red' AND effective_status = 'broken' THEN 1 ELSE 0 END) OVER (PARTITION BY package_id) AS relevant_broken_count
+            FROM version_states
+        )
+        SELECT
+            p.id,
+            p.full_name,
+            p.author,
+            p.summary,
+            p.categories_json,
+            p.total_downloads,
+            p.rating,
+            rv.version_count,
+            rv.version_number,
+            rv.effective_status,
+            CASE
+                WHEN rv.relevant_version_count > 0 AND rv.relevant_version_count = rv.relevant_broken_count THEN 1
+                ELSE 0
+            END AS every_relevant_version_broken
+        FROM packages p
+        JOIN ranked_versions rv
+            ON rv.package_id = p.id AND rv.recommended_row = 1
+        WHERE
+            (?1 = '' OR lower(p.full_name || ' ' || p.author || ' ' || p.summary || ' ' || p.categories_json) LIKE '%' || ?1 || '%')
+            AND (
+                (?2 = 1 AND rv.effective_status = 'verified') OR
+                (?3 = 1 AND rv.effective_status = 'green') OR
+                (?4 = 1 AND rv.effective_status = 'yellow') OR
+                (?5 = 1 AND rv.effective_status = 'orange') OR
+                (?6 = 1 AND rv.effective_status = 'red') OR
+                (?7 = 1 AND rv.effective_status = 'broken')
+            )
+        ORDER BY
+            CASE rv.effective_status
+                WHEN 'verified' THEN 5
+                WHEN 'green' THEN 4
+                WHEN 'yellow' THEN 3
+                WHEN 'orange' THEN 2
+                WHEN 'red' THEN 1
+                ELSE 0
+            END DESC,
+            p.total_downloads DESC,
+            p.full_name ASC
+        LIMIT ?8 OFFSET ?9",
+    )?;
 
-            if !query.is_empty() {
-                let haystack = format!(
-                    "{} {} {} {}",
-                    package.full_name,
-                    package.author,
-                    package.summary,
-                    package.categories.join(" ")
-                )
-                .to_lowercase();
-
-                if !haystack.contains(&query) {
-                    return None;
-                }
-            }
-
-            Some(PackageCardDto {
-                id: package.id,
-                full_name: package.full_name,
-                author: package.author,
-                summary: package.summary,
-                categories: package.categories,
-                total_downloads: package.total_downloads,
-                rating: package.rating,
-                version_count: package.versions.len(),
-                recommended_version: recommended.version_number.clone(),
-                effective_status,
-                every_relevant_version_broken: every_relevant_version_broken(&package.versions),
+    let status_flags = VisibleStatusFlags::from_slice(&input.visible_statuses);
+    let rows = statement.query_map(
+        params![
+            query,
+            status_flags.verified,
+            status_flags.green,
+            status_flags.yellow,
+            status_flags.orange,
+            status_flags.red,
+            status_flags.broken,
+            (page_size + 1) as i64,
+            cursor as i64,
+        ],
+        |row| {
+            let categories_json: String = row.get(4)?;
+            Ok(RawPackageCardRow {
+                id: row.get(0)?,
+                full_name: row.get(1)?,
+                author: row.get(2)?,
+                summary: row.get(3)?,
+                categories: serde_json::from_str(&categories_json).unwrap_or_default(),
+                total_downloads: row.get(5)?,
+                rating: row.get(6)?,
+                version_count: row.get::<_, i64>(7)? as usize,
+                recommended_version: row.get(8)?,
+                effective_status: row.get(9)?,
+                every_relevant_version_broken: row.get::<_, i64>(10)? == 1,
             })
-        })
-        .collect::<Vec<_>>();
+        },
+    )?;
 
-    cards.sort_by(|left, right| {
-        browse_status_priority(right.effective_status)
-            .cmp(&browse_status_priority(left.effective_status))
-            .then(right.total_downloads.cmp(&left.total_downloads))
-    });
+    let mut items = Vec::new();
+    for row in rows {
+        let raw = row?;
+        items.push(PackageCardDto {
+            id: raw.id,
+            full_name: raw.full_name,
+            author: raw.author,
+            summary: raw.summary,
+            categories: raw.categories,
+            total_downloads: raw.total_downloads,
+            rating: raw.rating,
+            version_count: raw.version_count,
+            recommended_version: raw.recommended_version,
+            effective_status: parse_effective_status(&raw.effective_status)?,
+            every_relevant_version_broken: raw.every_relevant_version_broken,
+        });
+    }
 
-    Ok(cards)
+    let has_more = items.len() > page_size;
+    if has_more {
+        items.truncate(page_size);
+    }
+
+    Ok(SearchPackagesResult {
+        next_cursor: if has_more {
+            Some(cursor + items.len())
+        } else {
+            None
+        },
+        has_more,
+        items,
+        page_size,
+    })
 }
 
 pub fn get_package_detail(
     connection: &Connection,
     package_id: &str,
 ) -> Result<Option<PackageDetailDto>, InternalError> {
-    Ok(load_package_records(connection)?
-        .into_iter()
-        .find(|package| package.id == package_id)
-        .map(package_record_to_detail))
-}
+    let package = load_package_record_by_id(connection, package_id)?;
 
-pub(crate) fn load_package_records(
-    connection: &Connection,
-) -> Result<Vec<PackageRecord>, InternalError> {
-    let mut statement = connection.prepare(
-        "SELECT id, full_name, author, summary, categories_json, total_downloads, rating, website_url
-         FROM packages",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let categories_json: String = row.get(4)?;
-        Ok(PackageRecord {
-            id: row.get(0)?,
-            full_name: row.get(1)?,
-            author: row.get(2)?,
-            summary: row.get(3)?,
-            categories: serde_json::from_str(&categories_json).unwrap_or_default(),
-            total_downloads: row.get(5)?,
-            rating: row.get(6)?,
-            website_url: row.get(7)?,
-            versions: Vec::new(),
-        })
-    })?;
-
-    let mut packages = Vec::new();
-
-    for row in rows {
-        let mut package = row?;
-        package.versions = load_versions_for_package(connection, &package.id)?;
-        packages.push(package);
-    }
-
-    Ok(packages)
+    Ok(package.map(package_record_to_detail))
 }
 
 fn package_record_to_detail(package: PackageRecord) -> PackageDetailDto {
@@ -291,6 +389,42 @@ fn package_record_to_detail(package: PackageRecord) -> PackageDetailDto {
         rating: package.rating,
         website_url: package.website_url,
         versions: package.versions,
+    }
+}
+
+fn load_package_record_by_id(
+    connection: &Connection,
+    package_id: &str,
+) -> Result<Option<PackageRecord>, InternalError> {
+    let mut statement = connection.prepare(
+        "SELECT id, full_name, author, summary, categories_json, total_downloads, rating, website_url
+         FROM packages
+         WHERE id = ?1",
+    )?;
+
+    let package = statement
+        .query_row(params![package_id], |row| {
+            let categories_json: String = row.get(4)?;
+            Ok(PackageRecord {
+                id: row.get(0)?,
+                full_name: row.get(1)?,
+                author: row.get(2)?,
+                summary: row.get(3)?,
+                categories: serde_json::from_str(&categories_json).unwrap_or_default(),
+                total_downloads: row.get(5)?,
+                rating: row.get(6)?,
+                website_url: row.get(7)?,
+                versions: Vec::new(),
+            })
+        })
+        .optional()?;
+
+    match package {
+        Some(mut package) => {
+            package.versions = load_versions_for_package(connection, &package.id)?;
+            Ok(Some(package))
+        }
+        None => Ok(None),
     }
 }
 
@@ -489,43 +623,41 @@ fn format_base_zone(zone: BaseZone) -> &'static str {
     }
 }
 
-fn pick_recommended_version(versions: &[PackageVersionDto]) -> Option<&PackageVersionDto> {
-    versions
-        .iter()
-        .find(|version| version.effective_status == EffectiveStatus::Verified)
-        .or_else(|| {
-            versions
-                .iter()
-                .filter(|version| {
-                    matches!(
-                        version.effective_status,
-                        EffectiveStatus::Green | EffectiveStatus::Yellow | EffectiveStatus::Orange
-                    )
-                })
-                .max_by(|left, right| {
-                    browse_status_priority(left.effective_status)
-                        .cmp(&browse_status_priority(right.effective_status))
-                        .then(left.published_at.cmp(&right.published_at))
-                })
-        })
-        .or_else(|| {
-            versions
-                .iter()
-                .find(|version| version.effective_status == EffectiveStatus::Broken)
-        })
-        .or_else(|| versions.first())
+fn parse_effective_status(value: &str) -> Result<EffectiveStatus, InternalError> {
+    match value {
+        "verified" => Ok(EffectiveStatus::Verified),
+        "green" => Ok(EffectiveStatus::Green),
+        "yellow" => Ok(EffectiveStatus::Yellow),
+        "orange" => Ok(EffectiveStatus::Orange),
+        "red" => Ok(EffectiveStatus::Red),
+        "broken" => Ok(EffectiveStatus::Broken),
+        _ => Err(InternalError::app(
+            "THUNDERSTORE_RESPONSE_INVALID",
+            format!("Unknown effective status value returned from SQLite: {value}"),
+        )),
+    }
 }
 
-fn every_relevant_version_broken(versions: &[PackageVersionDto]) -> bool {
-    let relevant: Vec<_> = versions
-        .iter()
-        .filter(|version| version.base_zone != BaseZone::Red)
-        .collect();
+struct VisibleStatusFlags {
+    verified: i64,
+    green: i64,
+    yellow: i64,
+    orange: i64,
+    red: i64,
+    broken: i64,
+}
 
-    !relevant.is_empty()
-        && relevant
-            .iter()
-            .all(|version| version.effective_status == EffectiveStatus::Broken)
+impl VisibleStatusFlags {
+    fn from_slice(statuses: &[EffectiveStatus]) -> Self {
+        Self {
+            verified: statuses.contains(&EffectiveStatus::Verified) as i64,
+            green: statuses.contains(&EffectiveStatus::Green) as i64,
+            yellow: statuses.contains(&EffectiveStatus::Yellow) as i64,
+            orange: statuses.contains(&EffectiveStatus::Orange) as i64,
+            red: statuses.contains(&EffectiveStatus::Red) as i64,
+            broken: statuses.contains(&EffectiveStatus::Broken) as i64,
+        }
+    }
 }
 
 fn normalize_package_id(full_name: &str) -> String {

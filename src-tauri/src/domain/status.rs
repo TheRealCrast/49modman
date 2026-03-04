@@ -63,17 +63,6 @@ pub fn resolve_effective_status(
     }
 }
 
-pub fn browse_status_priority(status: EffectiveStatus) -> i32 {
-    match status {
-        EffectiveStatus::Verified => 5,
-        EffectiveStatus::Green => 4,
-        EffectiveStatus::Yellow => 3,
-        EffectiveStatus::Orange => 2,
-        EffectiveStatus::Red => 1,
-        EffectiveStatus::Broken => 0,
-    }
-}
-
 pub fn parse_reference_state(value: &str) -> Option<ReferenceState> {
     match value {
         "verified" => Some(ReferenceState::Verified),

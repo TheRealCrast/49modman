@@ -8,16 +8,7 @@ import {
   setWarningPreferenceMock,
   syncCatalogMock
 } from "./mock-backend";
-
-declare global {
-  interface Window {
-    __TAURI__?: {
-      core?: {
-        invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
-      };
-    };
-  }
-}
+import { getRuntimeKind, isTauriRuntime } from "../runtime";
 
 type CommandMap = {
   sync_catalog: typeof syncCatalogMock;
@@ -28,6 +19,7 @@ type CommandMap = {
   set_reference_state: typeof setReferenceStateMock;
   get_warning_prefs: typeof getWarningPrefsMock;
   set_warning_preference: typeof setWarningPreferenceMock;
+  open_external_url: (url: string) => Promise<void>;
 };
 
 const mockCommands: CommandMap = {
@@ -38,20 +30,27 @@ const mockCommands: CommandMap = {
   list_reference_rows: listReferenceRowsMock,
   set_reference_state: setReferenceStateMock,
   get_warning_prefs: getWarningPrefsMock,
-  set_warning_preference: setWarningPreferenceMock
+  set_warning_preference: setWarningPreferenceMock,
+  open_external_url: async () => {}
 };
 
 function tauriInvoke() {
   return window.__TAURI__?.core?.invoke;
 }
 
+export { getRuntimeKind };
+
 export async function invokeCommand<T>(
   command: keyof CommandMap,
   args?: Record<string, unknown>
 ): Promise<T> {
-  const invoke = tauriInvoke();
+  if (isTauriRuntime()) {
+    const invoke = tauriInvoke();
 
-  if (invoke) {
+    if (!invoke) {
+      throw new Error(`Tauri runtime is available but invoke() is missing for command ${command}.`);
+    }
+
     return invoke<T>(command, args);
   }
 
@@ -65,12 +64,20 @@ export async function invokeCommand<T>(
     return handler(args.input);
   }
 
+  if (args && "input" in args) {
+    return handler(args.input);
+  }
+
   if (args && "query" in args) {
     return handler(args.query);
   }
 
   if (args && "packageId" in args) {
     return handler(args.packageId);
+  }
+
+  if (args && "url" in args) {
+    return handler(args.url);
   }
 
   if (args && "kind" in args && "enabled" in args) {

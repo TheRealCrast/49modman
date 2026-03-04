@@ -10,7 +10,7 @@ export const seedPackages: ModPackage[] = [
     categories: ["Core", "Loader", "Dependency"],
     totalDownloads: 2850021,
     rating: 4.9,
-    websiteUrl: "https://thunderstore.io",
+    websiteUrl: "https://thunderstore.io/c/lethal-company/p/BepInEx/BepInExPack/",
     versions: [
       {
         id: "bepinex-5417",
@@ -40,7 +40,7 @@ export const seedPackages: ModPackage[] = [
     categories: ["Lobby", "Multiplayer", "QoL"],
     totalDownloads: 1912033,
     rating: 4.7,
-    websiteUrl: "https://thunderstore.io",
+    websiteUrl: "https://thunderstore.io/c/lethal-company/p/notnotnotswipez/MoreCompany/",
     versions: [
       {
         id: "more-176",
@@ -77,7 +77,7 @@ export const seedPackages: ModPackage[] = [
     categories: ["API", "Dependency", "Core"],
     totalDownloads: 1220143,
     rating: 4.2,
-    websiteUrl: "https://thunderstore.io",
+    websiteUrl: "https://thunderstore.io/c/lethal-company/p/2018/LC_API/",
     versions: [
       {
         id: "lcapi-343",
@@ -116,7 +116,7 @@ export const seedPackages: ModPackage[] = [
     categories: ["Enemies", "Content", "Immersion"],
     totalDownloads: 875000,
     rating: 4.6,
-    websiteUrl: "https://thunderstore.io",
+    websiteUrl: "https://thunderstore.io/c/lethal-company/p/x753/Mimics/",
     versions: [
       {
         id: "mimics-210",
@@ -145,7 +145,7 @@ export const seedPackages: ModPackage[] = [
     categories: ["Enemies", "Challenge", "Experimental"],
     totalDownloads: 240800,
     rating: 3.9,
-    websiteUrl: "https://thunderstore.io",
+    websiteUrl: "https://thunderstore.io/c/lethal-company/p/Renegades/CoilHeadStare/",
     versions: [
       {
         id: "coil-091",

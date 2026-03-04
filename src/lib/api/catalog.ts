@@ -1,9 +1,9 @@
 import { invokeCommand } from "./client";
 import type {
   CatalogSummaryDto,
-  PackageCardDto,
   PackageDetailDto,
   SearchPackagesInput,
+  SearchPackagesResult,
   SyncCatalogInput,
   SyncCatalogResult
 } from "../types";
@@ -16,7 +16,7 @@ export function getCatalogSummary(): Promise<CatalogSummaryDto> {
   return invokeCommand("get_catalog_summary");
 }
 
-export function searchPackages(input: SearchPackagesInput): Promise<PackageCardDto[]> {
+export function searchPackages(input: SearchPackagesInput): Promise<SearchPackagesResult> {
   return invokeCommand("search_packages", { input });
 }
 

@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use reqwest::blocking::Client;
 use rusqlite::Connection;
@@ -10,8 +10,9 @@ use crate::{
     resources::bundled_reference::{load_bundled_reference_library, BundledReferenceLibrary},
 };
 
+#[derive(Clone)]
 pub struct AppState {
-    pub connection: Mutex<Connection>,
+    pub connection: Arc<Mutex<Connection>>,
     pub http_client: Client,
     pub bundled_references: BundledReferenceLibrary,
 }
@@ -36,7 +37,7 @@ impl AppState {
         db::seed_defaults(&connection)?;
 
         Ok(Self {
-            connection: Mutex::new(connection),
+            connection: Arc::new(Mutex::new(connection)),
             http_client: Client::builder()
                 .user_agent("49modman/0.0.1")
                 .build()
