@@ -63,23 +63,7 @@ Current working tree before the next commit includes:
 
 - `docs/current-stage.md`
 - `docs/dependency-view-v1-1.md`
-- `src/App.svelte`
-- `src/app.css`
-- `src/components/BrowseScreen.svelte`
-- `src/components/Icon.svelte`
-- `src/components/PackageDetail.svelte`
-- `src/lib/api/client.ts`
-- `src/lib/api/dependencies.ts`
-- `src/lib/api/mock-backend.ts`
 - `src/lib/store.ts`
-- `src/lib/types.ts`
-- `src-tauri/src/commands/dependencies.rs`
-- `src-tauri/src/commands/profiles.rs`
-- `src-tauri/src/commands/reference.rs`
-- `src-tauri/src/app_state.rs`
-- `src-tauri/src/main.rs`
-- `src-tauri/src/services/catalog_service.rs`
-- `src-tauri/src/services/dependency_service.rs`
 
 ## Profile Milestone Notes
 
@@ -218,7 +202,9 @@ Browse startup / interaction behavior tied to dependency optimization:
   1. first Browse page is loaded
   2. selected package detail is loaded
   3. dependency index warmup completes
-- background non-blocking refresh after startup no longer toggles the first-page `Searching cached mods...` state
+  4. a non-force catalog freshness check completes
+- if startup freshness check returns `synced`, Browse first page/detail are reloaded while the overlay is still visible, then dependency warmup runs again against updated metadata
+- there is no longer a background post-overlay refresh in cached-catalog startup; this avoids the confusing `Refreshing` phase after the app appears interactive
 - during first-page Browse searches, the right-side package detail panel is now interaction-locked to avoid stale-detail discrepancies while results are being replaced
 
 Current known gaps / follow-up candidates:

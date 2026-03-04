@@ -40,6 +40,8 @@ Implemented behavior:
 - unresolved rows remain visible in both Summary and Tree
 - jump-to-exact-version still closes modal, opens Browse, and highlights the target row
 - startup overlay now includes dependency warmup so the first dependency modal open avoids cold index build cost
+- existing-catalog startup now performs a non-force catalog freshness check (`sync_catalog` with `force=false`) before dismissing the startup overlay
+- post-overlay background refresh was removed from cached-catalog startup to avoid a confusing second refresh phase after the app becomes visible
 
 ## Original Plan Context
 

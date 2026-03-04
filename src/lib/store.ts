@@ -593,6 +593,67 @@ async function warmDependencyIndexForOverlay() {
   await warmDependencyIndex();
 }
 
+async function checkForCatalogUpdatesInStartupOverlay() {
+  appState.update((state) => ({
+    ...state,
+    isRefreshingCatalog: true,
+    catalogError: null,
+    desktopError: null,
+    catalogOverlayStep: state.isCatalogOverlayVisible ? "dependencies" : state.catalogOverlayStep,
+    catalogOverlayMessage: state.isCatalogOverlayVisible
+      ? "Checking for cached catalog updates"
+      : state.catalogOverlayMessage
+  }));
+
+  try {
+    const result = await syncCatalog({ force: false });
+
+    if (result.outcome === "synced") {
+      appState.update((state) => ({
+        ...state,
+        catalogOverlayStep: state.isCatalogOverlayVisible ? "dependencies" : state.catalogOverlayStep,
+        catalogOverlayMessage: state.isCatalogOverlayVisible
+          ? "Catalog updated. Reloading Browse results"
+          : state.catalogOverlayMessage
+      }));
+
+      const reloaded = await loadCatalogFirstPage({
+        showLoading: false,
+        waitForSelectedPackageDetail: true
+      });
+      if (!reloaded) {
+        throw new Error("The catalog cache refreshed, but the first page could not be loaded.");
+      }
+
+      await warmDependencyIndexForOverlay();
+    }
+
+    const summary = await getCatalogSummary();
+
+    appState.update((state) =>
+      appendActivity(
+        {
+          ...state,
+          lastCatalogRefreshLabel: result.outcome === "synced" ? result.message : summary.lastSyncLabel,
+          desktopError: null
+        },
+        withActivity(
+          result.outcome === "synced" ? "Catalog refreshed" : "Catalog already fresh",
+          result.outcome === "synced"
+            ? `${result.packageCount} packages and ${result.versionCount} versions are cached locally.`
+            : "The cached Thunderstore metadata is still within the freshness window.",
+          "neutral"
+        )
+      )
+    );
+  } finally {
+    appState.update((state) => ({
+      ...state,
+      isRefreshingCatalog: false
+    }));
+  }
+}
+
 async function refreshCatalog(
   force: boolean,
   options: {
@@ -820,6 +881,7 @@ export const actions = {
         }
 
         await warmDependencyIndexForOverlay();
+        await checkForCatalogUpdatesInStartupOverlay();
 
         appState.update((state) => ({
           ...state,
@@ -828,11 +890,6 @@ export const actions = {
           catalogOverlayMessage: null,
           catalogOverlayStep: null
         }));
-
-        void refreshCatalog(false, {
-          showFirstPageLoading: false,
-          waitForSelectedPackageDetail: false
-        });
       }
 
     } catch (error) {
