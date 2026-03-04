@@ -18,6 +18,7 @@ export const seedPackages: ModPackage[] = [
         publishedAt: "2024-01-20",
         downloads: 410112,
         baseZone: "green",
+        dependencies: [],
         bundledReferenceState: "verified",
         bundledReferenceNote:
           "Confirmed stable with core v49 stacks and 8-player sessions."
@@ -27,7 +28,8 @@ export const seedPackages: ModPackage[] = [
         versionNumber: "5.4.2200",
         publishedAt: "2024-04-17",
         downloads: 901220,
-        baseZone: "red"
+        baseZone: "red",
+        dependencies: []
       }
     ]
   },
@@ -48,6 +50,7 @@ export const seedPackages: ModPackage[] = [
         publishedAt: "2024-03-14",
         downloads: 240100,
         baseZone: "green",
+        dependencies: ["BepInEx-BepInExPack-5.4.2100"],
         bundledReferenceState: "verified",
         bundledReferenceNote:
           "Confirmed working with BepInExPack 5.4.2100 and vanilla-hosted lobbies."
@@ -57,14 +60,16 @@ export const seedPackages: ModPackage[] = [
         versionNumber: "1.7.7",
         publishedAt: "2024-04-03",
         downloads: 191221,
-        baseZone: "yellow"
+        baseZone: "yellow",
+        dependencies: ["BepInEx-BepInExPack-5.4.2100"]
       },
       {
         id: "more-180",
         versionNumber: "1.8.0",
         publishedAt: "2024-04-14",
         downloads: 310113,
-        baseZone: "red"
+        baseZone: "red",
+        dependencies: ["BepInEx-BepInExPack-5.4.2200"]
       }
     ]
   },
@@ -85,6 +90,7 @@ export const seedPackages: ModPackage[] = [
         publishedAt: "2024-01-15",
         downloads: 120001,
         baseZone: "green",
+        dependencies: ["BepInEx-BepInExPack-5.4.2100"],
         bundledReferenceState: "verified",
         bundledReferenceNote: "Good baseline for older v49 dependency chains."
       },
@@ -94,6 +100,7 @@ export const seedPackages: ModPackage[] = [
         publishedAt: "2024-02-01",
         downloads: 184940,
         baseZone: "green",
+        dependencies: ["BepInEx-BepInExPack-5.4.2100"],
         bundledReferenceState: "broken",
         bundledReferenceNote:
           "Known to trigger lobby desync after the first quota rollover."
@@ -103,7 +110,8 @@ export const seedPackages: ModPackage[] = [
         versionNumber: "3.5.0",
         publishedAt: "2024-04-16",
         downloads: 201114,
-        baseZone: "red"
+        baseZone: "red",
+        dependencies: ["BepInEx-BepInExPack-5.4.2200"]
       }
     ]
   },
@@ -123,7 +131,8 @@ export const seedPackages: ModPackage[] = [
         versionNumber: "2.1.0",
         publishedAt: "2023-11-24",
         downloads: 80011,
-        baseZone: "orange"
+        baseZone: "orange",
+        dependencies: ["BepInEx-BepInExPack-5.4.2100", "Renegades-CoilHeadStare-0.8.0"]
       },
       {
         id: "mimics-220",
@@ -131,6 +140,11 @@ export const seedPackages: ModPackage[] = [
         publishedAt: "2024-02-18",
         downloads: 122903,
         baseZone: "green",
+        dependencies: [
+          "BepInEx-BepInExPack-5.4.2100",
+          "2018-LC_API-3.4.3",
+          "Renegades-CoilHeadStare-0.8.0"
+        ],
         bundledReferenceState: "verified",
         bundledReferenceNote: "Confirmed playable on dedicated host and peer host."
       }
@@ -153,6 +167,7 @@ export const seedPackages: ModPackage[] = [
         publishedAt: "2024-03-01",
         downloads: 40110,
         baseZone: "green",
+        dependencies: ["2018-LC_API-3.4.5", "missingauthor-MissingPack-1.0.0"],
         bundledReferenceState: "broken",
         bundledReferenceNote: "Confirmed null-ref on facility load for v49 clients."
       },
@@ -161,7 +176,8 @@ export const seedPackages: ModPackage[] = [
         versionNumber: "0.8.0",
         publishedAt: "2024-01-10",
         downloads: 38112,
-        baseZone: "green"
+        baseZone: "green",
+        dependencies: ["2018-LC_API-3.4.3", "x753-Mimics-2.1.0"]
       }
     ]
   }

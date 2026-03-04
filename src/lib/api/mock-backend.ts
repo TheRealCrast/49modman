@@ -11,9 +11,11 @@ import type {
   CacheSummaryDto,
   CatalogSummaryDto,
   CreateProfileInput,
+  DependencyNodeDto,
   DeleteProfileResult,
   DownloadJobDto,
   EffectiveStatus,
+  GetVersionDependenciesInput,
   InstallTaskDto,
   ListReferenceRowsInput,
   ListReferenceRowsResult,
@@ -33,6 +35,7 @@ import type {
   SyncCatalogInput,
   SyncCatalogResult,
   UpdateProfileInput,
+  VersionDependencyTreeDto,
   WarningPrefsDto
 } from "../types";
 
@@ -177,6 +180,75 @@ function applyOverrides(packages: ModPackage[]): ModPackage[] {
 
 function currentPackages(): ModPackage[] {
   return applyOverrides(seedPackages);
+}
+
+function findPackageVersion(packageId: string, versionId: string) {
+  const pkg = currentPackages().find((entry) => entry.id === packageId);
+  const version = pkg?.versions.find((entry) => entry.id === versionId);
+
+  return pkg && version ? { pkg, version } : null;
+}
+
+function findDependencyTarget(raw: string) {
+  const normalized = raw.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  for (const pkg of currentPackages()) {
+    for (const version of pkg.versions) {
+      if (`${pkg.fullName}-${version.versionNumber}` === normalized) {
+        return { pkg, version };
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildDependencyNode(raw: string, ancestry: Set<string>): DependencyNodeDto {
+  const target = findDependencyTarget(raw);
+
+  if (!target) {
+    return {
+      raw,
+      resolution: "unresolved",
+      children: []
+    };
+  }
+
+  const versionKey = `${target.pkg.id}:${target.version.id}`;
+  if (ancestry.has(versionKey)) {
+    return {
+      raw,
+      packageId: target.pkg.id,
+      packageName: target.pkg.fullName,
+      versionId: target.version.id,
+      versionNumber: target.version.versionNumber,
+      effectiveStatus: resolveEffectiveStatus(target.version),
+      referenceNote: currentReferenceNote(target.version),
+      resolution: "cycle",
+      children: []
+    };
+  }
+
+  const nextAncestry = new Set(ancestry);
+  nextAncestry.add(versionKey);
+
+  return {
+    raw,
+    packageId: target.pkg.id,
+    packageName: target.pkg.fullName,
+    versionId: target.version.id,
+    versionNumber: target.version.versionNumber,
+    effectiveStatus: resolveEffectiveStatus(target.version),
+    referenceNote: currentReferenceNote(target.version),
+    resolution: "resolved",
+    children: (target.version.dependencies ?? []).map((dependency) =>
+      buildDependencyNode(dependency, nextAncestry)
+    )
+  };
 }
 
 function currentProfiles(): ProfileSummaryDto[] {
@@ -368,6 +440,28 @@ export async function searchPackagesMock(input: SearchPackagesInput): Promise<Se
 
 export async function getPackageDetailMock(packageId: string): Promise<PackageDetailDto | null> {
   return currentPackages().find((pkg) => pkg.id === packageId) ?? null;
+}
+
+export async function getVersionDependenciesMock(
+  input: GetVersionDependenciesInput
+): Promise<VersionDependencyTreeDto> {
+  const resolved = findPackageVersion(input.packageId, input.versionId);
+
+  if (!resolved) {
+    throw new Error("That package version is not available in the cached Thunderstore catalog.");
+  }
+
+  const ancestry = new Set([`${resolved.pkg.id}:${resolved.version.id}`]);
+
+  return {
+    rootPackageId: resolved.pkg.id,
+    rootPackageName: resolved.pkg.fullName,
+    rootVersionId: resolved.version.id,
+    rootVersionNumber: resolved.version.versionNumber,
+    items: (resolved.version.dependencies ?? []).map((dependency) =>
+      buildDependencyNode(dependency, ancestry)
+    )
+  };
 }
 
 export async function listProfilesMock(): Promise<ProfileSummaryDto[]> {

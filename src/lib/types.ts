@@ -14,6 +14,7 @@ export interface ModVersion {
   publishedAt: string;
   downloads: number;
   baseZone: BaseZone;
+  dependencies?: string[];
   bundledReferenceState?: Exclude<ReferenceState, "neutral">;
   bundledReferenceNote?: string;
   overrideReferenceState?: ReferenceState;
@@ -199,6 +200,33 @@ export interface InstallRequest {
   referenceNote?: string;
 }
 
+export type DependencyResolutionKind = "resolved" | "unresolved" | "cycle";
+
+export interface DependencyNodeDto {
+  raw: string;
+  packageId?: string;
+  packageName?: string;
+  versionId?: string;
+  versionNumber?: string;
+  effectiveStatus?: EffectiveStatus;
+  referenceNote?: string;
+  resolution: DependencyResolutionKind;
+  children: DependencyNodeDto[];
+}
+
+export interface VersionDependencyTreeDto {
+  rootPackageId: string;
+  rootPackageName: string;
+  rootVersionId: string;
+  rootVersionNumber: string;
+  items: DependencyNodeDto[];
+}
+
+export interface GetVersionDependenciesInput {
+  packageId: string;
+  versionId: string;
+}
+
 export interface WarningModalState {
   packageId: string;
   packageName: string;
@@ -206,6 +234,22 @@ export interface WarningModalState {
   versionNumber: string;
   status: "red" | "broken";
   referenceNote?: string;
+}
+
+export interface DependencyModalState {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  isLoading: boolean;
+  tree?: VersionDependencyTreeDto;
+  error?: string | null;
+}
+
+export interface FocusedVersionState {
+  packageId: string;
+  versionId: string;
+  highlightToken: number;
 }
 
 export interface ActivityItem {
@@ -250,6 +294,8 @@ export interface AppState {
   activities: ActivityItem[];
   warningPrefs: WarningPrefsDto;
   modal: WarningModalState | null;
+  dependencyModal: DependencyModalState | null;
+  focusedVersion: FocusedVersionState | null;
   referenceSearchDraft: string;
   referenceSearchSubmitted: string;
   isRefreshingCatalog: boolean;

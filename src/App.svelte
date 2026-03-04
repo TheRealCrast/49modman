@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import BrowseScreen from "./components/BrowseScreen.svelte";
+  import DependencyModal from "./components/DependencyModal.svelte";
   import DownloadsScreen from "./components/DownloadsScreen.svelte";
   import Icon from "./components/Icon.svelte";
   import InstallWarningModal from "./components/InstallWarningModal.svelte";
@@ -10,6 +11,13 @@
   import SettingsScreen from "./components/SettingsScreen.svelte";
   import { actions, appState, selectedProfile } from "./lib/store";
   import type { AppView, EffectiveStatus } from "./lib/types";
+
+  $: focusedVersionId =
+    $appState.focusedVersion &&
+    $appState.focusedVersion.packageId === $appState.selectedPackageDetail?.id
+      ? $appState.focusedVersion.versionId
+      : undefined;
+  $: focusedVersionToken = $appState.focusedVersion?.highlightToken ?? 0;
 
   $: modalCopy =
     $appState.modal
@@ -102,6 +110,8 @@
       <BrowseScreen
         cards={$appState.catalogCards}
         catalogError={$appState.catalogError}
+        {focusedVersionId}
+        {focusedVersionToken}
         hasMore={$appState.catalogHasMore}
         isLoadingFirstPage={$appState.isLoadingCatalogFirstPage}
         isLoadingNextPage={$appState.isLoadingCatalogNextPage}
@@ -111,6 +121,7 @@
         onRefresh={actions.refreshCatalog}
         onSelectPackage={actions.selectPackage}
         onSetReference={actions.setReferenceState}
+        onViewDependencies={actions.openDependencyModal}
         onSearchDraftChange={actions.setBrowseSearchDraft}
         onSubmitSearch={actions.submitBrowseSearch}
         onToggleStatus={toggleStatus}
@@ -176,5 +187,13 @@
     onCancel={actions.dismissModal}
     onConfirm={actions.confirmModal}
     title={modalCopy.title}
+  />
+{/if}
+
+{#if $appState.dependencyModal}
+  <DependencyModal
+    state={$appState.dependencyModal}
+    onClose={actions.closeDependencyModal}
+    onJumpToDependency={actions.jumpToDependency}
   />
 {/if}

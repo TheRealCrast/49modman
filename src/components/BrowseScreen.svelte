@@ -13,6 +13,7 @@
     totalDownloads: number;
     rating: number;
     versionCount: number;
+    recommendedVersionId: string;
     recommendedVersion: string;
     effectiveStatus: EffectiveStatus;
     everyRelevantVersionBroken: boolean;
@@ -34,6 +35,14 @@
   export let onSelectPackage: (packageId: string) => void;
   export let onInstall: (request: InstallRequest) => void;
   export let onSetReference: (packageId: string, versionId: string, state: "verified" | "broken" | "neutral") => void;
+  export let onViewDependencies: (request: {
+    packageId: string;
+    packageName: string;
+    versionId: string;
+    versionNumber: string;
+  }) => void;
+  export let focusedVersionId: string | undefined = undefined;
+  export let focusedVersionToken = 0;
 
   const filters: EffectiveStatus[] = ["verified", "green", "yellow", "orange", "red", "broken"];
   let listElement: HTMLElement | undefined;
@@ -219,10 +228,13 @@
   </div>
 
   <PackageDetail
+    focusedVersionId={focusedVersionId}
+    focusedVersionToken={focusedVersionToken}
     pkg={selectedPackage}
     visibleStatuses={visibleStatuses}
     onToggleStatus={onToggleStatus}
     onInstall={onInstall}
     onSetReference={onSetReference}
+    onViewDependencies={onViewDependencies}
   />
 </section>

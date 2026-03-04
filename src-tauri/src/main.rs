@@ -26,6 +26,7 @@ fn main() {
             commands::catalog::get_catalog_summary,
             commands::catalog::search_packages,
             commands::catalog::get_package_detail,
+            commands::dependencies::get_version_dependencies,
             commands::downloads::list_active_downloads,
             commands::downloads::get_task,
             commands::profiles::list_profiles,

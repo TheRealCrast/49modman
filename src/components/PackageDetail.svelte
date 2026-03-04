@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { openExternalUrl } from "../lib/api/system";
   import { currentReferenceNote, pickRecommendedVersion, resolveEffectiveStatus } from "../lib/status";
   import type { EffectiveStatus, InstallRequest, ModPackage, ModVersion } from "../lib/types";
@@ -11,42 +11,54 @@
   export let onToggleStatus: (status: "verified" | "broken" | "green" | "yellow" | "orange" | "red") => void;
   export let onInstall: (request: InstallRequest) => void;
   export let onSetReference: (packageId: string, versionId: string, state: "verified" | "broken" | "neutral") => void;
+  export let onViewDependencies: (request: {
+    packageId: string;
+    packageName: string;
+    versionId: string;
+    versionNumber: string;
+  }) => void;
+  export let focusedVersionId: string | undefined = undefined;
+  export let focusedVersionToken = 0;
 
   const filters = ["verified", "green", "yellow", "orange", "red", "broken"] as const;
+  const versionRowElements = new Map<string, HTMLElement>();
   let installVersion: ModVersion | undefined = undefined;
   let installStatus: EffectiveStatus = "green";
   let installLabel = "Install";
   let menu:
     | {
         versionId: string;
+        versionNumber: string;
         x: number;
         y: number;
       }
     | null = null;
+  let lastFocusedKey = "";
 
   function openMenuForVersion(
-    versionId: string,
+    version: ModVersion,
     x: number,
     y: number
   ) {
     menu = {
-      versionId,
+      versionId: version.id,
+      versionNumber: version.versionNumber,
       x: Math.max(16, Math.min(window.innerWidth - 236, x)),
       y: Math.max(16, Math.min(window.innerHeight - 220, y))
     };
   }
 
-  function openContextMenu(event: MouseEvent, versionId: string) {
+  function openContextMenu(event: MouseEvent, version: ModVersion) {
     event.preventDefault();
-    openMenuForVersion(versionId, event.clientX, event.clientY);
+    openMenuForVersion(version, event.clientX, event.clientY);
   }
 
-  function openOverflowMenu(event: MouseEvent, versionId: string) {
+  function openOverflowMenu(event: MouseEvent, version: ModVersion) {
     event.preventDefault();
     event.stopPropagation();
     const button = event.currentTarget as HTMLButtonElement;
     const rect = button.getBoundingClientRect();
-    openMenuForVersion(versionId, rect.left - 188, rect.bottom + 8);
+    openMenuForVersion(version, rect.left - 188, rect.bottom + 8);
   }
 
   function closeMenu() {
@@ -79,6 +91,30 @@
       effectiveStatus: version.effectiveStatus ?? resolveEffectiveStatus(version),
       referenceNote: currentReferenceNote(version)
     };
+  }
+
+  function registerVersionRow(node: HTMLElement, versionId: string) {
+    versionRowElements.set(versionId, node);
+
+    return {
+      destroy() {
+        versionRowElements.delete(versionId);
+      }
+    };
+  }
+
+  function viewDependenciesForMenuVersion() {
+    if (!pkg || !menu) {
+      return;
+    }
+
+    onViewDependencies({
+      packageId: pkg.id,
+      packageName: pkg.fullName,
+      versionId: menu.versionId,
+      versionNumber: menu.versionNumber
+    });
+    closeMenu();
   }
 
   async function viewPackageInBrowser() {
@@ -156,6 +192,26 @@
     installStatus = "green";
     installLabel = "Install";
   }
+
+  async function scrollFocusedVersionIntoView(versionId: string) {
+    await tick();
+    versionRowElements.get(versionId)?.scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+  }
+
+  $: {
+    const focusKey =
+      pkg && focusedVersionId
+        ? `${pkg.id}:${focusedVersionId}:${focusedVersionToken}`
+        : "";
+
+    if (focusKey && focusKey !== lastFocusedKey) {
+      lastFocusedKey = focusKey;
+      void scrollFocusedVersionIntoView(focusedVersionId!);
+    }
+  }
 </script>
 
 {#if pkg}
@@ -207,10 +263,15 @@
       {/each}
     </div>
 
-    <div class="versions-list list-scroll">
-      {#each [...pkg.versions].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt)) as version}
-        {#if visibleStatuses.includes(version.effectiveStatus ?? resolveEffectiveStatus(version))}
-          <article class="version-row" on:contextmenu={(event) => openContextMenu(event, version.id)}>
+      <div class="versions-list list-scroll">
+        {#each [...pkg.versions].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt)) as version}
+          {#if visibleStatuses.includes(version.effectiveStatus ?? resolveEffectiveStatus(version))}
+          <article
+            use:registerVersionRow={version.id}
+            class:focused-version={focusedVersionId === version.id}
+            class="version-row"
+            on:contextmenu={(event) => openContextMenu(event, version)}
+          >
             <div class="version-main">
               <div class="version-title">
                 <strong>{version.versionNumber}</strong>
@@ -249,7 +310,7 @@
                 aria-expanded={menu?.versionId === version.id}
                 class="ghost-button icon-button version-menu-trigger"
                 type="button"
-                on:click={(event) => openOverflowMenu(event, version.id)}
+                on:click={(event) => openOverflowMenu(event, version)}
               >
                 <Icon label="Version actions" name="three-dots-vertical" />
               </button>
@@ -261,6 +322,10 @@
 
     {#if menu}
       <div class="version-menu panel" style={`left:${menu.x}px;top:${menu.y}px;`}>
+        <button class="version-menu-item" type="button" on:click={viewDependenciesForMenuVersion}>
+          <Icon label="View dependencies" name="details" size={16} />
+          <span>View dependencies</span>
+        </button>
         <button class="version-menu-item" type="button" on:click={() => applyReference("verified")}>
           <Icon label="Mark as verified" name="verified" size={16} />
           <span>Mark as verified</span>

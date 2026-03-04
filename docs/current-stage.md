@@ -48,7 +48,7 @@ Last completed milestone:
 
 Current planned milestone:
 
-- [dependency-view-m1.md](./dependency-view-m1.md)
+- [dependency-view-v1-1.md](./dependency-view-v1-1.md)
 
 Current locked behavior:
 
@@ -63,24 +63,22 @@ Current working tree before the next commit includes:
 
 - `docs/current-stage.md`
 - `docs/dependency-view-m1.md`
+- `docs/dependency-view-v1-1.md`
+- `src/components/DependencyModal.svelte`
+- `src/components/DependencyTreeNode.svelte`
+- `src/lib/api/dependencies.ts`
 - `src/App.svelte`
 - `src/app.css`
 - `src/components/BrowseScreen.svelte`
-- `src/components/DownloadsScreen.svelte`
 - `src/components/PackageDetail.svelte`
 - `src/lib/api/mock-backend.ts`
-- `src/lib/status.ts`
+- `src/lib/mock-data.ts`
 - `src/lib/store.ts`
 - `src/lib/types.ts`
-- `src-tauri/Cargo.lock`
-- `src-tauri/Cargo.toml`
-- `src-tauri/src/commands/catalog.rs`
-- `src-tauri/src/commands/reference.rs`
-- `src-tauri/src/commands/settings.rs`
-- `src-tauri/src/commands/system.rs`
-- `src-tauri/src/services/catalog_service.rs`
-- `src-tauri/src/services/profile_service.rs`
-- `src-tauri/src/services/reference_service.rs`
+- `src-tauri/src/commands/dependencies.rs`
+- `src-tauri/src/main.rs`
+- `src-tauri/src/services/dependency_service.rs`
+- `src-tauri/src/services/mod.rs`
 
 ## Profile Milestone Notes
 
@@ -173,19 +171,38 @@ These were already verified successfully before these notes were written:
 
 The current focus has shifted from Browse performance and cache-only install activation to dependency inspection UX.
 
-Current planned work:
+Current dependency-view state:
 
-- add `View dependencies` to the version context menu
-- open a dependency modal rather than overloading the small context menu surface
-- resolve dependency data from the local cached catalog only
-- render a recursive dependency tree
-- keep unresolved dependencies visible as raw metadata
-- allow clicking a resolved dependency to jump to the exact dependency version in Browse
-- add temporary version-row focus/highlight when jumping from the dependency modal
+- `View dependencies` now exists in the version context menu in Browse package detail
+- the app now has a real dependency modal backed by:
+  - `src-tauri/src/commands/dependencies.rs`
+  - `src-tauri/src/services/dependency_service.rs`
+  - `src/lib/api/dependencies.ts`
+  - `src/components/DependencyModal.svelte`
+- the current modal resolves dependency data from the local cached catalog only
+- the current modal renders a recursive tree only
+- resolved nodes can jump to the exact dependency version in Browse
+- exact target version rows now scroll into view and highlight temporarily
+- unresolved dependencies stay visible as raw metadata
+- cycle detection exists and stops recursion
 
-Planning doc for this work:
+Current known issues in that first pass:
 
-- [dependency-view-m1.md](./dependency-view-m1.md)
+- the recursive tree shows duplicate exact-version nodes when they are reachable through multiple parents
+- the backend dependency resolver currently does recursive per-node work on a single blocking thread
+- dependency resolution currently uses repeated exact-string lookups against SQLite and can peg one worker thread for a noticeable time on heavier graphs
+
+Next planned work:
+
+- redesign the dependency modal to be `Summary` first and `Tree` second
+- deduplicate the default dependency view by exact package version
+- keep the advanced tree, but collapse repeated exact-version branches into lightweight reference rows
+- replace the current recursive per-node SQLite lookup path with request-local in-memory indexes and memoized traversal
+
+Planning docs for dependency work:
+
+- implemented first pass: [dependency-view-m1.md](./dependency-view-m1.md)
+- planned next pass: [dependency-view-v1-1.md](./dependency-view-v1-1.md)
 
 ## Confirmed Performance Bottlenecks Before The Fix
 

@@ -1,6 +1,7 @@
 import { derived, get, writable } from "svelte/store";
 import { clearCache, getCacheSummary, openCacheFolder, queueInstallToCache } from "./api/cache";
 import { getCatalogSummary, getPackageDetail, searchPackages, syncCatalog } from "./api/catalog";
+import { getVersionDependencies } from "./api/dependencies";
 import { listActiveDownloads } from "./api/downloads";
 import {
   createProfile as createProfileApi,
@@ -24,8 +25,10 @@ import type {
   AppView,
   CacheSummaryDto,
   CreateProfileInput,
+  DependencyModalState,
   DownloadJobDto,
   EffectiveStatus,
+  FocusedVersionState,
   InstallRequest,
   ModPackage,
   ProfileDetailDto,
@@ -37,6 +40,7 @@ const defaultCatalogPageSize = 40;
 const defaultReferencePageSize = 50;
 const downloadPollIntervalMs = 500;
 let downloadPollHandle: number | null = null;
+let focusedVersionClearHandle: number | null = null;
 
 const initialState: AppState = {
   view: "browse",
@@ -58,6 +62,8 @@ const initialState: AppState = {
     broken: true
   },
   modal: null,
+  dependencyModal: null,
+  focusedVersion: null,
   referenceSearchDraft: "",
   referenceSearchSubmitted: "",
   isRefreshingCatalog: false,
@@ -163,6 +169,30 @@ function stopDownloadPolling() {
     window.clearInterval(downloadPollHandle);
     downloadPollHandle = null;
   }
+}
+
+function clearFocusedVersionTimer() {
+  if (focusedVersionClearHandle !== null) {
+    window.clearTimeout(focusedVersionClearHandle);
+    focusedVersionClearHandle = null;
+  }
+}
+
+function scheduleFocusedVersionClear(focusedVersion: FocusedVersionState) {
+  clearFocusedVersionTimer();
+  focusedVersionClearHandle = window.setTimeout(() => {
+    appState.update((state) =>
+      state.focusedVersion?.highlightToken === focusedVersion.highlightToken &&
+      state.focusedVersion.packageId === focusedVersion.packageId &&
+      state.focusedVersion.versionId === focusedVersion.versionId
+        ? {
+            ...state,
+            focusedVersion: null
+          }
+        : state
+    );
+    focusedVersionClearHandle = null;
+  }, 2000);
 }
 
 function startDownloadPolling() {
@@ -635,6 +665,14 @@ function installVersion(state: AppState): AppState {
   };
 }
 
+function dependencyModalMatches(
+  modal: DependencyModalState | null,
+  packageId: string,
+  versionId: string
+) {
+  return modal?.packageId === packageId && modal.versionId === versionId;
+}
+
 async function queueVersionForCache(request: InstallRequest) {
   try {
     const result = await queueInstallToCache({
@@ -855,6 +893,91 @@ export const actions = {
       ...state,
       modal: null
     }));
+  },
+  openDependencyModal(request: {
+    packageId: string;
+    packageName: string;
+    versionId: string;
+    versionNumber: string;
+  }) {
+    appState.update((state) => ({
+      ...state,
+      dependencyModal: {
+        ...request,
+        isLoading: true,
+        error: null
+      }
+    }));
+
+    void getVersionDependencies({
+      packageId: request.packageId,
+      versionId: request.versionId
+    })
+      .then((tree) => {
+        appState.update((state) =>
+          dependencyModalMatches(state.dependencyModal, request.packageId, request.versionId)
+            ? {
+                ...state,
+                dependencyModal: {
+                  ...request,
+                  isLoading: false,
+                  tree,
+                  error: null
+                }
+              }
+            : state
+        );
+      })
+      .catch((error) => {
+        appState.update((state) =>
+          dependencyModalMatches(state.dependencyModal, request.packageId, request.versionId)
+            ? {
+                ...state,
+                dependencyModal: {
+                  ...request,
+                  isLoading: false,
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to resolve dependencies from the cached catalog."
+                },
+                desktopError:
+                  state.runtimeKind === "tauri"
+                    ? error instanceof Error
+                      ? error.message
+                      : "Failed to resolve dependencies from the desktop backend."
+                    : state.desktopError
+              }
+            : state
+        );
+      });
+  },
+  closeDependencyModal() {
+    appState.update((state) => ({
+      ...state,
+      dependencyModal: null
+    }));
+  },
+  async jumpToDependency(packageId: string, versionId: string) {
+    const highlightToken = Date.now();
+    const focusedVersion: FocusedVersionState = {
+      packageId,
+      versionId,
+      highlightToken
+    };
+
+    appState.update((state) => ({
+      ...state,
+      view: "browse",
+      selectedPackageId: packageId,
+      selectedPackageDetail:
+        state.selectedPackageDetail?.id === packageId ? state.selectedPackageDetail : undefined,
+      dependencyModal: null,
+      focusedVersion
+    }));
+
+    scheduleFocusedVersionClear(focusedVersion);
+    await loadSelectedPackageDetail(packageId);
   },
   confirmModal(doNotShowAgain: boolean) {
     const modal = get(appState).modal;
@@ -1106,6 +1229,8 @@ export const actions = {
         profiles: [],
         activeProfile: undefined,
         selectedProfileId: "default",
+        dependencyModal: null,
+        focusedVersion: null,
         catalogCards: [],
         catalogNextCursor: null,
         catalogHasMore: false,
@@ -1137,6 +1262,7 @@ export const actions = {
         referenceHasMore: false
       }));
 
+      clearFocusedVersionTimer();
       await Promise.all([loadProfilesState(), loadSettingsState(), loadCacheSummary(), loadActiveDownloads()]);
     } catch (error) {
       appState.update((state) => ({
