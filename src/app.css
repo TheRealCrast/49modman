@@ -580,6 +580,7 @@ img {
 .browser-column,
 .detail-panel {
   min-height: 0;
+  min-width: 0;
 }
 
 .detail-panel {
@@ -653,6 +654,7 @@ img {
 .package-card {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .package-card-select {
@@ -663,6 +665,7 @@ img {
   background: transparent;
   border: 0;
   padding: 0;
+  min-width: 0;
 }
 
 .package-card-select:hover {
@@ -722,10 +725,12 @@ img {
   margin: 0;
   font-weight: 700;
   font-size: 1rem;
+  overflow-wrap: anywhere;
 }
 
 .package-summary {
   margin: 8px 0;
+  overflow-wrap: anywhere;
 }
 
 .package-card-footer,
@@ -801,6 +806,17 @@ img {
 .package-card-footer-copy {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.package-card-header > :first-child {
+  min-width: 0;
+}
+
+.package-meta,
+.warning-copy,
+.category-chip {
+  overflow-wrap: anywhere;
 }
 
 .package-card-install-button {
@@ -908,6 +924,7 @@ img {
 .versions-list,
 .download-list {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding-right: 4px;
   align-content: start;
@@ -915,6 +932,7 @@ img {
 
 .list-scroll {
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding-right: 4px;
   align-content: start;

@@ -19,6 +19,10 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - schema-safe reset for legacy tables
   - visible progress modal during reset
   - automatic Browse recache/refresh after reset completes
+- Browse card layout has been hardened for narrow windows:
+  - list/card containers now enforce shrink bounds (`min-width: 0`)
+  - long card text/chips now wrap instead of forcing horizontal overflow
+  - prevents package cards from being cut off on the right after startup or Browse refresh
 
 ## Next Milestone
 
