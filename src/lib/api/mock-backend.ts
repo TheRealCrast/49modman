@@ -231,6 +231,7 @@ function searchPackagesInternal(input: SearchPackagesInput): PackageCardDto[] {
         totalDownloads: pkg.totalDownloads,
         rating: pkg.rating,
         versionCount: pkg.versions.length,
+        recommendedVersionId: recommended.id,
         recommendedVersion: recommended.versionNumber,
         effectiveStatus: resolveEffectiveStatus(recommended),
         everyRelevantVersionBroken: everyRelevantVersionBroken(pkg)

@@ -43,6 +43,7 @@ export interface PackageCardDto {
   totalDownloads: number;
   rating: number;
   versionCount: number;
+  recommendedVersionId: string;
   recommendedVersion: string;
   effectiveStatus: EffectiveStatus;
   everyRelevantVersionBroken: boolean;
@@ -189,10 +190,22 @@ export interface QueueInstallToCacheResult {
   taskId: string;
 }
 
+export interface InstallRequest {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  effectiveStatus: EffectiveStatus;
+  referenceNote?: string;
+}
+
 export interface WarningModalState {
   packageId: string;
+  packageName: string;
   versionId: string;
+  versionNumber: string;
   status: "red" | "broken";
+  referenceNote?: string;
 }
 
 export interface ActivityItem {

@@ -59,6 +59,9 @@
             <div class="download-secondary">
               <span class={`download-status ${download.status}`}>{download.status}</span>
               <p>{download.progressLabel}</p>
+              {#if download.status === "failed" && download.errorMessage}
+                <p class="warning-copy danger">{download.errorMessage}</p>
+              {/if}
             </div>
             <div class="download-tertiary">
               <span>{formatTransfer(download)}</span>

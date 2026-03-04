@@ -5,9 +5,128 @@ const statusPriority: Record<EffectiveStatus, number> = {
   green: 4,
   yellow: 3,
   orange: 2,
-  red: 1,
-  broken: 0
+  broken: 1,
+  red: 0
 };
+
+function parseVersionIdentifierPart(part: string) {
+  return /^\d+$/.test(part) ? Number.parseInt(part, 10) : part.toLowerCase();
+}
+
+function normalizeVersion(value: string) {
+  const trimmed = value.trim().replace(/^v/i, "");
+  const [withoutBuild] = trimmed.split("+", 1);
+  const [corePart, prereleasePart] = withoutBuild.split("-", 2);
+  const core = corePart.split(".").map((part) => Number.parseInt(part, 10));
+
+  if (core.length === 0 || core.some((part) => Number.isNaN(part))) {
+    return null;
+  }
+
+  while (core.length < 3) {
+    core.push(0);
+  }
+
+  return {
+    core,
+    prerelease: prereleasePart ? prereleasePart.split(".").map(parseVersionIdentifierPart) : []
+  };
+}
+
+function comparePrereleaseParts(left: Array<number | string>, right: Array<number | string>) {
+  const length = Math.max(left.length, right.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = left[index];
+    const rightPart = right[index];
+
+    if (leftPart === undefined) {
+      return 1;
+    }
+
+    if (rightPart === undefined) {
+      return -1;
+    }
+
+    if (typeof leftPart === "number" && typeof rightPart === "number") {
+      if (leftPart !== rightPart) {
+        return leftPart > rightPart ? 1 : -1;
+      }
+      continue;
+    }
+
+    if (typeof leftPart === "number") {
+      return -1;
+    }
+
+    if (typeof rightPart === "number") {
+      return 1;
+    }
+
+    const comparison = leftPart.localeCompare(rightPart);
+    if (comparison !== 0) {
+      return comparison > 0 ? 1 : -1;
+    }
+  }
+
+  return 0;
+}
+
+export function compareVersionNumbers(left: string, right: string) {
+  const normalizedLeft = normalizeVersion(left);
+  const normalizedRight = normalizeVersion(right);
+
+  if (normalizedLeft && normalizedRight) {
+    const length = Math.max(normalizedLeft.core.length, normalizedRight.core.length);
+
+    for (let index = 0; index < length; index += 1) {
+      const leftPart = normalizedLeft.core[index] ?? 0;
+      const rightPart = normalizedRight.core[index] ?? 0;
+
+      if (leftPart !== rightPart) {
+        return leftPart > rightPart ? 1 : -1;
+      }
+    }
+
+    const leftHasPrerelease = normalizedLeft.prerelease.length > 0;
+    const rightHasPrerelease = normalizedRight.prerelease.length > 0;
+
+    if (leftHasPrerelease !== rightHasPrerelease) {
+      return leftHasPrerelease ? -1 : 1;
+    }
+
+    const prereleaseComparison = comparePrereleaseParts(
+      normalizedLeft.prerelease,
+      normalizedRight.prerelease
+    );
+
+    if (prereleaseComparison !== 0) {
+      return prereleaseComparison;
+    }
+  }
+
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function compareRecommendedCandidates(left: ModVersion, right: ModVersion) {
+  const statusScore = statusPriority[resolveEffectiveStatus(left)] - statusPriority[resolveEffectiveStatus(right)];
+
+  if (statusScore !== 0) {
+    return statusScore;
+  }
+
+  const versionScore = compareVersionNumbers(left.versionNumber, right.versionNumber);
+  if (versionScore !== 0) {
+    return versionScore;
+  }
+
+  const publishedScore = left.publishedAt.localeCompare(right.publishedAt);
+  if (publishedScore !== 0) {
+    return publishedScore;
+  }
+
+  return left.downloads - right.downloads;
+}
 
 export function currentReferenceState(version: ModVersion): Exclude<ReferenceState, "neutral"> | undefined {
   if (version.overrideReferenceState === "broken") {
@@ -64,36 +183,7 @@ export function resolveEffectiveStatus(version: ModVersion): EffectiveStatus {
 }
 
 export function pickRecommendedVersion(pkg: ModPackage): ModVersion {
-  const sorted = [...pkg.versions].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
-  const verified = sorted.find((version) => resolveEffectiveStatus(version) === "verified");
-
-  if (verified) {
-    return verified;
-  }
-
-  const eligiblePool = sorted.filter((version) =>
-    ["green", "yellow", "orange"].includes(resolveEffectiveStatus(version))
-  );
-
-  if (eligiblePool.length > 0) {
-    return eligiblePool.sort((left, right) => {
-      const score = statusPriority[resolveEffectiveStatus(right)] - statusPriority[resolveEffectiveStatus(left)];
-
-      if (score !== 0) {
-        return score;
-      }
-
-      return right.publishedAt.localeCompare(left.publishedAt);
-    })[0];
-  }
-
-  const broken = sorted.find((version) => resolveEffectiveStatus(version) === "broken");
-
-  if (broken) {
-    return broken;
-  }
-
-  return sorted[0];
+  return [...pkg.versions].sort((left, right) => compareRecommendedCandidates(right, left))[0];
 }
 
 export function everyRelevantVersionBroken(pkg: ModPackage): boolean {

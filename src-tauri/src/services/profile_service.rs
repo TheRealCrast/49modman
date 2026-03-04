@@ -69,10 +69,13 @@ pub fn list_profiles(connection: &Connection) -> Result<Vec<ProfileSummaryDto>, 
 
     let rows = statement.query_map([], map_profile_summary_row)?;
 
-    rows.collect::<Result<Vec<_>, _>>().map_err(InternalError::from)
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(InternalError::from)
 }
 
-pub fn get_active_profile(connection: &Connection) -> Result<Option<ProfileDetailDto>, InternalError> {
+pub fn get_active_profile(
+    connection: &Connection,
+) -> Result<Option<ProfileDetailDto>, InternalError> {
     let profile_id = get_active_profile_id(connection)?;
     match profile_id {
         Some(profile_id) => get_profile_detail(connection, &profile_id),
@@ -115,13 +118,11 @@ pub fn create_profile(
         ));
     }
 
-    let duplicate_exists = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM profiles WHERE name = ?1 COLLATE NOCASE)",
-            params![name],
-            |row| row.get::<_, i64>(0),
-        )?
-        != 0;
+    let duplicate_exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM profiles WHERE name = ?1 COLLATE NOCASE)",
+        params![name],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
 
     if duplicate_exists {
         return Err(InternalError::app(
@@ -141,7 +142,10 @@ pub fn create_profile(
         }
     };
 
-    let profile_id = format!("profile-{}", OffsetDateTime::now_utc().unix_timestamp_nanos());
+    let profile_id = format!(
+        "profile-{}",
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    );
     let created_at = now_rfc3339()?;
     let notes = input.notes.unwrap_or_default();
     let game_path = input.game_path.unwrap_or_default();
@@ -219,18 +223,16 @@ pub fn update_profile(
         ));
     }
 
-    let duplicate_exists = connection
-        .query_row(
-            "SELECT EXISTS(
+    let duplicate_exists = connection.query_row(
+        "SELECT EXISTS(
                 SELECT 1
                 FROM profiles
                 WHERE name = ?1 COLLATE NOCASE
                   AND id != ?2
             )",
-            params![name, input.profile_id],
-            |row| row.get::<_, i64>(0),
-        )?
-        != 0;
+        params![name, input.profile_id],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
 
     if duplicate_exists {
         return Err(InternalError::app(
@@ -371,13 +373,11 @@ fn get_active_profile_id(connection: &Connection) -> Result<Option<String>, Inte
 }
 
 fn profile_exists(connection: &Connection, profile_id: &str) -> Result<bool, InternalError> {
-    Ok(connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM profiles WHERE id = ?1)",
-            params![profile_id],
-            |row| row.get::<_, i64>(0),
-        )?
-        != 0)
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM profiles WHERE id = ?1)",
+        params![profile_id],
+        |row| row.get::<_, i64>(0),
+    )? != 0)
 }
 
 fn map_profile_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProfileSummaryDto> {

@@ -43,7 +43,8 @@ pub async fn set_warning_preference(
             .lock()
             .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
 
-        set_warning_preference_service(&connection, &input.kind, input.enabled).map_err(AppError::from)
+        set_warning_preference_service(&connection, &input.kind, input.enabled)
+            .map_err(AppError::from)
     })
     .await
     .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?

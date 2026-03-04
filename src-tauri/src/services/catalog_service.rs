@@ -1,3 +1,6 @@
+use std::{cmp::Ordering, collections::HashMap};
+
+use semver::{BuildMetadata, Prerelease, Version};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +72,7 @@ pub struct PackageCardDto {
     pub total_downloads: i64,
     pub rating: f64,
     pub version_count: usize,
+    pub recommended_version_id: String,
     pub recommended_version: String,
     pub effective_status: EffectiveStatus,
     pub every_relevant_version_broken: bool,
@@ -127,6 +131,7 @@ struct RawPackageCardRow {
     total_downloads: i64,
     rating: f64,
     version_count: usize,
+    recommended_version_id: String,
     recommended_version: String,
     effective_status: String,
     every_relevant_version_broken: bool,
@@ -224,6 +229,7 @@ pub fn search_packages(
         "WITH version_states AS (
             SELECT
                 pv.package_id,
+                pv.id AS version_id,
                 pv.version_number,
                 pv.published_at,
                 pv.base_zone,
@@ -270,6 +276,7 @@ pub fn search_packages(
             p.total_downloads,
             p.rating,
             rv.version_count,
+            rv.version_id,
             rv.version_number,
             rv.effective_status,
             CASE
@@ -327,9 +334,10 @@ pub fn search_packages(
                 total_downloads: row.get(5)?,
                 rating: row.get(6)?,
                 version_count: row.get::<_, i64>(7)? as usize,
-                recommended_version: row.get(8)?,
-                effective_status: row.get(9)?,
-                every_relevant_version_broken: row.get::<_, i64>(10)? == 1,
+                recommended_version_id: row.get(8)?,
+                recommended_version: row.get(9)?,
+                effective_status: row.get(10)?,
+                every_relevant_version_broken: row.get::<_, i64>(11)? == 1,
             })
         },
     )?;
@@ -346,11 +354,14 @@ pub fn search_packages(
             total_downloads: raw.total_downloads,
             rating: raw.rating,
             version_count: raw.version_count,
+            recommended_version_id: raw.recommended_version_id,
             recommended_version: raw.recommended_version,
             effective_status: parse_effective_status(&raw.effective_status)?,
             every_relevant_version_broken: raw.every_relevant_version_broken,
         });
     }
+
+    apply_recommended_versions(connection, &mut items)?;
 
     let has_more = items.len() > page_size;
     if has_more {
@@ -491,6 +502,179 @@ fn load_versions_for_package(
     }
 
     Ok(versions)
+}
+
+fn apply_recommended_versions(
+    connection: &Connection,
+    items: &mut [PackageCardDto],
+) -> Result<(), InternalError> {
+    let package_ids = items.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+    let versions_by_package = load_versions_for_packages(connection, &package_ids)?;
+
+    for item in items.iter_mut() {
+        let Some(versions) = versions_by_package.get(&item.id) else {
+            continue;
+        };
+        let Some(recommended) = pick_recommended_version(versions) else {
+            continue;
+        };
+
+        item.recommended_version = recommended.version_number.clone();
+        item.recommended_version_id = recommended.id.clone();
+        item.effective_status = recommended.effective_status;
+    }
+
+    Ok(())
+}
+
+fn load_versions_for_packages(
+    connection: &Connection,
+    package_ids: &[String],
+) -> Result<HashMap<String, Vec<PackageVersionDto>>, InternalError> {
+    if package_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = (1..=package_ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let query = format!(
+        "SELECT pv.package_id,
+                pv.id,
+                pv.version_number,
+                pv.published_at,
+                pv.downloads,
+                pv.base_zone,
+                pv.bundled_reference_state,
+                pv.bundled_reference_note,
+                ro.reference_state,
+                ro.note
+         FROM package_versions pv
+         LEFT JOIN reference_overrides ro
+           ON ro.package_id = pv.package_id AND ro.version_id = pv.id
+         WHERE pv.package_id IN ({placeholders})
+         ORDER BY pv.package_id ASC, pv.published_at DESC"
+    );
+    let mut statement = connection.prepare(&query)?;
+    let rows = statement.query_map(rusqlite::params_from_iter(package_ids.iter()), |row| {
+        let package_id: String = row.get(0)?;
+        let base_zone = parse_base_zone(&row.get::<_, String>(5)?);
+        let bundled_reference_state = row
+            .get::<_, Option<String>>(6)?
+            .as_deref()
+            .and_then(parse_reference_state);
+        let override_reference_state = row
+            .get::<_, Option<String>>(8)?
+            .as_deref()
+            .and_then(parse_reference_state);
+        let effective_status =
+            resolve_effective_status(base_zone, bundled_reference_state, override_reference_state);
+        let reference_source = if row.get::<_, Option<String>>(8)?.is_some() {
+            Some("override".to_string())
+        } else if row.get::<_, Option<String>>(6)?.is_some() {
+            Some("bundled".to_string())
+        } else {
+            None
+        };
+
+        Ok((
+            package_id,
+            PackageVersionDto {
+                id: row.get(1)?,
+                version_number: row.get(2)?,
+                published_at: row.get(3)?,
+                downloads: row.get(4)?,
+                base_zone,
+                bundled_reference_state,
+                bundled_reference_note: row.get(7)?,
+                override_reference_state,
+                override_reference_note: row.get(9)?,
+                effective_status,
+                reference_source,
+            },
+        ))
+    })?;
+
+    let mut versions_by_package = HashMap::new();
+
+    for row in rows {
+        let (package_id, version) = row?;
+        versions_by_package
+            .entry(package_id)
+            .or_insert_with(Vec::new)
+            .push(version);
+    }
+
+    Ok(versions_by_package)
+}
+
+fn pick_recommended_version(versions: &[PackageVersionDto]) -> Option<&PackageVersionDto> {
+    versions
+        .iter()
+        .max_by(|left, right| compare_recommended_versions(left, right))
+}
+
+fn compare_recommended_versions(
+    left: &PackageVersionDto,
+    right: &PackageVersionDto,
+) -> Ordering {
+    effective_status_rank(left.effective_status)
+        .cmp(&effective_status_rank(right.effective_status))
+        .then_with(|| compare_version_number_strings(&left.version_number, &right.version_number))
+        .then_with(|| left.published_at.cmp(&right.published_at))
+        .then_with(|| left.downloads.cmp(&right.downloads))
+        .then_with(|| left.version_number.cmp(&right.version_number))
+}
+
+fn effective_status_rank(status: EffectiveStatus) -> i32 {
+    match status {
+        EffectiveStatus::Verified => 5,
+        EffectiveStatus::Green => 4,
+        EffectiveStatus::Yellow => 3,
+        EffectiveStatus::Orange => 2,
+        EffectiveStatus::Broken => 1,
+        EffectiveStatus::Red => 0,
+    }
+}
+
+fn compare_version_number_strings(left: &str, right: &str) -> Ordering {
+    match (parse_semverish(left), parse_semverish(right)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        _ => left.cmp(right),
+    }
+}
+
+fn parse_semverish(value: &str) -> Option<Version> {
+    let trimmed = value.trim().trim_start_matches('v');
+    let (without_build, build) = match trimmed.split_once('+') {
+        Some((core, build)) => (core, Some(build)),
+        None => (trimmed, None),
+    };
+    let (core, prerelease) = match without_build.split_once('-') {
+        Some((core, prerelease)) => (core, Some(prerelease)),
+        None => (without_build, None),
+    };
+
+    let mut components = core.split('.').collect::<Vec<_>>();
+    if components.is_empty() || components.len() > 3 {
+        return None;
+    }
+
+    while components.len() < 3 {
+        components.push("0");
+    }
+
+    let normalized = components.join(".");
+    let mut version = Version::parse(&normalized).ok()?;
+    if let Some(prerelease) = prerelease {
+        version.pre = Prerelease::new(prerelease).ok()?;
+    }
+    if let Some(build) = build {
+        version.build = BuildMetadata::new(build).ok()?;
+    }
+
+    Some(version)
 }
 
 fn persist_catalog(

@@ -1,6 +1,6 @@
 # Current Stage Notes
 
-Last updated: 2026-03-03
+Last updated: 2026-03-04
 
 This file is the short-term implementation handoff for the current stage of the project.
 The broad product plan remains in [plan-v1.md](./plan-v1.md).
@@ -38,6 +38,7 @@ Current state:
   - `Danger zone`
   - `Reset all data`
 - Browse `Install` / `Install version` now queue real cache tasks
+- Browse package cards now expose a quick-install button for the recommended version
 - Downloads now shows real active cache/download work
 - cache is global, exact-version, and stored in app data
 
@@ -45,37 +46,41 @@ Last completed milestone:
 
 - [cache-system-m1.md](./cache-system-m1.md)
 
+Current planned milestone:
+
+- [dependency-view-m1.md](./dependency-view-m1.md)
+
 Current locked behavior:
 
 - cache scope is still `cache only`
-- Browse `Install` labels are unchanged
+- Browse detail `Install` now includes the chosen version label
 - Downloads is still `active only`
 - no profile/modpack install state changes yet
 
 ## Current Uncommitted Work
 
-At the time these notes were written, the working tree was dirty with:
+Current working tree before the next commit includes:
 
 - `docs/current-stage.md`
-- `docs/profile-system-m1.md`
+- `docs/dependency-view-m1.md`
 - `src/App.svelte`
 - `src/app.css`
-- `src/components/OverviewScreen.svelte`
-- `src/components/ProfilesScreen.svelte`
-- `src/components/SettingsScreen.svelte`
-- `src/lib/api/client.ts`
+- `src/components/BrowseScreen.svelte`
+- `src/components/DownloadsScreen.svelte`
+- `src/components/PackageDetail.svelte`
 - `src/lib/api/mock-backend.ts`
-- `src/lib/api/profiles.ts`
-- `src/lib/mock-data.ts`
+- `src/lib/status.ts`
 - `src/lib/store.ts`
 - `src/lib/types.ts`
-- `src-tauri/migrations/0003_profiles.sql`
-- `src-tauri/src/commands/mod.rs`
-- `src-tauri/src/commands/profiles.rs`
-- `src-tauri/src/db/mod.rs`
-- `src-tauri/src/main.rs`
-- `src-tauri/src/services/mod.rs`
+- `src-tauri/Cargo.lock`
+- `src-tauri/Cargo.toml`
+- `src-tauri/src/commands/catalog.rs`
+- `src-tauri/src/commands/reference.rs`
+- `src-tauri/src/commands/settings.rs`
+- `src-tauri/src/commands/system.rs`
+- `src-tauri/src/services/catalog_service.rs`
 - `src-tauri/src/services/profile_service.rs`
+- `src-tauri/src/services/reference_service.rs`
 
 ## Profile Milestone Notes
 
@@ -97,7 +102,7 @@ At the time these notes were written, the working tree was dirty with:
 - this is the first real install-adjacent filesystem work since the revert
 - install scope is `cache only`
 - Downloads behavior is `active only`
-- Browse labels stay as `Install` / `Install version`
+- Browse labels stay `Install` / `Install version`, but the detail Install button now shows the exact selected version
 - the current local SQLite DB still contains legacy tables from the reverted experiment:
   - `cached_archives`
   - `install_tasks`
@@ -106,6 +111,27 @@ At the time these notes were written, the working tree was dirty with:
   - `profile_mod_dependencies`
   - `local_mods`
 - cache implementation was written to stay compatible with that DB shape rather than assuming a clean slate
+
+## Browse Install Polish Notes
+
+- the detail-panel `Install` button now derives its target version from the shared recommendation logic
+- the detail-panel `Install` button color now follows the exact chosen version status and updates reactively when the selected package changes
+- the detail-panel `Install` button label now includes the selected version:
+  - `Install {version}`
+- package-card quick install now exists in the bottom-right corner of each Browse row:
+  - icon-only
+  - same target version as the detail-panel Install button
+  - same warning/install flow as the detail-panel Install button
+- recommendation tie-breaking is now:
+  1. effective status bucket
+  2. semantic version number
+  3. published date
+  4. downloads
+- this avoids arbitrary same-day selection when multiple versions share the same publish date
+- browse card data now includes the recommended version id so the list-row quick install can target the exact version directly
+- install-start failures now surface more context:
+  - clearer frontend error text
+  - failed Downloads rows show backend error messages
 
 ## Desktop Runtime Status
 
@@ -145,19 +171,21 @@ These were already verified successfully before these notes were written:
 
 ## Current Product/Engineering Focus
 
-Browse performance optimization has now been implemented once, and the current focus has shifted from planning to validation/tuning.
+The current focus has shifted from Browse performance and cache-only install activation to dependency inspection UX.
 
-User-reported issue that drove this work:
+Current planned work:
 
-- significant performance issues in Browse
-- likely caused by Thunderstore catalog size
-- likely also worsened by rendering too many items at once
-- user also wanted a loading overlay while the Thunderstore database is being retrieved
+- add `View dependencies` to the version context menu
+- open a dependency modal rather than overloading the small context menu surface
+- resolve dependency data from the local cached catalog only
+- render a recursive dependency tree
+- keep unresolved dependencies visible as raw metadata
+- allow clicking a resolved dependency to jump to the exact dependency version in Browse
+- add temporary version-row focus/highlight when jumping from the dependency modal
 
-Product decisions already made for this milestone:
+Planning doc for this work:
 
-- Browse scaling mode: `Infinite scroll`
-- Loading overlay scope: `Whole-app overlay`
+- [dependency-view-m1.md](./dependency-view-m1.md)
 
 ## Confirmed Performance Bottlenecks Before The Fix
 

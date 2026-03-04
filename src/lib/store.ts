@@ -18,7 +18,6 @@ import {
 } from "./api/settings";
 import { seedActivities, seedPackages } from "./mock-data";
 import { getRuntimeKind } from "./runtime";
-import { resolveEffectiveStatus } from "./status";
 import type {
   ActivityItem,
   AppState,
@@ -27,6 +26,7 @@ import type {
   CreateProfileInput,
   DownloadJobDto,
   EffectiveStatus,
+  InstallRequest,
   ModPackage,
   ProfileDetailDto,
   ReferenceState
@@ -628,27 +628,19 @@ async function refreshCatalog(force: boolean, options: { blockingOverlay?: boole
   }
 }
 
-function installVersion(state: AppState, packageId: string, versionId: string): AppState {
+function installVersion(state: AppState): AppState {
   return {
     ...state,
     modal: null
   };
 }
 
-async function queueVersionForCache(packageId: string, versionId: string) {
-  const state = get(appState);
-  const pkg =
-    state.selectedPackageDetail?.id === packageId
-      ? state.selectedPackageDetail
-      : findPackage(state, packageId);
-  const version = pkg?.versions.find((entry) => entry.id === versionId);
-
-  if (!pkg || !version) {
-    return;
-  }
-
+async function queueVersionForCache(request: InstallRequest) {
   try {
-    const result = await queueInstallToCache({ packageId, versionId });
+    const result = await queueInstallToCache({
+      packageId: request.packageId,
+      versionId: request.versionId
+    });
 
     appState.update((current) =>
       appendActivity(
@@ -664,7 +656,7 @@ async function queueVersionForCache(packageId: string, versionId: string) {
         },
         withActivity(
           "Caching mod archive",
-          `Caching ${pkg.fullName} ${version.versionNumber} in the shared archive cache.`,
+          `Caching ${request.packageName} ${request.versionNumber} in the shared archive cache.`,
           "neutral"
         )
       )
@@ -673,15 +665,25 @@ async function queueVersionForCache(packageId: string, versionId: string) {
     startDownloadPolling();
     await Promise.all([loadActiveDownloads(), loadCacheSummary()]);
   } catch (error) {
+    const fallbackMessage = `Failed to start the cache task for ${request.packageName} ${request.versionNumber}.`;
+    const errorMessage = error instanceof Error ? `${fallbackMessage} ${error.message}` : fallbackMessage;
+
+    console.error("Failed to queue install to cache", {
+      packageId: request.packageId,
+      packageName: request.packageName,
+      versionId: request.versionId,
+      versionNumber: request.versionNumber,
+      effectiveStatus: request.effectiveStatus,
+      error
+    });
+
     appState.update((current) => ({
-      ...current,
-      downloadError: error instanceof Error ? error.message : "Failed to start the cache task.",
-      desktopError:
-        current.runtimeKind === "tauri"
-          ? error instanceof Error
-            ? error.message
-            : "Failed to start the desktop cache task."
-          : current.desktopError
+      ...appendActivity(
+        current,
+        withActivity("Cache task failed to start", errorMessage, "warning")
+      ),
+      downloadError: errorMessage,
+      desktopError: current.runtimeKind === "tauri" ? errorMessage : current.desktopError
     }));
   }
 }
@@ -812,41 +814,40 @@ export const actions = {
       }));
     }
   },
-  requestInstall(packageId: string, versionId: string) {
+  requestInstall(request: InstallRequest) {
     appState.update((state) => {
-      const version =
-        state.selectedPackageDetail?.id === packageId
-          ? state.selectedPackageDetail.versions.find((entry) => entry.id === versionId)
-          : undefined;
-      const effectiveStatus = version?.effectiveStatus ?? version?.baseZone;
-
-      if (effectiveStatus === "broken" && state.warningPrefs.broken) {
+      if (request.effectiveStatus === "broken" && state.warningPrefs.broken) {
         return {
           ...state,
           modal: {
-            packageId,
-            versionId,
-            status: "broken"
+            packageId: request.packageId,
+            packageName: request.packageName,
+            versionId: request.versionId,
+            versionNumber: request.versionNumber,
+            status: "broken",
+            referenceNote: request.referenceNote
           }
         };
       }
 
-      if (effectiveStatus === "red" && state.warningPrefs.red) {
+      if (request.effectiveStatus === "red" && state.warningPrefs.red) {
         return {
           ...state,
           modal: {
-            packageId,
-            versionId,
+            packageId: request.packageId,
+            packageName: request.packageName,
+            versionId: request.versionId,
+            versionNumber: request.versionNumber,
             status: "red"
           }
         };
       }
 
-      return installVersion(state, packageId, versionId);
+      return installVersion(state);
     });
 
     if (!get(appState).modal) {
-      void queueVersionForCache(packageId, versionId);
+      void queueVersionForCache(request);
     }
   },
   dismissModal() {
@@ -872,7 +873,7 @@ export const actions = {
         }
       };
 
-      return installVersion(nextState, state.modal.packageId, state.modal.versionId);
+      return installVersion(nextState);
     });
 
     if (doNotShowAgain && modal?.status) {
@@ -885,7 +886,14 @@ export const actions = {
     }
 
     if (modal) {
-      void queueVersionForCache(modal.packageId, modal.versionId);
+      void queueVersionForCache({
+        packageId: modal.packageId,
+        packageName: modal.packageName,
+        versionId: modal.versionId,
+        versionNumber: modal.versionNumber,
+        effectiveStatus: modal.status,
+        referenceNote: modal.referenceNote
+      });
     }
   },
   async setWarningPreference(kind: "red" | "broken", enabled: boolean) {

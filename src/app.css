@@ -614,6 +614,25 @@ img {
   padding: 12px;
 }
 
+.package-card {
+  display: grid;
+  gap: 10px;
+}
+
+.package-card-select {
+  display: grid;
+  gap: 10px;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.package-card-select:hover {
+  background: transparent;
+}
+
 .profile-form-card {
   display: grid;
   gap: 12px;
@@ -737,6 +756,26 @@ img {
 
 .package-card .chip-row {
   margin-bottom: 6px;
+}
+
+.package-card-footer {
+  align-items: flex-end;
+}
+
+.package-card-footer-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.package-card-install-button {
+  min-width: 42px;
+  justify-content: center;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.package-card-install-button span {
+  display: none;
 }
 
 .warning-copy {

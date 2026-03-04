@@ -159,23 +159,26 @@ pub fn list_reference_rows(
         ",
     )?;
 
-    let mapped_rows = statement.query_map(params![search, (page_size + 1) as i64, cursor as i64], |row| {
-        Ok(ReferenceRowDto {
-            package_id: row.get(0)?,
-            package_name: row.get(1)?,
-            version_id: row.get(2)?,
-            version_number: row.get(3)?,
-            published_at: row.get(4)?,
-            base_zone: parse_base_zone(&row.get::<_, String>(5)?),
-            effective_status: parse_effective_status(&row.get::<_, String>(6)?),
-            reference_source: row.get(7)?,
-            reference_state: row
-                .get::<_, Option<String>>(8)?
-                .as_deref()
-                .and_then(parse_reference_state),
-            note: row.get(9)?,
-        })
-    })?;
+    let mapped_rows = statement.query_map(
+        params![search, (page_size + 1) as i64, cursor as i64],
+        |row| {
+            Ok(ReferenceRowDto {
+                package_id: row.get(0)?,
+                package_name: row.get(1)?,
+                version_id: row.get(2)?,
+                version_number: row.get(3)?,
+                published_at: row.get(4)?,
+                base_zone: parse_base_zone(&row.get::<_, String>(5)?),
+                effective_status: parse_effective_status(&row.get::<_, String>(6)?),
+                reference_source: row.get(7)?,
+                reference_state: row
+                    .get::<_, Option<String>>(8)?
+                    .as_deref()
+                    .and_then(parse_reference_state),
+                note: row.get(9)?,
+            })
+        },
+    )?;
 
     let mut rows = Vec::new();
     for row in mapped_rows {
@@ -189,7 +192,11 @@ pub fn list_reference_rows(
 
     Ok(ListReferenceRowsResult {
         items: rows,
-        next_cursor: if has_more { Some(cursor + page_size) } else { None },
+        next_cursor: if has_more {
+            Some(cursor + page_size)
+        } else {
+            None
+        },
         has_more,
         page_size,
     })
@@ -226,8 +233,12 @@ pub fn set_reference_state(
         ],
     )?;
 
-    get_reference_row(connection, &input.package_id, &input.version_id)?
-        .ok_or_else(|| InternalError::app("REFERENCE_NOT_FOUND", "Reference row was not found after update"))
+    get_reference_row(connection, &input.package_id, &input.version_id)?.ok_or_else(|| {
+        InternalError::app(
+            "REFERENCE_NOT_FOUND",
+            "Reference row was not found after update",
+        )
+    })
 }
 
 fn format_reference_state(state: crate::domain::status::ReferenceState) -> &'static str {

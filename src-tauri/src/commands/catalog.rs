@@ -20,13 +20,17 @@ pub async fn sync_catalog(
     let state = state.inner().clone();
     let input = input.unwrap_or(SyncCatalogInput { force: None });
 
-    async_runtime::spawn_blocking(move || sync_catalog_service(&state, input).map_err(AppError::from))
-        .await
-        .map_err(|error| AppError::new("CATALOG_SYNC_FAILED", error.to_string()))?
+    async_runtime::spawn_blocking(move || {
+        sync_catalog_service(&state, input).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("CATALOG_SYNC_FAILED", error.to_string()))?
 }
 
 #[tauri::command]
-pub async fn get_catalog_summary(state: State<'_, AppState>) -> Result<CatalogSummaryDto, AppError> {
+pub async fn get_catalog_summary(
+    state: State<'_, AppState>,
+) -> Result<CatalogSummaryDto, AppError> {
     let connection = state.connection.clone();
 
     async_runtime::spawn_blocking(move || {

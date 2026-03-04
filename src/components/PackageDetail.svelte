@@ -1,19 +1,21 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { openExternalUrl } from "../lib/api/system";
-  import { resolveEffectiveStatus } from "../lib/status";
-  import type { EffectiveStatus, ModPackage } from "../lib/types";
+  import { currentReferenceNote, pickRecommendedVersion, resolveEffectiveStatus } from "../lib/status";
+  import type { EffectiveStatus, InstallRequest, ModPackage, ModVersion } from "../lib/types";
   import Icon from "./Icon.svelte";
   import StatusPill from "./StatusPill.svelte";
 
   export let pkg: ModPackage | undefined;
   export let visibleStatuses: string[];
   export let onToggleStatus: (status: "verified" | "broken" | "green" | "yellow" | "orange" | "red") => void;
-  export let onInstall: (packageId: string, versionId: string) => void;
+  export let onInstall: (request: InstallRequest) => void;
   export let onSetReference: (packageId: string, versionId: string, state: "verified" | "broken" | "neutral") => void;
 
   const filters = ["verified", "green", "yellow", "orange", "red", "broken"] as const;
-  const installPriority: EffectiveStatus[] = ["verified", "green", "yellow", "orange", "red", "broken"];
+  let installVersion: ModVersion | undefined = undefined;
+  let installStatus: EffectiveStatus = "green";
+  let installLabel = "Install";
   let menu:
     | {
         versionId: string;
@@ -56,21 +58,27 @@
       return undefined;
     }
 
-    const sortedVersions = [...pkg.versions].sort((left, right) =>
-      right.publishedAt.localeCompare(left.publishedAt)
-    );
+    return pickRecommendedVersion(pkg);
+  }
 
-    for (const status of installPriority) {
-      const match = sortedVersions.find(
-        (version) => (version.effectiveStatus ?? resolveEffectiveStatus(version)) === status
-      );
-
-      if (match) {
-        return match;
-      }
+  function buildInstallRequest(versionId: string): InstallRequest | undefined {
+    if (!pkg) {
+      return undefined;
     }
 
-    return sortedVersions[0];
+    const version = pkg.versions.find((entry) => entry.id === versionId);
+    if (!version) {
+      return undefined;
+    }
+
+    return {
+      packageId: pkg.id,
+      packageName: pkg.fullName,
+      versionId: version.id,
+      versionNumber: version.versionNumber,
+      effectiveStatus: version.effectiveStatus ?? resolveEffectiveStatus(version),
+      referenceNote: currentReferenceNote(version)
+    };
   }
 
   async function viewPackageInBrowser() {
@@ -93,7 +101,12 @@
       return;
     }
 
-    onInstall(pkg.id, targetVersion.id);
+    const request = buildInstallRequest(targetVersion.id);
+    if (!request) {
+      return;
+    }
+
+    onInstall(request);
   }
 
   function applyReference(state: "verified" | "broken" | "neutral") {
@@ -134,10 +147,15 @@
     window.removeEventListener("keydown", handleWindowKeydown);
   }
 
-  $: installVersion = pickInstallVersion();
-  $: installStatus = installVersion
-    ? installVersion.effectiveStatus ?? resolveEffectiveStatus(installVersion)
-    : "green";
+  $: if (pkg) {
+    installVersion = pickRecommendedVersion(pkg);
+    installStatus = installVersion.effectiveStatus ?? resolveEffectiveStatus(installVersion);
+    installLabel = `Install ${installVersion.versionNumber}`;
+  } else {
+    installVersion = undefined;
+    installStatus = "green";
+    installLabel = "Install";
+  }
 </script>
 
 {#if pkg}
@@ -154,10 +172,16 @@
     </div>
 
     <div class="detail-primary-actions">
-      <button class={`solid-button icon-button package-install-button ${installStatus}`} type="button" on:click={installRecommendedVersion}>
-        <Icon label="Install recommended version" name="download" />
-        <span>Install</span>
-      </button>
+      {#key installVersion?.id ?? `${pkg.id}-install`}
+        <button
+          class={`solid-button icon-button package-install-button ${installStatus}`}
+          type="button"
+          on:click={installRecommendedVersion}
+        >
+          <Icon label={`Install ${installVersion?.versionNumber ?? "recommended version"}`} name="download" />
+          <span>{installLabel}</span>
+        </button>
+      {/key}
       <button class="ghost-button icon-button detail-link-button" type="button" on:click={viewPackageInBrowser}>
         <Icon label="View mod in browser" name="external-link" size={16} />
         <span>View in browser</span>
@@ -208,7 +232,16 @@
             </div>
 
             <div class="version-actions">
-              <button class="solid-button icon-button" type="button" on:click={() => onInstall(pkg.id, version.id)}>
+              <button
+                class="solid-button icon-button"
+                type="button"
+                on:click={() => {
+                  const request = buildInstallRequest(version.id);
+                  if (request) {
+                    onInstall(request);
+                  }
+                }}
+              >
                 <Icon label="Install version" name="download" />
                 <span>Install version</span>
               </button>

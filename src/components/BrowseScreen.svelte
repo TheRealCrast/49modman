@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { EffectiveStatus, ModPackage } from "../lib/types";
+  import type { EffectiveStatus, InstallRequest, ModPackage } from "../lib/types";
   import Icon from "./Icon.svelte";
   import PackageDetail from "./PackageDetail.svelte";
   import StatusPill from "./StatusPill.svelte";
@@ -32,12 +32,22 @@
   export let onLoadMore: () => void;
   export let onToggleStatus: (status: EffectiveStatus) => void;
   export let onSelectPackage: (packageId: string) => void;
-  export let onInstall: (packageId: string, versionId: string) => void;
+  export let onInstall: (request: InstallRequest) => void;
   export let onSetReference: (packageId: string, versionId: string, state: "verified" | "broken" | "neutral") => void;
 
   const filters: EffectiveStatus[] = ["verified", "green", "yellow", "orange", "red", "broken"];
   let listElement: HTMLElement | undefined;
   let autoloadQueued = false;
+
+  function buildCardInstallRequest(card: (typeof cards)[number]): InstallRequest {
+    return {
+      packageId: card.id,
+      packageName: card.fullName,
+      versionId: card.recommendedVersionId,
+      versionNumber: card.recommendedVersion,
+      effectiveStatus: card.effectiveStatus
+    };
+  }
 
   function handleListScroll(event: Event) {
     const target = event.currentTarget as HTMLElement;
@@ -141,30 +151,44 @@
         {/if}
 
         {#each cards as card}
-          <button class="package-card panel" type="button" on:click={() => onSelectPackage(card.id)}>
-            <div class="package-card-header">
-              <div>
-                <p class="package-name">{card.fullName}</p>
-                <p class="package-meta">by {card.author}</p>
+          <article class="package-card panel">
+            <button class="package-card-select" type="button" on:click={() => onSelectPackage(card.id)}>
+              <div class="package-card-header">
+                <div>
+                  <p class="package-name">{card.fullName}</p>
+                  <p class="package-meta">by {card.author}</p>
+                </div>
+                <StatusPill status={card.effectiveStatus} />
               </div>
-              <StatusPill status={card.effectiveStatus} />
-            </div>
 
-            <p class="package-summary">{card.summary}</p>
+              <p class="package-summary">{card.summary}</p>
 
-            <div class="chip-row">
-              {#each card.categories.slice(0, 3) as category}
-                <span class="category-chip">{category}</span>
-              {/each}
-            </div>
+              <div class="chip-row">
+                {#each card.categories.slice(0, 3) as category}
+                  <span class="category-chip">{category}</span>
+                {/each}
+              </div>
+            </button>
 
             <div class="package-card-footer">
-              <span>Recommended {card.recommendedVersion}</span>
-              {#if card.everyRelevantVersionBroken}
-                <span class="warning-copy danger">Broken candidates only</span>
-              {/if}
+              <div class="package-card-footer-copy">
+                <span>Recommended {card.recommendedVersion}</span>
+                {#if card.everyRelevantVersionBroken}
+                  <span class="warning-copy danger">Broken candidates only</span>
+                {/if}
+              </div>
+
+              <button
+                class={`solid-button icon-button package-install-button package-card-install-button ${card.effectiveStatus}`}
+                type="button"
+                aria-label={`Install ${card.fullName} ${card.recommendedVersion}`}
+                title={`Install ${card.recommendedVersion}`}
+                on:click={() => onInstall(buildCardInstallRequest(card))}
+              >
+                <Icon label={`Install ${card.recommendedVersion}`} name="download" />
+              </button>
             </div>
-          </button>
+          </article>
         {/each}
 
         {#if catalogError}

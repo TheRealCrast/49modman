@@ -11,27 +11,17 @@
   import { actions, appState, selectedProfile } from "./lib/store";
   import type { AppView, EffectiveStatus } from "./lib/types";
 
-  $: modalVersion =
-    $appState.modal &&
-    $appState.packages
-      .find((pkg) => pkg.id === $appState.modal?.packageId)
-      ?.versions.find((version) => version.id === $appState.modal?.versionId);
-
-  $: modalPackage = $appState.modal && $appState.packages.find((pkg) => pkg.id === $appState.modal?.packageId);
-
   $: modalCopy =
-    modalVersion && $appState.modal
+    $appState.modal
       ? $appState.modal.status === "broken"
         ? {
             title: `This version is marked broken locally`,
-            description: `${modalPackage?.fullName} ${modalVersion.versionNumber} is flagged as broken for v49 in your local reference library. You can still install it, but the UI is warning you because this exact build has known issues.`,
-            note:
-              modalVersion.overrideReferenceNote ??
-              modalVersion.bundledReferenceNote
+            description: `${$appState.modal.packageName} ${$appState.modal.versionNumber} is flagged as broken for v49 in your local reference library. You can still install it, but the UI is warning you because this exact build has known issues.`,
+            note: $appState.modal.referenceNote
           }
         : {
             title: `This version falls in the red zone`,
-            description: `${modalPackage?.fullName} ${modalVersion.versionNumber} was released on or after April 13, 2024, so the frontend treats it as incompatible with the v49 target window. You can still continue if you want to experiment.`,
+            description: `${$appState.modal.packageName} ${$appState.modal.versionNumber} was released on or after April 13, 2024, so the frontend treats it as incompatible with the v49 target window. You can still continue if you want to experiment.`,
             note: undefined
           }
       : null;

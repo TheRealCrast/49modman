@@ -4,8 +4,9 @@ use crate::{
     app_state::AppState,
     error::AppError,
     services::reference_service::{
-        list_reference_rows as list_reference_rows_service, set_reference_state as set_reference_state_service,
-        ListReferenceRowsInput, ListReferenceRowsResult, ReferenceRowDto, SetReferenceStateInput,
+        list_reference_rows as list_reference_rows_service,
+        set_reference_state as set_reference_state_service, ListReferenceRowsInput,
+        ListReferenceRowsResult, ReferenceRowDto, SetReferenceStateInput,
     },
 };
 
