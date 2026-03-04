@@ -15,6 +15,12 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
 - The install/cache/modpack experiment was reverted
 - The profile-only milestone is implemented
 - The cache-only milestone is now implemented and working
+- Browse install now performs real profile installs:
+  - cache hit or cache download first
+  - extract zip into active profile `mods/`
+  - update profile `manifest.json` `mods[]`
+- Overview now renders installed mods from profile manifest data
+- Overview installed rows now load `icon.png` from each installed mod folder when available
 - Reset-all-data UX/backend flow has been hardened:
   - schema-safe reset for legacy tables
   - visible progress modal during reset
@@ -39,7 +45,7 @@ Current state:
   - real create
   - real delete
   - real active-profile switching
-- Overview now uses the real active profile and shows empty installed-mod state
+- Overview now uses the real active profile and shows manifest-backed installed mods
 - Settings now includes:
   - `Warn options`
   - `Cache`
@@ -54,7 +60,7 @@ Current state:
   - `$APP_DATA/profiles/<profile_id>/mods/`
   - `$APP_DATA/profiles/<profile_id>/runtime/BepInEx/plugins/`
   - `$APP_DATA/profiles/<profile_id>/runtime/BepInEx/config/`
-- profile manifests are now maintained as schema v1 metadata + empty `mods` list
+- profile manifests are now maintained as schema v1 metadata + installed `mods` entries
 - deleting a profile now also deletes its profile folder on disk
 - Settings now includes a `Profiles` subcategory with:
   - `Open profiles folder`
@@ -71,26 +77,19 @@ Last completed milestone:
 
 Current planned milestone:
 
-- [dependency-view-v1-1.md](./dependency-view-v1-1.md)
+- install-state controls (uninstall + enable/disable) follow-up (not implemented yet)
 
 Current locked behavior:
 
-- cache scope is still `cache only`
+- install scope is now `cache + active profile`
 - Browse detail `Install` now includes the chosen version label
 - Downloads is still `active only`
-- no profile/modpack install state changes yet
+- uninstalling is not implemented yet
+- enable/disable is not implemented yet
 
 ## Current Uncommitted Work
 
-Current working tree before the next commit includes:
-
-- `docs/current-stage.md`
-- `src-tauri/src/db/mod.rs`
-- `src/App.svelte`
-- `src/app.css`
-- `src/lib/store.ts`
-- `src/lib/types.ts`
-- `src/components/ResetProgressModal.svelte`
+Current working tree now includes the profile-install activation and Overview installed-mod UI work (pending commit).
 
 ## Profile Milestone Notes
 
@@ -115,10 +114,10 @@ Current working tree before the next commit includes:
   2. restore default profile/settings
   3. refresh Browse data from Thunderstore
   4. finalize and return to normal UI
-- install/download/cache/modpack behavior is still intentionally not implemented on this branch
-- existing Browse install actions are placeholder-only and do not modify profile state
+- Browse installs are now real and modify active profile state
+- modpack flows are still not implemented
 
-## Profile Storage And Manifest Notes (Post Cache-Only)
+## Profile Storage And Manifest Notes (Post Install Activation)
 
 - profile folders are keyed by profile id, not profile name
 - profile storage is ensured in these flows:
@@ -130,17 +129,33 @@ Current working tree before the next commit includes:
   - `runtime/BepInEx/plugins`
   - `runtime/BepInEx/config`
 - `manifest.json` is rewritten atomically for profile metadata updates
+- manifest `mods[]` now persists installed Thunderstore versions for each profile
+- installed mod entries include:
+  - package/version identity
+  - enabled flag (always `true` in this milestone)
+  - source kind (`thunderstore`)
+  - install directory under `mods/`
+  - installed timestamp
+- manifest read APIs now enrich installed-mod DTOs with optional `iconDataUrl` if `icon.png` exists in that mod folder
 - `reset_all_data` now clears profile folders and then reseeds + re-ensures `default` profile storage
 - per-profile storage size is computed from profile directory bytes and returned in `list_profiles`
 - Settings profile summary is returned via backend command:
   - `get_profiles_storage_summary`
 
-## Cache Milestone Notes
+## Cache + Profile Install Notes
 
 - this is the first real install-adjacent filesystem work since the revert
-- install scope is `cache only`
+- install scope is now `cache + active profile extract`
 - Downloads behavior is `active only`
 - Browse labels stay `Install` / `Install version`, but the detail Install button now shows the exact selected version
+- install flow now:
+  1. check exact version in shared cache
+  2. download to cache on miss
+  3. extract cached zip into active profile `mods/<package>-<version>/`
+  4. upsert manifest entry for that exact package/version
+- repeated installs of the same exact version currently re-extract into the same target folder and refresh manifest timestamp
+- multiple versions of the same package are currently allowed side-by-side
+- no uninstall or enable/disable behavior yet
 - the current local SQLite DB still contains legacy tables from the reverted experiment:
   - `cached_archives`
   - `install_tasks`
@@ -149,6 +164,17 @@ Current working tree before the next commit includes:
   - `profile_mod_dependencies`
   - `local_mods`
 - cache implementation was written to stay compatible with that DB shape rather than assuming a clean slate
+
+## Browse Responsiveness Fix Notes
+
+- a lock-contention regression was found after profile-install activation:
+  - Browse detail and quick-install actions could appear non-responsive while install worker held the SQLite mutex during profile file extraction/manifest updates
+- fix applied:
+  - reduce DB lock lifetime in install worker
+  - perform filesystem-heavy profile extraction outside long DB lock scope
+  - reduce post-install frontend refresh work to active-profile refresh instead of full profile/storage refresh
+- result:
+  - Browse detail selection and quick-install interactions remain responsive while install jobs complete
 
 ## Browse Install Polish Notes
 
@@ -215,7 +241,9 @@ These were already verified successfully before these notes were written:
 
 ## Current Product/Engineering Focus
 
-The current focus has shifted from Browse performance and cache-only install activation to dependency inspection UX.
+The current focus has shifted from cache-only install activation to active-profile install correctness and installed-mod UX polish in Overview.
+
+Dependency-view notes below are preserved as historical context from the previously completed focus.
 
 Current dependency-view state:
 

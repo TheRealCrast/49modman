@@ -21,6 +21,8 @@ pub enum InternalError {
     TimeFormat(#[from] time::error::Format),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Zip(#[from] zip::result::ZipError),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +111,11 @@ impl InternalError {
             Self::Io(error) => AppError {
                 code: "RESOURCE_LOAD_FAILED",
                 message: "Filesystem operation failed".into(),
+                detail: Some(error.to_string()),
+            },
+            Self::Zip(error) => AppError {
+                code: "ARCHIVE_INVALID",
+                message: "Archive extraction failed".into(),
                 detail: Some(error.to_string()),
             },
         }

@@ -16,8 +16,11 @@ use crate::{
     db::now_rfc3339,
     error::InternalError,
     services::cache_service::{
-        cached_archive_relative_path, mark_archive_used, thunderstore_archive_path,
+        cached_archive_path, cached_archive_relative_path, mark_archive_used, thunderstore_archive_path,
         upsert_cached_archive, verify_cached_archive,
+    },
+    services::profile_service::{
+        get_active_profile_id, get_profile_detail, install_cached_archive_into_profile,
     },
 };
 
@@ -73,6 +76,7 @@ pub struct QueueInstallToCacheResult {
 
 #[derive(Debug, Clone)]
 struct VersionCacheInfo {
+    profile_id: String,
     package_id: String,
     version_id: String,
     package_name: String,
@@ -88,7 +92,10 @@ pub fn queue_install_to_cache(
         let connection = state.connection.lock().map_err(|_| {
             InternalError::app("DB_INIT_FAILED", "Failed to lock the SQLite connection.")
         })?;
-        load_version_cache_info(&connection, &input.package_id, &input.version_id)?
+        let profile_id = get_active_profile_id(&connection)?;
+        let mut info = load_version_cache_info(&connection, &input.package_id, &input.version_id)?;
+        info.profile_id = profile_id;
+        info
     };
 
     {
@@ -96,7 +103,8 @@ pub fn queue_install_to_cache(
             InternalError::app("DB_INIT_FAILED", "Failed to lock the SQLite connection.")
         })?;
 
-        if let Some(existing_task_id) = find_active_task_for_version(&connection, &info.version_id)?
+        if let Some(existing_task_id) =
+            find_active_task_for_version(&connection, &info.profile_id, &info.version_id)?
         {
             return Ok(QueueInstallToCacheResult {
                 task_id: existing_task_id,
@@ -238,6 +246,7 @@ fn load_version_cache_info(
             params![package_id, version_id],
             |row| {
                 Ok(VersionCacheInfo {
+                    profile_id: String::new(),
                     package_id: row.get(0)?,
                     version_id: row.get(1)?,
                     package_name: row.get(2)?,
@@ -267,6 +276,7 @@ fn load_version_cache_info(
 
 fn find_active_task_for_version(
     connection: &Connection,
+    profile_id: &str,
     version_id: &str,
 ) -> Result<Option<String>, InternalError> {
     connection
@@ -274,11 +284,12 @@ fn find_active_task_for_version(
             "SELECT id
              FROM install_tasks
              WHERE kind = 'cache_version'
-               AND detail = ?1
+               AND profile_id = ?1
+               AND detail = ?2
                AND status IN ('queued', 'running')
              ORDER BY created_at DESC
              LIMIT 1",
-            params![version_id],
+            params![profile_id, version_id],
             |row| row.get::<_, String>(0),
         )
         .optional()
@@ -292,14 +303,14 @@ fn insert_task_and_job(
     info: &VersionCacheInfo,
 ) -> Result<(), InternalError> {
     let now = now_rfc3339()?;
-    let title = format!("Caching {} {}", info.package_name, info.version_number);
+    let title = format!("Installing {} {}", info.package_name, info.version_number);
 
     connection.execute(
         "INSERT INTO install_tasks (
             id, profile_id, kind, status, title, detail, progress_step, progress_current,
             progress_total, error_message, created_at, started_at, finished_at
-         ) VALUES (?1, NULL, 'cache_version', 'queued', ?2, ?3, 'queued', 0, 4, NULL, ?4, NULL, NULL)",
-        params![task_id, title, info.version_id, now],
+         ) VALUES (?1, ?2, 'cache_version', 'queued', ?3, ?4, 'queued', 0, 4, NULL, ?5, NULL, NULL)",
+        params![task_id, info.profile_id, title, info.version_id, now],
     )?;
 
     connection.execute(
@@ -341,74 +352,80 @@ fn process_cache_task(
         },
     )?;
 
+    let mut archive_path: Option<std::path::PathBuf> = None;
+    let mut cache_hit = false;
+
     {
         let connection = state.connection.lock().map_err(|_| {
             InternalError::app("DB_INIT_FAILED", "Failed to lock the SQLite connection.")
         })?;
-        if verify_cached_archive(state, &connection, &info.version_id)?.is_some() {
+        if let Some(cached) = verify_cached_archive(state, &connection, &info.version_id)? {
             mark_archive_used(&connection, &info.version_id)?;
-            drop(connection);
-
-            update_job_state(
-                state,
-                job_id,
-                JobUpdate {
-                    status: Some("cached"),
-                    cache_hit: Some(true),
-                    progress_label: Some("Already cached locally"),
-                    bytes_downloaded: Some(0),
-                    total_bytes: Some(0),
-                    ..JobUpdate::default()
-                },
-            )?;
-            mark_task_finished(state, task_id, true, None, "finalizing", 4, 4)?;
-            return Ok(());
+            archive_path = Some(cached_archive_path(state, &cached.relative_path));
+            cache_hit = true;
         }
     }
 
-    update_task_state(
-        state,
-        task_id,
-        TaskUpdate {
-            status: Some("running"),
-            progress_step: Some("downloading"),
-            progress_current: Some(2),
-            progress_total: Some(4),
-            ..TaskUpdate::default()
-        },
-    )?;
-    update_job_state(
-        state,
-        job_id,
-        JobUpdate {
-            status: Some("downloading"),
-            progress_label: Some("Downloading from Thunderstore"),
-            ..JobUpdate::default()
-        },
-    )?;
-
-    if let Err(error) = download_and_cache_archive(state, task_id, job_id, info) {
-        let error_message = error.to_string();
-        let _ = update_job_state(
+    if cache_hit {
+        update_job_state(
             state,
             job_id,
             JobUpdate {
-                status: Some("failed"),
-                progress_label: Some("Download failed"),
-                error_message: Some(error_message.clone()),
+                status: Some("cached"),
+                cache_hit: Some(true),
+                progress_label: Some("Using cached archive"),
+                bytes_downloaded: Some(0),
+                total_bytes: Some(0),
                 ..JobUpdate::default()
             },
-        );
-        let _ = mark_task_finished(
+        )?;
+    } else {
+        update_task_state(
             state,
             task_id,
-            false,
-            Some(error_message),
-            "downloading",
-            2,
-            4,
-        );
-        return Err(error);
+            TaskUpdate {
+                status: Some("running"),
+                progress_step: Some("downloading"),
+                progress_current: Some(2),
+                progress_total: Some(4),
+                ..TaskUpdate::default()
+            },
+        )?;
+        update_job_state(
+            state,
+            job_id,
+            JobUpdate {
+                status: Some("downloading"),
+                progress_label: Some("Downloading from Thunderstore"),
+                ..JobUpdate::default()
+            },
+        )?;
+
+        if let Err(error) = download_and_cache_archive(state, task_id, job_id, info) {
+            let error_message = error.to_string();
+            let _ = update_job_state(
+                state,
+                job_id,
+                JobUpdate {
+                    status: Some("failed"),
+                    progress_label: Some("Download failed"),
+                    error_message: Some(error_message.clone()),
+                    ..JobUpdate::default()
+                },
+            );
+            let _ = mark_task_finished(
+                state,
+                task_id,
+                false,
+                Some(error_message),
+                "downloading",
+                2,
+                4,
+            );
+            return Err(error);
+        }
+
+        archive_path = Some(thunderstore_archive_path(state, &info.version_id));
     }
 
     update_task_state(
@@ -427,13 +444,64 @@ fn process_cache_task(
         job_id,
         JobUpdate {
             status: Some("verifying"),
-            progress_label: Some("Verifying cached archive"),
+            progress_label: Some("Installing into active profile"),
             ..JobUpdate::default()
         },
     )?;
 
+    if let Err(error) = install_archive_to_profile(state, info, archive_path.as_deref()) {
+        let error_message = error.to_string();
+        let _ = update_job_state(
+            state,
+            job_id,
+            JobUpdate {
+                status: Some("failed"),
+                progress_label: Some("Install failed"),
+                error_message: Some(error_message.clone()),
+                ..JobUpdate::default()
+            },
+        );
+        let _ = mark_task_finished(state, task_id, false, Some(error_message), "verifying", 3, 4);
+        return Err(error);
+    }
+
     mark_task_finished(state, task_id, true, None, "finalizing", 4, 4)?;
     Ok(())
+}
+
+fn install_archive_to_profile(
+    state: &AppState,
+    info: &VersionCacheInfo,
+    archive_path: Option<&std::path::Path>,
+) -> Result<(), InternalError> {
+    let archive_path = archive_path.ok_or_else(|| {
+        InternalError::app(
+            "CACHE_ARCHIVE_MISSING",
+            "The cached archive path was not resolved for install.",
+        )
+    })?;
+
+    let profile = {
+        let connection = state.connection.lock().map_err(|_| {
+            InternalError::app("DB_INIT_FAILED", "Failed to lock the SQLite connection.")
+        })?;
+        get_profile_detail(&connection, &info.profile_id)?.ok_or_else(|| {
+            InternalError::app(
+                "PROFILE_NOT_FOUND",
+                format!("Profile {} does not exist.", info.profile_id),
+            )
+        })?
+    };
+
+    install_cached_archive_into_profile(
+        state,
+        &profile,
+        archive_path,
+        &info.package_id,
+        &info.package_name,
+        &info.version_id,
+        &info.version_number,
+    )
 }
 
 fn download_and_cache_archive(

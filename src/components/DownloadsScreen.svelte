@@ -41,7 +41,7 @@
     </div>
 
     <p class="download-summary">
-      All downloaded mod archives live in one shared cache. If a profile needs a version that is already cached, it can be copied in locally instead of downloading it again.
+      All downloaded mod archives live in one shared cache. Installs always target the active profile, and cached versions are reused without downloading again.
     </p>
 
     <div class="download-list list-scroll">

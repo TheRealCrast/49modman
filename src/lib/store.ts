@@ -227,15 +227,15 @@ function appendDownloadActivity(downloads: DownloadJobDto[], taskIds: string[]) 
       state,
       withActivity(
         latest.status === "failed"
-          ? "Cache task failed"
+          ? "Install failed"
           : latest.cacheHit
-            ? "Already cached"
+            ? "Installed from cache"
             : "Cache updated",
         latest.status === "failed"
-          ? latest.errorMessage ?? `Failed to cache ${latest.packageName} ${latest.versionLabel}.`
+          ? latest.errorMessage ?? `Failed to install ${latest.packageName} ${latest.versionLabel}.`
           : latest.cacheHit
-            ? `${latest.packageName} ${latest.versionLabel} was already in the shared cache.`
-            : `${latest.packageName} ${latest.versionLabel} was cached locally.`,
+            ? `${latest.packageName} ${latest.versionLabel} was installed from the shared cache.`
+            : `${latest.packageName} ${latest.versionLabel} was downloaded and installed.`,
         latest.status === "failed" ? "warning" : "positive"
       )
     )
@@ -309,6 +309,28 @@ async function loadProfilesState() {
           ? error instanceof Error
             ? error.message
             : "Failed to load desktop profiles."
+          : current.desktopError
+    }));
+  }
+}
+
+async function refreshActiveProfileState() {
+  try {
+    const activeProfile = await getActiveProfileApi();
+    appState.update((current) => ({
+      ...mapActiveProfile(current, activeProfile ?? undefined),
+      profileError: null,
+      desktopError: null
+    }));
+  } catch (error) {
+    appState.update((current) => ({
+      ...current,
+      profileError: error instanceof Error ? error.message : "Failed to refresh the active profile.",
+      desktopError:
+        current.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to refresh the active desktop profile."
           : current.desktopError
     }));
   }
@@ -414,7 +436,7 @@ async function loadActiveDownloads() {
     } else {
       stopDownloadPolling();
       if (hadActiveTasks) {
-        await loadCacheSummary();
+        await Promise.all([loadCacheSummary(), refreshActiveProfileState()]);
         appendDownloadActivity(previous.downloads, activeTaskIds);
       }
     }
@@ -830,8 +852,8 @@ async function queueVersionForCache(request: InstallRequest) {
             : [result.taskId, ...current.activeCacheTaskIds]
         },
         withActivity(
-          "Caching mod archive",
-          `Caching ${request.packageName} ${request.versionNumber} in the shared archive cache.`,
+          "Installing mod",
+          `Preparing ${request.packageName} ${request.versionNumber} from cache into the active profile.`,
           "neutral"
         )
       )
@@ -840,10 +862,10 @@ async function queueVersionForCache(request: InstallRequest) {
     startDownloadPolling();
     await Promise.all([loadActiveDownloads(), loadCacheSummary()]);
   } catch (error) {
-    const fallbackMessage = `Failed to start the cache task for ${request.packageName} ${request.versionNumber}.`;
+    const fallbackMessage = `Failed to start the install task for ${request.packageName} ${request.versionNumber}.`;
     const errorMessage = error instanceof Error ? `${fallbackMessage} ${error.message}` : fallbackMessage;
 
-    console.error("Failed to queue install to cache", {
+    console.error("Failed to queue install task", {
       packageId: request.packageId,
       packageName: request.packageName,
       versionId: request.versionId,
@@ -855,7 +877,7 @@ async function queueVersionForCache(request: InstallRequest) {
     appState.update((current) => ({
       ...appendActivity(
         current,
-        withActivity("Cache task failed to start", errorMessage, "warning")
+        withActivity("Install task failed to start", errorMessage, "warning")
       ),
       downloadError: errorMessage,
       desktopError: current.runtimeKind === "tauri" ? errorMessage : current.desktopError

@@ -905,9 +905,61 @@ img {
 
 .installed-card-main {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  justify-content: flex-start;
+  align-items: stretch;
   gap: 12px;
+}
+
+.installed-card-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  align-content: start;
+}
+
+.installed-card-copy p {
+  margin: 0;
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+}
+
+.installed-card-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.installed-card-icon {
+  width: auto;
+  height: 100%;
+  max-width: 72px;
+  max-height: 72px;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  object-fit: contain;
+  background: #fff;
+  flex-shrink: 0;
+  aspect-ratio: 1 / 1;
+  display: block;
+}
+
+.installed-card-icon-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef1f6;
+  color: var(--text-soft);
+  font-weight: 700;
+  width: auto;
+  height: 100%;
+  max-width: 72px;
+  max-height: 72px;
+  min-width: 40px;
+  min-height: 40px;
+  aspect-ratio: 1 / 1;
+  font-size: 0.85rem;
 }
 
 .installed-card-actions {

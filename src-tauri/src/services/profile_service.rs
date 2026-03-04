@@ -1,13 +1,16 @@
 use std::{
     fs,
+    io,
     io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
 
+use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use zip::ZipArchive;
 
 use crate::{
     app_state::AppState,
@@ -42,7 +45,22 @@ pub struct ProfileDetailDto {
     pub last_played: Option<String>,
     pub launch_mode_default: String,
     pub is_builtin_default: bool,
-    pub installed_mods: Vec<serde_json::Value>,
+    pub installed_mods: Vec<ProfileInstalledModDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileInstalledModDto {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+    pub enabled: bool,
+    pub source_kind: String,
+    pub install_dir: String,
+    pub installed_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_data_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,16 +97,17 @@ pub struct ProfilesStorageSummaryDto {
     pub active_profile_bytes: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProfileManifest {
     pub schema_version: u32,
     pub updated_at: String,
     pub profile: ProfileManifestProfile,
-    pub mods: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub mods: Vec<ProfileManifestModEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProfileManifestProfile {
     pub id: String,
@@ -97,6 +116,19 @@ struct ProfileManifestProfile {
     pub game_path: String,
     pub launch_mode_default: String,
     pub is_builtin_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileManifestModEntry {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+    pub enabled: bool,
+    pub source_kind: String,
+    pub install_dir: String,
+    pub installed_at: String,
 }
 
 pub fn list_profiles(connection: &Connection) -> Result<Vec<ProfileSummaryDto>, InternalError> {
@@ -116,10 +148,7 @@ pub fn get_active_profile(
     connection: &Connection,
 ) -> Result<Option<ProfileDetailDto>, InternalError> {
     let profile_id = get_active_profile_id(connection)?;
-    match profile_id {
-        Some(profile_id) => get_profile_detail(connection, &profile_id),
-        None => Ok(None),
-    }
+    get_profile_detail(connection, &profile_id)
 }
 
 pub fn set_active_profile(
@@ -346,7 +375,7 @@ pub fn delete_profile(
     connection.execute("DELETE FROM profiles WHERE id = ?1", params![profile_id])?;
 
     let next_active_profile_id = match get_active_profile_id(connection)? {
-        Some(active_id) if active_id == profile_id => {
+        active_id if active_id == profile_id => {
             upsert_setting(
                 connection,
                 "profiles.active_id",
@@ -355,16 +384,7 @@ pub fn delete_profile(
             )?;
             Some("default".to_string())
         }
-        Some(active_id) => Some(active_id),
-        None => {
-            upsert_setting(
-                connection,
-                "profiles.active_id",
-                &serde_json::to_string("default")?,
-                &now_rfc3339()?,
-            )?;
-            Some("default".to_string())
-        }
+        active_id => Some(active_id),
     };
 
     Ok(DeleteProfileResult {
@@ -426,7 +446,9 @@ pub fn ensure_profile_storage(
     fs::create_dir_all(profile_dir.join("runtime"))?;
     fs::create_dir_all(profile_dir.join("runtime").join("BepInEx").join("plugins"))?;
     fs::create_dir_all(profile_dir.join("runtime").join("BepInEx").join("config"))?;
-    write_profile_manifest(state, &profile)
+
+    let existing_mods = read_profile_manifest_mods(state, profile_id)?;
+    write_profile_manifest(state, &profile, existing_mods)
 }
 
 pub fn delete_profile_storage(state: &AppState, profile_id: &str) -> Result<(), InternalError> {
@@ -456,12 +478,7 @@ pub fn open_active_profile_folder(
     state: &AppState,
     connection: &Connection,
 ) -> Result<(), InternalError> {
-    let active_profile_id = get_active_profile_id(connection)?.ok_or_else(|| {
-        InternalError::app(
-            "PROFILE_NOT_FOUND",
-            "The active profile could not be resolved from settings.",
-        )
-    })?;
+    let active_profile_id = get_active_profile_id(connection)?;
 
     ensure_profile_storage(state, connection, &active_profile_id)?;
     open_folder_path(
@@ -481,8 +498,7 @@ pub fn get_profiles_storage_summary(
         row.get::<_, i64>(0)
     })?;
 
-    let active_profile_id =
-        get_active_profile_id(connection)?.unwrap_or_else(|| "default".to_string());
+    let active_profile_id = get_active_profile_id(connection)?;
     ensure_profile_storage(state, connection, &active_profile_id)?;
 
     let profiles_total_bytes = directory_size_bytes(&state.profiles_dir)?;
@@ -503,9 +519,113 @@ pub fn get_profile_storage_size_bytes(
     Ok(bytes.min(i64::MAX as u64) as i64)
 }
 
+pub fn read_profile_manifest_mods(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<Vec<ProfileManifestModEntry>, InternalError> {
+    let manifest_path = profile_manifest_path(state, profile_id);
+    if !manifest_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let manifest_bytes = fs::read(manifest_path)?;
+    let manifest = serde_json::from_slice::<ProfileManifest>(&manifest_bytes)?;
+    Ok(manifest.mods)
+}
+
+pub fn read_profile_installed_mods(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<Vec<ProfileInstalledModDto>, InternalError> {
+    let entries = read_profile_manifest_mods(state, profile_id)?;
+    let mut mods = Vec::with_capacity(entries.len());
+
+    for entry in entries {
+        let icon_data_url = resolve_mod_icon_data_url(state, profile_id, &entry.install_dir)?;
+        mods.push(ProfileInstalledModDto {
+            package_id: entry.package_id,
+            package_name: entry.package_name,
+            version_id: entry.version_id,
+            version_number: entry.version_number,
+            enabled: entry.enabled,
+            source_kind: entry.source_kind,
+            install_dir: entry.install_dir,
+            installed_at: entry.installed_at,
+            icon_data_url,
+        });
+    }
+
+    Ok(mods)
+}
+
+pub fn install_cached_archive_into_profile(
+    state: &AppState,
+    profile: &ProfileDetailDto,
+    archive_path: &Path,
+    package_id: &str,
+    package_name: &str,
+    version_id: &str,
+    version_number: &str,
+) -> Result<(), InternalError> {
+    let profile_id = profile.id.as_str();
+
+    if !archive_path.is_file() {
+        return Err(InternalError::app(
+            "CACHE_ARCHIVE_MISSING",
+            "The cached archive is missing from disk. Try installing again.",
+        ));
+    }
+
+    let folder_name = format!(
+        "{}-{}",
+        sanitize_path_segment(package_name),
+        sanitize_path_segment(version_number)
+    );
+    let profile_root = profile_dir(state, profile_id);
+    let mods_dir = profile_root.join("mods");
+    let install_dir = mods_dir.join(&folder_name);
+
+    fs::create_dir_all(&mods_dir)?;
+
+    if install_dir.exists() {
+        fs::remove_dir_all(&install_dir)?;
+    }
+    fs::create_dir_all(&install_dir)?;
+    extract_zip_archive(archive_path, &install_dir)?;
+
+    let mut installed_mods = read_profile_manifest_mods(state, profile_id)?;
+    let install_dir_relative = format!("mods/{folder_name}");
+    let installed_at = now_rfc3339()?;
+
+    if let Some(entry) = installed_mods.iter_mut().find(|entry| {
+        entry.package_id == package_id && entry.version_id == version_id
+    }) {
+        entry.package_name = package_name.to_string();
+        entry.version_number = version_number.to_string();
+        entry.enabled = true;
+        entry.source_kind = "thunderstore".to_string();
+        entry.install_dir = install_dir_relative.clone();
+        entry.installed_at = installed_at.clone();
+    } else {
+        installed_mods.push(ProfileManifestModEntry {
+            package_id: package_id.to_string(),
+            package_name: package_name.to_string(),
+            version_id: version_id.to_string(),
+            version_number: version_number.to_string(),
+            enabled: true,
+            source_kind: "thunderstore".to_string(),
+            install_dir: install_dir_relative,
+            installed_at,
+        })
+    }
+
+    write_profile_manifest(state, profile, installed_mods)
+}
+
 fn write_profile_manifest(
     state: &AppState,
     profile: &ProfileDetailDto,
+    installed_mods: Vec<ProfileManifestModEntry>,
 ) -> Result<(), InternalError> {
     let manifest = ProfileManifest {
         schema_version: PROFILE_MANIFEST_SCHEMA_VERSION,
@@ -518,7 +638,7 @@ fn write_profile_manifest(
             launch_mode_default: profile.launch_mode_default.clone(),
             is_builtin_default: profile.is_builtin_default,
         },
-        mods: Vec::new(),
+        mods: installed_mods,
     };
 
     let manifest_path = profile_manifest_path(state, &profile.id);
@@ -546,12 +666,102 @@ fn write_profile_manifest(
     Ok(())
 }
 
+fn extract_zip_archive(archive_path: &Path, destination: &Path) -> Result<(), InternalError> {
+    let archive_file = fs::File::open(archive_path)?;
+    let mut archive = ZipArchive::new(archive_file)?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let Some(entry_path) = entry.enclosed_name().map(|value| value.to_path_buf()) else {
+            return Err(InternalError::app(
+                "ARCHIVE_INVALID",
+                "The downloaded archive contains invalid paths.",
+            ));
+        };
+
+        let output_path = destination.join(entry_path);
+        if entry.is_dir() {
+            fs::create_dir_all(&output_path)?;
+            continue;
+        }
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut output_file = fs::File::create(&output_path)?;
+        io::copy(&mut entry, &mut output_file)?;
+    }
+
+    Ok(())
+}
+
 fn profile_dir(state: &AppState, profile_id: &str) -> PathBuf {
     state.profiles_dir.join(profile_id)
 }
 
 fn profile_manifest_path(state: &AppState, profile_id: &str) -> PathBuf {
     profile_dir(state, profile_id).join("manifest.json")
+}
+
+fn resolve_mod_icon_data_url(
+    state: &AppState,
+    profile_id: &str,
+    install_dir: &str,
+) -> Result<Option<String>, InternalError> {
+    let install_path = profile_install_dir_path(state, profile_id, install_dir);
+    let Some(install_path) = install_path else {
+        return Ok(None);
+    };
+
+    let icon_path = install_path.join("icon.png");
+    if !icon_path.is_file() {
+        return Ok(None);
+    }
+
+    let bytes = fs::read(icon_path)?;
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(Some(format!("data:image/png;base64,{encoded}")))
+}
+
+fn profile_install_dir_path(state: &AppState, profile_id: &str, install_dir: &str) -> Option<PathBuf> {
+    let mut path = profile_dir(state, profile_id);
+
+    for segment in install_dir.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return None;
+        }
+        path = path.join(segment);
+    }
+
+    Some(path)
+}
+
+fn sanitize_path_segment(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric()
+                || character == '-'
+                || character == '_'
+                || character == '.'
+            {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if sanitized.is_empty() {
+        "mod".to_string()
+    } else {
+        sanitized
+    }
 }
 
 fn open_folder_path(
@@ -613,12 +823,12 @@ fn directory_size_bytes(path: &Path) -> Result<u64, InternalError> {
     Ok(total)
 }
 
-fn get_active_profile_id(connection: &Connection) -> Result<Option<String>, InternalError> {
+pub fn get_active_profile_id(connection: &Connection) -> Result<String, InternalError> {
     let active_profile_id = get_setting(connection, "profiles.active_id")?
         .and_then(|value_json| serde_json::from_str::<String>(&value_json).ok());
 
     match active_profile_id {
-        Some(profile_id) if profile_exists(connection, &profile_id)? => Ok(Some(profile_id)),
+        Some(profile_id) if profile_exists(connection, &profile_id)? => Ok(profile_id),
         _ => {
             upsert_setting(
                 connection,
@@ -626,7 +836,7 @@ fn get_active_profile_id(connection: &Connection) -> Result<Option<String>, Inte
                 &serde_json::to_string("default")?,
                 &now_rfc3339()?,
             )?;
-            Ok(Some("default".to_string()))
+            Ok("default".to_string())
         }
     }
 }

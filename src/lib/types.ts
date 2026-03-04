@@ -95,10 +95,15 @@ export interface InstalledMod {
 }
 
 export interface ProfileInstalledModDto {
-  id?: string;
-  packageId?: string;
-  versionId?: string;
-  enabled?: boolean;
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  enabled: boolean;
+  sourceKind: string;
+  installDir: string;
+  installedAt: string;
+  iconDataUrl?: string;
 }
 
 export interface ProfileSummaryDto {

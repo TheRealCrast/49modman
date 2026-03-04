@@ -19,6 +19,8 @@ use crate::{
             list_profiles as list_profiles_service,
             open_active_profile_folder as open_active_profile_folder_service,
             open_profiles_folder as open_profiles_folder_service,
+            read_profile_manifest_mods as read_profile_manifest_mods_service,
+            read_profile_installed_mods as read_profile_installed_mods_service,
             reset_all_data as reset_all_data_service,
             set_active_profile as set_active_profile_service,
             update_profile as update_profile_service, CreateProfileInput, DeleteProfileResult,
@@ -42,9 +44,13 @@ pub async fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ProfileSumm
         for profile in &mut profiles {
             ensure_profile_storage_service(&state, &connection, &profile.id)
                 .map_err(AppError::from)?;
+            let installed_mods =
+                read_profile_manifest_mods_service(&state, &profile.id).map_err(AppError::from)?;
             profile.profile_size_bytes =
                 get_profile_storage_size_bytes_service(&state, &profile.id)
                     .map_err(AppError::from)?;
+            profile.installed_count = installed_mods.len();
+            profile.enabled_count = installed_mods.iter().filter(|entry| entry.enabled).count();
         }
 
         Ok(profiles)
@@ -57,14 +63,23 @@ pub async fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ProfileSumm
 pub async fn get_active_profile(
     state: State<'_, AppState>,
 ) -> Result<Option<ProfileDetailDto>, AppError> {
-    let connection = state.connection.clone();
+    let state = state.inner().clone();
 
     async_runtime::spawn_blocking(move || {
-        let connection = connection
-            .lock()
-            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+        let mut profile = {
+            let connection = state
+                .connection
+                .lock()
+                .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+            get_active_profile_service(&connection).map_err(AppError::from)?
+        };
 
-        get_active_profile_service(&connection).map_err(AppError::from)
+        if let Some(entry) = profile.as_mut() {
+            entry.installed_mods =
+                read_profile_installed_mods_service(&state, &entry.id).map_err(AppError::from)?;
+        }
+
+        Ok(profile)
     })
     .await
     .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?
@@ -75,14 +90,23 @@ pub async fn set_active_profile(
     state: State<'_, AppState>,
     profile_id: String,
 ) -> Result<Option<ProfileDetailDto>, AppError> {
-    let connection = state.connection.clone();
+    let state = state.inner().clone();
 
     async_runtime::spawn_blocking(move || {
-        let connection = connection
-            .lock()
-            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+        let mut profile = {
+            let connection = state
+                .connection
+                .lock()
+                .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+            set_active_profile_service(&connection, &profile_id).map_err(AppError::from)?
+        };
 
-        set_active_profile_service(&connection, &profile_id).map_err(AppError::from)
+        if let Some(entry) = profile.as_mut() {
+            entry.installed_mods =
+                read_profile_installed_mods_service(&state, &entry.id).map_err(AppError::from)?;
+        }
+
+        Ok(profile)
     })
     .await
     .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?
@@ -101,8 +125,10 @@ pub async fn create_profile(
             .lock()
             .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
 
-        let profile = create_profile_service(&connection, input).map_err(AppError::from)?;
+        let mut profile = create_profile_service(&connection, input).map_err(AppError::from)?;
         ensure_profile_storage_service(&state, &connection, &profile.id).map_err(AppError::from)?;
+        profile.installed_mods =
+            read_profile_installed_mods_service(&state, &profile.id).map_err(AppError::from)?;
         Ok(profile)
     })
     .await
@@ -122,8 +148,10 @@ pub async fn update_profile(
             .lock()
             .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
 
-        let profile = update_profile_service(&connection, input).map_err(AppError::from)?;
+        let mut profile = update_profile_service(&connection, input).map_err(AppError::from)?;
         ensure_profile_storage_service(&state, &connection, &profile.id).map_err(AppError::from)?;
+        profile.installed_mods =
+            read_profile_installed_mods_service(&state, &profile.id).map_err(AppError::from)?;
         Ok(profile)
     })
     .await
@@ -156,14 +184,23 @@ pub async fn get_profile_detail(
     state: State<'_, AppState>,
     profile_id: String,
 ) -> Result<Option<ProfileDetailDto>, AppError> {
-    let connection = state.connection.clone();
+    let state = state.inner().clone();
 
     async_runtime::spawn_blocking(move || {
-        let connection = connection
-            .lock()
-            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+        let mut profile = {
+            let connection = state
+                .connection
+                .lock()
+                .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+            get_profile_detail_service(&connection, &profile_id).map_err(AppError::from)?
+        };
 
-        get_profile_detail_service(&connection, &profile_id).map_err(AppError::from)
+        if let Some(entry) = profile.as_mut() {
+            entry.installed_mods =
+                read_profile_installed_mods_service(&state, &entry.id).map_err(AppError::from)?;
+        }
+
+        Ok(profile)
     })
     .await
     .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?
