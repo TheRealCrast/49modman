@@ -772,7 +772,8 @@ img {
 }
 
 .package-install-button.red,
-.package-install-button.broken {
+.package-install-button.broken,
+.package-install-button.uninstall {
   background: var(--red);
   border-color: var(--red);
   color: #fff;
@@ -795,7 +796,8 @@ img {
 }
 
 .package-install-button.red:hover,
-.package-install-button.broken:hover {
+.package-install-button.broken:hover,
+.package-install-button.uninstall:hover {
   background: #c13737;
 }
 
@@ -832,6 +834,14 @@ img {
 
 .package-card-install-button span {
   display: none;
+}
+
+.package-card-install-button.uninstall {
+  min-width: auto;
+}
+
+.package-card-install-button.uninstall span {
+  display: inline;
 }
 
 .warning-copy {
@@ -1149,6 +1159,10 @@ img {
   gap: 10px;
   justify-items: start;
   align-content: start;
+}
+
+.browse-status-padded {
+  padding: 14px 16px;
 }
 
 .compact-list-state {

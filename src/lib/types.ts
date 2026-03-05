@@ -282,6 +282,7 @@ export interface WarningModalState {
   versionNumber: string;
   status: "red" | "broken";
   referenceNote?: string;
+  switchFromVersionIds?: string[];
 }
 
 export interface DependencyModalState {

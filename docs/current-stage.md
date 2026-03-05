@@ -1,6 +1,6 @@
 # Current Stage Notes
 
-Last updated: 2026-03-04
+Last updated: 2026-03-05
 
 This file is the short-term implementation handoff for the current stage of the project.
 The broad product plan remains in [plan-v1.md](./plan-v1.md).
@@ -29,6 +29,13 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - list/card containers now enforce shrink bounds (`min-width: 0`)
   - long card text/chips now wrap instead of forcing horizontal overflow
   - prevents package cards from being cut off on the right after startup or Browse refresh
+- Browse install controls now reflect manifest-installed state in the active profile:
+  - package-card quick action becomes red `Uninstall` with a trash icon when that package is already installed
+  - detail-panel main action becomes red `Uninstall` with a trash icon when that package is already installed
+  - version-row action for the installed version becomes red `Uninstall version` with a trash icon
+  - other version-row actions become `Switch version` and replace currently installed version(s) of that package
+  - switch-version flow preserves red/broken warning modal behavior before proceeding
+  - Browse empty/loading status panels now include additional padding for readability
 
 ## Next Milestone
 
@@ -149,14 +156,18 @@ Current working tree includes the install-state control follow-up and manifest r
 - this is the first real install-adjacent filesystem work since the revert
 - install scope is now `cache + active profile extract`
 - Downloads behavior is `active only`
-- Browse labels stay `Install` / `Install version`, but the detail Install button now shows the exact selected version
+- Browse labels now adapt to installed state:
+  - `Install {version}` when the package is not installed
+  - `Uninstall` on package-level actions when any version of that package is installed
+  - `Uninstall version` on the exact installed version row
+  - `Switch version` on other version rows when a package version is already installed
 - install flow now:
   1. check exact version in shared cache
   2. download to cache on miss
   3. extract cached zip into active profile `mods/<package>-<version>/`
   4. upsert manifest entry for that exact package/version
 - repeated installs of the same exact version currently re-extract into the same target folder and refresh manifest timestamp
-- multiple versions of the same package are currently allowed side-by-side
+- multiple versions of the same package can still exist, but Browse switch-version actions now remove currently installed version(s) of the selected package before installing the target version
 - uninstall and enable/disable are now implemented in Overview installed rows
 - the current local SQLite DB still contains legacy tables from the reverted experiment:
   - `cached_archives`
@@ -202,6 +213,10 @@ Current working tree includes the install-state control follow-up and manifest r
   - Browse card quick-install button
   - detail `Install {version}` button
   - detail `Install version` buttons
+- uninstall-related Browse actions now use a dedicated trash icon:
+  - package-card `Uninstall`
+  - detail-panel `Uninstall`
+  - version-row `Uninstall version`
 - topbar `Launch modded` play icon now also uses the same white icon override
 - the detail-panel category chip row now has slightly more vertical spacing below the primary action row
 

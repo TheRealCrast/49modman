@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { EffectiveStatus, InstallRequest, ModPackage } from "../lib/types";
+  import type { EffectiveStatus, InstallRequest, ModPackage, ProfileInstalledModDto } from "../lib/types";
   import Icon from "./Icon.svelte";
   import PackageDetail from "./PackageDetail.svelte";
   import StatusPill from "./StatusPill.svelte";
@@ -34,6 +34,15 @@
   export let onToggleStatus: (status: EffectiveStatus) => void;
   export let onSelectPackage: (packageId: string) => void;
   export let onInstall: (request: InstallRequest) => void;
+  export let onSwitchVersion: (request: InstallRequest, switchFromVersionIds: string[]) => void;
+  export let onUninstallPackage: (packageId: string, packageName: string) => void;
+  export let onUninstallVersion: (
+    packageId: string,
+    versionId: string,
+    packageName: string,
+    versionNumber: string
+  ) => void;
+  export let installedMods: ProfileInstalledModDto[] = [];
   export let onSetReference: (packageId: string, versionId: string, state: "verified" | "broken" | "neutral") => void;
   export let onViewDependencies: (request: {
     packageId: string;
@@ -79,6 +88,19 @@
         onLoadMore();
       });
     }
+  }
+
+  function isPackageInstalled(packageId: string) {
+    return installedMods.some((entry) => entry.packageId === packageId);
+  }
+
+  function handleCardPrimaryAction(card: (typeof cards)[number]) {
+    if (isPackageInstalled(card.id)) {
+      onUninstallPackage(card.id, card.fullName);
+      return;
+    }
+
+    onInstall(buildCardInstallRequest(card));
   }
 </script>
 
@@ -137,8 +159,8 @@
 
     <section class="card-list list-scroll" bind:this={listElement} on:scroll={handleListScroll}>
       {#if isLoadingFirstPage && cards.length === 0}
-        <div class="list-state panel">
-          <p>Loading mod list...</p>
+        <div class="list-state panel browse-status-padded">
+          <p>Loading mods...</p>
         </div>
       {:else if catalogError && cards.length === 0}
         <div class="list-state panel">
@@ -149,7 +171,7 @@
           </button>
         </div>
       {:else if cards.length === 0}
-        <div class="list-state panel">
+        <div class="list-state panel browse-status-padded">
           <p>No mods matched this search.</p>
         </div>
       {:else}
@@ -160,6 +182,7 @@
         {/if}
 
         {#each cards as card}
+          {@const packageInstalled = isPackageInstalled(card.id)}
           <article class="package-card panel">
             <button class="package-card-select" type="button" on:click={() => onSelectPackage(card.id)}>
               <div class="package-card-header">
@@ -188,13 +211,22 @@
               </div>
 
               <button
-                class={`solid-button icon-button package-install-button package-card-install-button ${card.effectiveStatus}`}
+                class={`solid-button icon-button package-install-button package-card-install-button ${packageInstalled ? "uninstall" : card.effectiveStatus}`}
                 type="button"
-                aria-label={`Install ${card.fullName} ${card.recommendedVersion}`}
-                title={`Install ${card.recommendedVersion}`}
-                on:click={() => onInstall(buildCardInstallRequest(card))}
+                aria-label={
+                  packageInstalled
+                    ? `Uninstall ${card.fullName}`
+                    : `Install ${card.fullName} ${card.recommendedVersion}`
+                }
+                title={packageInstalled ? "Uninstall" : `Install ${card.recommendedVersion}`}
+                on:click={() => handleCardPrimaryAction(card)}
               >
-                <Icon label={`Install ${card.recommendedVersion}`} name="download" forceWhite={true} />
+                <Icon
+                  label={packageInstalled ? `Uninstall ${card.fullName}` : `Install ${card.recommendedVersion}`}
+                  name={packageInstalled ? "trash" : "download"}
+                  forceWhite={true}
+                />
+                <span>{packageInstalled ? "Uninstall" : "Install"}</span>
               </button>
             </div>
           </article>
@@ -235,7 +267,11 @@
     visibleStatuses={visibleStatuses}
     onToggleStatus={onToggleStatus}
     onInstall={onInstall}
+    onSwitchVersion={onSwitchVersion}
+    onUninstallPackage={onUninstallPackage}
+    onUninstallVersion={onUninstallVersion}
     onSetReference={onSetReference}
     onViewDependencies={onViewDependencies}
+    installedMods={installedMods}
   />
 </section>

@@ -37,6 +37,7 @@ import type {
   InstallRequest,
   ModPackage,
   ProfileDetailDto,
+  ProfileInstalledModDto,
   ReferenceState,
   ResetProgressStep
 } from "./types";
@@ -826,6 +827,127 @@ function installVersion(state: AppState): AppState {
   };
 }
 
+function findInstalledModsForPackage(
+  installedMods: ProfileInstalledModDto[] | undefined,
+  packageId: string
+) {
+  return (installedMods ?? []).filter((entry) => entry.packageId === packageId);
+}
+
+function requestInstallWithOptionalSwitch(request: InstallRequest, switchFromVersionIds: string[] = []) {
+  const uniqueSwitchFromVersionIds = [...new Set(switchFromVersionIds)];
+
+  appState.update((state) => {
+    if (request.effectiveStatus === "broken" && state.warningPrefs.broken) {
+      return {
+        ...state,
+        modal: {
+          packageId: request.packageId,
+          packageName: request.packageName,
+          versionId: request.versionId,
+          versionNumber: request.versionNumber,
+          status: "broken",
+          referenceNote: request.referenceNote,
+          switchFromVersionIds:
+            uniqueSwitchFromVersionIds.length > 0 ? uniqueSwitchFromVersionIds : undefined
+        }
+      };
+    }
+
+    if (request.effectiveStatus === "red" && state.warningPrefs.red) {
+      return {
+        ...state,
+        modal: {
+          packageId: request.packageId,
+          packageName: request.packageName,
+          versionId: request.versionId,
+          versionNumber: request.versionNumber,
+          status: "red",
+          switchFromVersionIds:
+            uniqueSwitchFromVersionIds.length > 0 ? uniqueSwitchFromVersionIds : undefined
+        }
+      };
+    }
+
+    return installVersion(state);
+  });
+
+  if (!get(appState).modal) {
+    if (uniqueSwitchFromVersionIds.length > 0) {
+      void actions.switchInstalledPackageVersion(request, uniqueSwitchFromVersionIds);
+      return;
+    }
+
+    void queueVersionForCache(request);
+  }
+}
+
+async function uninstallInstalledVersionsForActiveProfile(options: {
+  packageId: string;
+  versionIds: string[];
+  title: string;
+  detail: string;
+  tone: ActivityItem["tone"];
+}) {
+  const { packageId, versionIds, title, detail, tone } = options;
+  const uniqueVersionIds = [...new Set(versionIds)];
+
+  if (uniqueVersionIds.length === 0) {
+    return true;
+  }
+
+  const state = get(appState);
+  const activeProfile = state.activeProfile;
+
+  if (!activeProfile) {
+    return false;
+  }
+
+  try {
+    let nextActiveProfile = activeProfile;
+
+    for (const versionId of uniqueVersionIds) {
+      nextActiveProfile = await uninstallInstalledModApi({
+        profileId: activeProfile.id,
+        packageId,
+        versionId
+      });
+    }
+
+    const [profiles, profilesStorageSummary] = await Promise.all([
+      listProfilesApi(),
+      getProfilesStorageSummaryApi()
+    ]);
+
+    appState.update((current) =>
+      appendActivity(
+        {
+          ...mapActiveProfile(current, nextActiveProfile),
+          profiles,
+          profilesStorageSummary,
+          profileError: null,
+          desktopError: null
+        },
+        withActivity(title, detail, tone)
+      )
+    );
+
+    return true;
+  } catch (error) {
+    appState.update((current) => ({
+      ...current,
+      profileError: error instanceof Error ? error.message : "Failed to uninstall the mod.",
+      desktopError:
+        current.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to uninstall the mod in the desktop backend."
+          : current.desktopError
+    }));
+    return false;
+  }
+}
+
 function dependencyModalMatches(
   modal: DependencyModalState | null,
   packageId: string,
@@ -1055,40 +1177,67 @@ export const actions = {
     }
   },
   requestInstall(request: InstallRequest) {
-    appState.update((state) => {
-      if (request.effectiveStatus === "broken" && state.warningPrefs.broken) {
-        return {
-          ...state,
-          modal: {
-            packageId: request.packageId,
-            packageName: request.packageName,
-            versionId: request.versionId,
-            versionNumber: request.versionNumber,
-            status: "broken",
-            referenceNote: request.referenceNote
-          }
-        };
-      }
+    requestInstallWithOptionalSwitch(request);
+  },
+  requestSwitchVersion(request: InstallRequest, switchFromVersionIds: string[]) {
+    requestInstallWithOptionalSwitch(request, switchFromVersionIds);
+  },
+  async switchInstalledPackageVersion(request: InstallRequest, switchFromVersionIds: string[]) {
+    const currentState = get(appState);
+    const installedVersions = findInstalledModsForPackage(
+      currentState.activeProfile?.installedMods,
+      request.packageId
+    )
+      .filter((entry) => switchFromVersionIds.includes(entry.versionId))
+      .map((entry) => entry.versionNumber);
+    const sourceLabel =
+      installedVersions.length > 0 ? installedVersions.join(", ") : "installed version";
 
-      if (request.effectiveStatus === "red" && state.warningPrefs.red) {
-        return {
-          ...state,
-          modal: {
-            packageId: request.packageId,
-            packageName: request.packageName,
-            versionId: request.versionId,
-            versionNumber: request.versionNumber,
-            status: "red"
-          }
-        };
-      }
-
-      return installVersion(state);
+    const switched = await uninstallInstalledVersionsForActiveProfile({
+      packageId: request.packageId,
+      versionIds: switchFromVersionIds,
+      title: "Switching version",
+      detail: `Removing ${request.packageName} ${sourceLabel} before installing ${request.versionNumber}.`,
+      tone: "neutral"
     });
 
-    if (!get(appState).modal) {
-      void queueVersionForCache(request);
+    if (switched) {
+      await queueVersionForCache(request);
     }
+  },
+  async uninstallPackageFromBrowse(packageId: string, packageName: string) {
+    const installed = findInstalledModsForPackage(get(appState).activeProfile?.installedMods, packageId);
+
+    if (installed.length === 0) {
+      return;
+    }
+
+    const detail =
+      installed.length === 1
+        ? `${packageName} ${installed[0].versionNumber} was removed from the active profile.`
+        : `${installed.length} installed versions of ${packageName} were removed from the active profile.`;
+
+    await uninstallInstalledVersionsForActiveProfile({
+      packageId,
+      versionIds: installed.map((entry) => entry.versionId),
+      title: "Mod uninstalled",
+      detail,
+      tone: "warning"
+    });
+  },
+  async uninstallVersionFromBrowse(
+    packageId: string,
+    versionId: string,
+    packageName: string,
+    versionNumber: string
+  ) {
+    await uninstallInstalledVersionsForActiveProfile({
+      packageId,
+      versionIds: [versionId],
+      title: "Mod uninstalled",
+      detail: `${packageName} ${versionNumber} was removed from the active profile.`,
+      tone: "warning"
+    });
   },
   dismissModal() {
     appState.update((state) => ({
@@ -1211,14 +1360,21 @@ export const actions = {
     }
 
     if (modal) {
-      void queueVersionForCache({
+      const request: InstallRequest = {
         packageId: modal.packageId,
         packageName: modal.packageName,
         versionId: modal.versionId,
         versionNumber: modal.versionNumber,
         effectiveStatus: modal.status,
         referenceNote: modal.referenceNote
-      });
+      };
+
+      if (modal.switchFromVersionIds && modal.switchFromVersionIds.length > 0) {
+        void actions.switchInstalledPackageVersion(request, modal.switchFromVersionIds);
+        return;
+      }
+
+      void queueVersionForCache(request);
     }
   },
   async setWarningPreference(kind: "red" | "broken", enabled: boolean) {

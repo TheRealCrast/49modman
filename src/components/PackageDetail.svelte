@@ -2,7 +2,14 @@
   import { onDestroy, tick } from "svelte";
   import { openExternalUrl } from "../lib/api/system";
   import { currentReferenceNote, pickRecommendedVersion, resolveEffectiveStatus } from "../lib/status";
-  import type { EffectiveStatus, InstallRequest, ModPackage, ModVersion } from "../lib/types";
+  import type { IconName } from "../lib/icons";
+  import type {
+    EffectiveStatus,
+    InstallRequest,
+    ModPackage,
+    ModVersion,
+    ProfileInstalledModDto
+  } from "../lib/types";
   import Icon from "./Icon.svelte";
   import StatusPill from "./StatusPill.svelte";
 
@@ -10,6 +17,14 @@
   export let visibleStatuses: string[];
   export let onToggleStatus: (status: "verified" | "broken" | "green" | "yellow" | "orange" | "red") => void;
   export let onInstall: (request: InstallRequest) => void;
+  export let onSwitchVersion: (request: InstallRequest, switchFromVersionIds: string[]) => void;
+  export let onUninstallPackage: (packageId: string, packageName: string) => void;
+  export let onUninstallVersion: (
+    packageId: string,
+    versionId: string,
+    packageName: string,
+    versionNumber: string
+  ) => void;
   export let onSetReference: (packageId: string, versionId: string, state: "verified" | "broken" | "neutral") => void;
   export let onViewDependencies: (request: {
     packageId: string;
@@ -23,9 +38,15 @@
 
   const filters = ["verified", "green", "yellow", "orange", "red", "broken"] as const;
   const versionRowElements = new Map<string, HTMLElement>();
+  export let installedMods: ProfileInstalledModDto[] = [];
+
+  let installedPackageMods: ProfileInstalledModDto[] = [];
+  let installedVersionIds = new Set<string>();
+  let packageHasInstalledVersion = false;
   let installVersion: ModVersion | undefined = undefined;
-  let installStatus: EffectiveStatus = "green";
+  let installStatusClass = "green";
   let installLabel = "Install";
+  let installIcon: IconName = "download";
   let menu:
     | {
         versionId: string;
@@ -147,12 +168,17 @@
     closeMenu();
   }
 
-  function installRecommendedVersion() {
+  function runPrimaryInstallAction() {
     if (isLocked) {
       return;
     }
 
     if (!pkg) {
+      return;
+    }
+
+    if (packageHasInstalledVersion) {
+      onUninstallPackage(pkg.id, pkg.fullName);
       return;
     }
 
@@ -212,14 +238,24 @@
     window.removeEventListener("keydown", handleWindowKeydown);
   }
 
+  $: installedPackageMods = pkg ? installedMods.filter((entry) => entry.packageId === pkg.id) : [];
+  $: installedVersionIds = new Set(installedPackageMods.map((entry) => entry.versionId));
+  $: packageHasInstalledVersion = installedPackageMods.length > 0;
+
   $: if (pkg) {
     installVersion = pickRecommendedVersion(pkg);
-    installStatus = installVersion.effectiveStatus ?? resolveEffectiveStatus(installVersion);
-    installLabel = `Install ${installVersion.versionNumber}`;
+    installStatusClass = packageHasInstalledVersion
+      ? "uninstall"
+      : installVersion.effectiveStatus ?? resolveEffectiveStatus(installVersion);
+    installLabel = packageHasInstalledVersion
+      ? "Uninstall"
+      : `Install ${installVersion.versionNumber}`;
+    installIcon = packageHasInstalledVersion ? "trash" : "download";
   } else {
     installVersion = undefined;
-    installStatus = "green";
+    installStatusClass = "green";
     installLabel = "Install";
+    installIcon = "download";
   }
 
   $: if (isLocked && menu) {
@@ -263,14 +299,16 @@
     <div class="detail-primary-actions">
       {#key installVersion?.id ?? `${pkg.id}-install`}
         <button
-          class={`solid-button icon-button package-install-button ${installStatus}`}
+          class={`solid-button icon-button package-install-button ${installStatusClass}`}
           type="button"
           disabled={isLocked}
-          on:click={installRecommendedVersion}
+          on:click={runPrimaryInstallAction}
         >
           <Icon
-            label={`Install ${installVersion?.versionNumber ?? "recommended version"}`}
-            name="download"
+            label={packageHasInstalledVersion
+              ? `Uninstall ${pkg.fullName}`
+              : `Install ${installVersion?.versionNumber ?? "recommended version"}`}
+            name={installIcon}
             forceWhite={true}
           />
           <span>{installLabel}</span>
@@ -309,6 +347,12 @@
       <div class="versions-list list-scroll">
         {#each [...pkg.versions].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt)) as version}
           {#if visibleStatuses.includes(version.effectiveStatus ?? resolveEffectiveStatus(version))}
+          {@const versionInstalled = installedVersionIds.has(version.id)}
+          {@const versionActionLabel = versionInstalled
+            ? "Uninstall version"
+            : packageHasInstalledVersion
+              ? "Switch version"
+              : "Install version"}
           <article
             use:registerVersionRow={version.id}
             class:focused-version={focusedVersionId === version.id}
@@ -337,21 +381,42 @@
 
             <div class="version-actions">
               <button
-                class="solid-button icon-button"
+                class={`icon-button version-install-button ${versionInstalled ? "danger-button package-install-button uninstall" : "solid-button"}`}
                 type="button"
                 disabled={isLocked}
                 on:click={() => {
                   if (isLocked) {
                     return;
                   }
+                  if (!pkg) {
+                    return;
+                  }
+
+                  if (versionInstalled) {
+                    onUninstallVersion(pkg.id, version.id, pkg.fullName, version.versionNumber);
+                    return;
+                  }
+
                   const request = buildInstallRequest(version.id);
                   if (request) {
+                    if (packageHasInstalledVersion) {
+                      onSwitchVersion(
+                        request,
+                        installedPackageMods.map((entry) => entry.versionId)
+                      );
+                      return;
+                    }
+
                     onInstall(request);
                   }
                 }}
               >
-                <Icon label="Install version" name="download" forceWhite={true} />
-                <span>Install version</span>
+                <Icon
+                  label={versionActionLabel}
+                  name={versionInstalled ? "trash" : "download"}
+                  forceWhite={true}
+                />
+                <span>{versionActionLabel}</span>
               </button>
               <button
                 aria-expanded={menu?.versionId === version.id}

@@ -120,9 +120,12 @@
         isLoadingNextPage={$appState.isLoadingCatalogNextPage}
         isRefreshingCatalog={$appState.isRefreshingCatalog}
         onInstall={actions.requestInstall}
+        onSwitchVersion={actions.requestSwitchVersion}
         onLoadMore={actions.loadMoreCatalog}
         onRefresh={actions.refreshCatalog}
         onSelectPackage={actions.selectPackage}
+        onUninstallPackage={actions.uninstallPackageFromBrowse}
+        onUninstallVersion={actions.uninstallVersionFromBrowse}
         onSetReference={actions.setReferenceState}
         onViewDependencies={actions.openDependencyModal}
         onSearchDraftChange={actions.setBrowseSearchDraft}
@@ -131,6 +134,7 @@
         refreshLabel={$appState.lastCatalogRefreshLabel}
         searchDraft={$appState.browseSearchDraft}
         selectedPackage={$appState.selectedPackageDetail}
+        installedMods={$selectedProfile?.installedMods ?? []}
         visibleStatuses={$appState.visibleStatuses}
       />
     {:else if $appState.view === "profiles"}
