@@ -21,16 +21,23 @@
   export let onClearCache: () => void | Promise<void>;
   export let onResetAllData: () => void | Promise<void>;
 
-  function formatBytes(value = 0) {
-    if (value < 1024) {
-      return `${value} B`;
+  function formatDiskSpace(value = 0) {
+    const bytes = Math.max(0, Math.trunc(value));
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let scaled = bytes;
+    let unitIndex = 0;
+
+    while (scaled >= 1024 && unitIndex < units.length - 1) {
+      scaled /= 1024;
+      unitIndex += 1;
     }
 
-    if (value < 1024 * 1024) {
-      return `${(value / 1024).toFixed(0)} KB`;
-    }
+    const maximumFractionDigits = unitIndex === 0 ? 0 : scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
 
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    return `${scaled.toLocaleString(undefined, {
+      maximumFractionDigits,
+      minimumFractionDigits: 0
+    })} ${units[unitIndex]}`;
   }
 
   async function confirmClearCache() {
@@ -133,7 +140,7 @@
         <div class="switch-row">
           <div>
             <strong>Cached archives</strong>
-            <p>{cacheSummary ? `${cacheSummary.archiveCount} archives · ${formatBytes(cacheSummary.totalBytes)}` : "Loading cache summary..."}</p>
+            <p>{cacheSummary ? `${cacheSummary.archiveCount} archives · ${formatDiskSpace(cacheSummary.totalBytes)}` : "Loading cache summary..."}</p>
           </div>
         </div>
 
@@ -145,6 +152,21 @@
           <button class="ghost-button icon-button" type="button" on:click={onOpenCacheFolder}>
             <Icon label="Open cache folder" name="folder" />
             <span>Open</span>
+          </button>
+        </div>
+
+        <div class="switch-row danger-row">
+          <div>
+            <strong>Clear cache</strong>
+            <p>Remove all cached mod archives from local storage.</p>
+          </div>
+          <button
+            class="ghost-button danger-outline"
+            disabled={cacheSummary?.hasActiveDownloads}
+            type="button"
+            on:click={confirmClearCache}
+          >
+            Clear cache
           </button>
         </div>
       </div>
@@ -163,7 +185,7 @@
               {#if isLoadingProfilesStorageSummary}
                 Loading profile summary...
               {:else if profilesStorageSummary}
-                {profilesStorageSummary.profileCount} profiles · {formatBytes(profilesStorageSummary.profilesTotalBytes)} total · {formatBytes(profilesStorageSummary.activeProfileBytes)} active
+                {profilesStorageSummary.profileCount} profiles · {formatDiskSpace(profilesStorageSummary.profilesTotalBytes)} total · {formatDiskSpace(profilesStorageSummary.activeProfileBytes)} active
               {:else}
                 Profile summary unavailable.
               {/if}
@@ -198,21 +220,6 @@
     <div class="settings-section danger-zone">
       <div class="settings-subheading">
         <h3>Danger zone</h3>
-      </div>
-
-      <div class="switch-row danger-row">
-        <div>
-          <strong>Clear cache</strong>
-          <p>Remove all cached mod archives from local storage.</p>
-        </div>
-        <button
-          class="ghost-button danger-outline"
-          disabled={cacheSummary?.hasActiveDownloads}
-          type="button"
-          on:click={confirmClearCache}
-        >
-          Clear cache
-        </button>
       </div>
 
       <div class="switch-row danger-row">

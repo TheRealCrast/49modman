@@ -15,6 +15,10 @@
     packageId: string,
     versionId: string
   ) => void | Promise<void>;
+  export let onJumpToInstalledModDetails: (
+    packageId: string,
+    versionId: string
+  ) => void | Promise<void>;
 
   function formatInstalledAt(value: string) {
     const parsed = Date.parse(value);
@@ -40,6 +44,9 @@
 
     await onUninstallInstalledMod(activeProfile.id, mod.packageId, mod.versionId);
   }
+
+  $: installedCount = activeProfile?.installedMods.length ?? 0;
+  $: installedModsHeading = `${installedCount} installed mod${installedCount === 1 ? "" : "s"}`;
 </script>
 
 <section class="screen-stack overview-screen">
@@ -57,8 +64,8 @@
 
   <section class="panel list-panel">
     <div class="compact-heading compact-heading-left">
-      <Icon label="Installed mods" name="details" />
-      <h3 class="installed-mods-title">Installed mods</h3>
+      <Icon label={installedModsHeading} name="details" />
+      <h3 class="installed-mods-title">{installedModsHeading}</h3>
     </div>
 
     <div class="installed-list list-scroll">
@@ -95,6 +102,10 @@
               </button>
               <button class="ghost-button danger-outline" type="button" on:click={() => void uninstallMod(mod)}>
                 Uninstall
+              </button>
+              <button class="ghost-button icon-button" type="button" on:click={() => void onJumpToInstalledModDetails(mod.packageId, mod.versionId)}>
+                <Icon label="Jump to details" name="external-link" size={16} />
+                <span>Jump to details</span>
               </button>
             </div>
           </article>

@@ -106,6 +106,7 @@
       <OverviewScreen
         activeProfile={$selectedProfile}
         lastCatalogRefreshLabel={$appState.lastCatalogRefreshLabel}
+        onJumpToInstalledModDetails={actions.jumpToInstalledModDetails}
         onToggleInstalledMod={actions.toggleInstalledMod}
         onUninstallInstalledMod={actions.uninstallInstalledMod}
       />

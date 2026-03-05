@@ -50,6 +50,20 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - `Install without dependencies` skips dependency installs for that action
   - this path uses a confirmation prompt when enabled by warning settings
   - Settings `Warn options` now include `Warn on install without dependencies`
+- Settings/Overview follow-up polish is now implemented:
+  - Settings size summaries now display human-readable disk units (`B`, `KiB`, `MiB`, etc.) for:
+    - `Cached archives`
+    - both size counts in `Profile storage`
+  - `Clear cache` moved out of `Danger zone` and into the `Cache` subcategory as the final cache setting row
+  - `Clear cache` retains danger styling (red header emphasis) while remaining in Cache
+  - Overview installed section heading now shows dynamic count text with singular/plural:
+    - `{n} installed mod`
+    - `{n} installed mods`
+  - each Overview installed-mod row now includes `Jump to details` (external-link icon):
+    - switches to Browse
+    - opens the package detail panel
+    - focuses/highlights the exact installed version row
+    - auto-enables that version's status filter if currently hidden so the target row is visible
 
 ## Next Milestone
 

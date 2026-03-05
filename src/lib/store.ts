@@ -24,7 +24,7 @@ import {
 } from "./api/settings";
 import { seedActivities, seedPackages } from "./mock-data";
 import { getRuntimeKind } from "./runtime";
-import { compareVersionNumbers } from "./status";
+import { compareVersionNumbers, resolveEffectiveStatus } from "./status";
 import type {
   ActivityItem,
   AppState,
@@ -245,6 +245,51 @@ function scheduleFocusedVersionClear(focusedVersion: FocusedVersionState) {
     );
     focusedVersionClearHandle = null;
   }, 2000);
+}
+
+function ensureStatusVisible(status: EffectiveStatus) {
+  appState.update((state) =>
+    state.visibleStatuses.includes(status)
+      ? state
+      : {
+          ...state,
+          visibleStatuses: [...state.visibleStatuses, status]
+        }
+  );
+}
+
+async function navigateToPackageVersionInBrowse(packageId: string, versionId: string) {
+  const highlightToken = Date.now();
+  const focusedVersion: FocusedVersionState = {
+    packageId,
+    versionId,
+    highlightToken
+  };
+
+  appState.update((state) => ({
+    ...state,
+    view: "browse",
+    selectedPackageId: packageId,
+    selectedPackageDetail:
+      state.selectedPackageDetail?.id === packageId ? state.selectedPackageDetail : undefined,
+    dependencyModal: null,
+    focusedVersion
+  }));
+
+  scheduleFocusedVersionClear(focusedVersion);
+  await loadSelectedPackageDetail(packageId);
+
+  const state = get(appState);
+  if (state.selectedPackageDetail?.id !== packageId) {
+    return;
+  }
+
+  const version = state.selectedPackageDetail.versions.find((entry) => entry.id === versionId);
+  if (!version) {
+    return;
+  }
+
+  ensureStatusVisible(resolveEffectiveStatus(version));
 }
 
 function startDownloadPolling() {
@@ -1650,25 +1695,10 @@ export const actions = {
     }));
   },
   async jumpToDependency(packageId: string, versionId: string) {
-    const highlightToken = Date.now();
-    const focusedVersion: FocusedVersionState = {
-      packageId,
-      versionId,
-      highlightToken
-    };
-
-    appState.update((state) => ({
-      ...state,
-      view: "browse",
-      selectedPackageId: packageId,
-      selectedPackageDetail:
-        state.selectedPackageDetail?.id === packageId ? state.selectedPackageDetail : undefined,
-      dependencyModal: null,
-      focusedVersion
-    }));
-
-    scheduleFocusedVersionClear(focusedVersion);
-    await loadSelectedPackageDetail(packageId);
+    await navigateToPackageVersionInBrowse(packageId, versionId);
+  },
+  async jumpToInstalledModDetails(packageId: string, versionId: string) {
+    await navigateToPackageVersionInBrowse(packageId, versionId);
   },
   confirmModal(doNotShowAgain: boolean) {
     const modal = get(appState).modal;
