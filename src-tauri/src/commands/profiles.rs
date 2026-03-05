@@ -16,6 +16,7 @@ use crate::{
             get_profile_detail as get_profile_detail_service,
             get_profile_storage_size_bytes as get_profile_storage_size_bytes_service,
             get_profiles_storage_summary as get_profiles_storage_summary_service,
+            get_uninstall_dependants as get_uninstall_dependants_service,
             list_profiles as list_profiles_service,
             open_active_profile_folder as open_active_profile_folder_service,
             open_profiles_folder as open_profiles_folder_service,
@@ -26,8 +27,9 @@ use crate::{
             set_profile_mod_enabled as set_profile_mod_enabled_service,
             uninstall_profile_mod as uninstall_profile_mod_service,
             update_profile as update_profile_service, CreateProfileInput, DeleteProfileResult,
-            ProfileDetailDto, ProfileSummaryDto, ProfilesStorageSummaryDto,
-            SetInstalledModEnabledInput, UninstallInstalledModInput, UpdateProfileInput,
+            GetUninstallDependantsInput, ProfileDetailDto, ProfileSummaryDto,
+            ProfilesStorageSummaryDto, SetInstalledModEnabledInput, UninstallDependantDto,
+            UninstallInstalledModInput, UpdateProfileInput,
         },
     },
 };
@@ -270,6 +272,25 @@ pub async fn uninstall_installed_mod(
     })
     .await
     .map_err(|error| AppError::new("UNINSTALL_INSTALLED_MOD_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn get_uninstall_dependants(
+    state: State<'_, AppState>,
+    input: GetUninstallDependantsInput,
+) -> Result<Vec<UninstallDependantDto>, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+
+        get_uninstall_dependants_service(&state, &connection, input).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("GET_UNINSTALL_DEPENDANTS_FAILED", error.to_string()))?
 }
 
 #[tauri::command]

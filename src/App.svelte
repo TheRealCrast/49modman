@@ -10,6 +10,7 @@
   import ProfilesScreen from "./components/ProfilesScreen.svelte";
   import ResetProgressModal from "./components/ResetProgressModal.svelte";
   import SettingsScreen from "./components/SettingsScreen.svelte";
+  import UninstallDependantsModal from "./components/UninstallDependantsModal.svelte";
   import { actions, appState, selectedProfile } from "./lib/store";
   import type { AppView, EffectiveStatus } from "./lib/types";
 
@@ -24,13 +25,13 @@
     $appState.modal
       ? $appState.modal.status === "broken"
         ? {
-            title: `This version is marked broken locally`,
-            description: `${$appState.modal.packageName} ${$appState.modal.versionNumber} is flagged as broken for v49 in your local reference library. You can still install it, but the UI is warning you because this exact build has known issues.`,
-            note: $appState.modal.referenceNote
+            title: `This version is marked as broken`,
+            description: `${$appState.modal.packageName} ${$appState.modal.versionNumber} is flagged as broken for v49. You can still install it, but this exact build likely has known issues.`,
+            note: undefined //$appState.modal.referenceNote
           }
         : {
-            title: `This version falls in the red zone`,
-            description: `${$appState.modal.packageName} ${$appState.modal.versionNumber} was released on or after April 13, 2024, so the frontend treats it as incompatible with the v49 target window. You can still continue if you want to experiment.`,
+            title: `This version may be incompatible`,
+            description: `${$appState.modal.packageName} ${$appState.modal.versionNumber} was released on or after April 13, 2024, the release of v50, so this mod may be incompatible with v49. You can still continue if you want to experiment.`,
             note: undefined
           }
       : null;
@@ -220,6 +221,15 @@
     onCancel={actions.dismissModal}
     onConfirm={actions.confirmModal}
     title={modalCopy.title}
+  />
+{/if}
+
+{#if $appState.uninstallDependantsModal}
+  <UninstallDependantsModal
+    packageName={$appState.uninstallDependantsModal.packageName}
+    dependants={$appState.uninstallDependantsModal.dependants}
+    onCancel={actions.dismissUninstallDependantsModal}
+    onConfirm={actions.confirmUninstallDependantsModal}
   />
 {/if}
 

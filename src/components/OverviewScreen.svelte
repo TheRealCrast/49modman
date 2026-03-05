@@ -104,8 +104,8 @@
                 Uninstall
               </button>
               <button class="ghost-button icon-button" type="button" on:click={() => void onJumpToInstalledModDetails(mod.packageId, mod.versionId)}>
-                <Icon label="Jump to details" name="external-link" size={16} />
-                <span>Jump to details</span>
+                <Icon label="Show details" name="details" size={16} />
+                <span>Show details</span>
               </button>
             </div>
           </article>

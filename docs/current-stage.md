@@ -21,6 +21,13 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - update profile `manifest.json` `mods[]`
 - Overview now renders installed mods from profile manifest data
 - Overview installed rows now load `icon.png` from each installed mod folder when available
+- uninstall safety now warns before removing mods that other installed mods depend on:
+  - shows dependant mod list in a confirmation modal
+  - modal can disable future prompts (`Do not show this again`)
+  - Settings `Warn options` now includes `Warn on uninstall with dependants`
+- Overview dependency-warning icon experiment was removed after inconsistent behavior reports:
+  - no missing-dependency warning icon is currently shown in Overview rows
+  - tracked in [overview-missing-dependency-warning-issue.md](./overview-missing-dependency-warning-issue.md)
 - Reset-all-data UX/backend flow has been hardened:
   - schema-safe reset for legacy tables
   - visible progress modal during reset

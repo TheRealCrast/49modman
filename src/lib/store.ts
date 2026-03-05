@@ -7,6 +7,7 @@ import {
   createProfile as createProfileApi,
   deleteProfile as deleteProfileApi,
   getActiveProfile as getActiveProfileApi,
+  getUninstallDependants as getUninstallDependantsApi,
   getProfilesStorageSummary as getProfilesStorageSummaryApi,
   listProfiles as listProfilesApi,
   openActiveProfileFolder as openActiveProfileFolderApi,
@@ -54,6 +55,7 @@ let focusedVersionClearHandle: number | null = null;
 const busyPackageRefCounts = new Map<string, number>();
 const activeInstallTaskPackageIds = new Map<string, string>();
 let pendingWarningConfirmationResolver: ((confirmed: boolean) => void) | null = null;
+let pendingUninstallDependantsConfirmationResolver: ((confirmed: boolean) => void) | null = null;
 
 const initialState: AppState = {
   view: "browse",
@@ -75,9 +77,11 @@ const initialState: AppState = {
   warningPrefs: {
     red: true,
     broken: true,
-    installWithoutDependencies: true
+    installWithoutDependencies: true,
+    uninstallWithDependants: true
   },
   modal: null,
+  uninstallDependantsModal: null,
   resetProgress: null,
   dependencyModal: null,
   focusedVersion: null,
@@ -945,6 +949,14 @@ function resolvePendingWarningConfirmation(confirmed: boolean) {
   }
 }
 
+function resolvePendingUninstallDependantsConfirmation(confirmed: boolean) {
+  const resolver = pendingUninstallDependantsConfirmationResolver;
+  pendingUninstallDependantsConfirmationResolver = null;
+  if (resolver) {
+    resolver(confirmed);
+  }
+}
+
 async function confirmWarningForInstallIfNeeded(
   request: InstallRequest,
   switchFromVersionIds: string[] = []
@@ -989,6 +1001,65 @@ function confirmInstallWithoutDependenciesIfNeeded() {
   return window.confirm(
     "Install without dependencies? The selected mod may fail if required dependencies are missing."
   );
+}
+
+async function confirmUninstallWithDependantsIfNeeded(options: {
+  profileId: string;
+  packageId: string;
+  packageName: string;
+  versionIds: string[];
+}) {
+  const { profileId, packageId, packageName, versionIds } = options;
+  const state = get(appState);
+  if (!state.warningPrefs.uninstallWithDependants) {
+    return true;
+  }
+
+  let dependants;
+  try {
+    dependants = await getUninstallDependantsApi({
+      profileId,
+      packageId,
+      versionIds
+    });
+  } catch (error) {
+    appState.update((current) => ({
+      ...current,
+      profileError:
+        error instanceof Error
+          ? error.message
+          : "Failed to validate uninstall dependants in this profile.",
+      desktopError:
+        current.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to validate uninstall dependants in the desktop backend."
+          : current.desktopError
+    }));
+    return false;
+  }
+
+  if (dependants.length === 0) {
+    return true;
+  }
+
+  if (pendingUninstallDependantsConfirmationResolver) {
+    resolvePendingUninstallDependantsConfirmation(false);
+  }
+
+  appState.update((current) => ({
+    ...current,
+    uninstallDependantsModal: {
+      packageId,
+      packageName,
+      versionIds: [...new Set(versionIds)],
+      dependants
+    }
+  }));
+
+  return new Promise<boolean>((resolve) => {
+    pendingUninstallDependantsConfirmationResolver = resolve;
+  });
 }
 
 function buildDependencyInstallPlan(
@@ -1209,13 +1280,24 @@ async function requestInstallWithOptionalSwitch(
 
 async function uninstallInstalledVersionsForActiveProfile(options: {
   packageId: string;
+  packageName: string;
   versionIds: string[];
   title: string;
   detail: string;
   tone: ActivityItem["tone"];
   managePackageLock?: boolean;
+  warnOnDependants?: boolean;
 }) {
-  const { packageId, versionIds, title, detail, tone, managePackageLock = true } = options;
+  const {
+    packageId,
+    packageName,
+    versionIds,
+    title,
+    detail,
+    tone,
+    managePackageLock = true,
+    warnOnDependants = true
+  } = options;
   const uniqueVersionIds = [...new Set(versionIds)];
 
   if (uniqueVersionIds.length === 0) {
@@ -1237,6 +1319,18 @@ async function uninstallInstalledVersionsForActiveProfile(options: {
   }
 
   try {
+    if (warnOnDependants) {
+      const confirmed = await confirmUninstallWithDependantsIfNeeded({
+        profileId: activeProfile.id,
+        packageId,
+        packageName,
+        versionIds: uniqueVersionIds
+      });
+      if (!confirmed) {
+        return false;
+      }
+    }
+
     let nextActiveProfile = activeProfile;
 
     for (const versionId of uniqueVersionIds) {
@@ -1381,11 +1475,13 @@ async function switchInstalledPackageVersionInternal(
   try {
     const switched = await uninstallInstalledVersionsForActiveProfile({
       packageId: request.packageId,
+      packageName: request.packageName,
       versionIds: switchFromVersionIds,
       title: "Switching version",
       detail: `Removing ${request.packageName} ${sourceLabel} before installing ${request.versionNumber}.`,
       tone: "neutral",
-      managePackageLock: false
+      managePackageLock: false,
+      warnOnDependants: false
     });
 
     if (switched) {
@@ -1603,6 +1699,7 @@ export const actions = {
 
     await uninstallInstalledVersionsForActiveProfile({
       packageId,
+      packageName,
       versionIds: installed.map((entry) => entry.versionId),
       title: "Mod uninstalled",
       detail,
@@ -1617,6 +1714,7 @@ export const actions = {
   ) {
     await uninstallInstalledVersionsForActiveProfile({
       packageId,
+      packageName,
       versionIds: [versionId],
       title: "Mod uninstalled",
       detail: `${packageName} ${versionNumber} was removed from the active profile.`,
@@ -1629,6 +1727,13 @@ export const actions = {
       modal: null
     }));
     resolvePendingWarningConfirmation(false);
+  },
+  dismissUninstallDependantsModal() {
+    appState.update((state) => ({
+      ...state,
+      uninstallDependantsModal: null
+    }));
+    resolvePendingUninstallDependantsConfirmation(false);
   },
   openDependencyModal(request: {
     packageId: string;
@@ -1714,7 +1819,8 @@ export const actions = {
           red: state.modal.status === "red" && doNotShowAgain ? false : state.warningPrefs.red,
           broken:
             state.modal.status === "broken" && doNotShowAgain ? false : state.warningPrefs.broken,
-          installWithoutDependencies: state.warningPrefs.installWithoutDependencies
+          installWithoutDependencies: state.warningPrefs.installWithoutDependencies,
+          uninstallWithDependants: state.warningPrefs.uninstallWithDependants
         }
       };
 
@@ -1735,8 +1841,29 @@ export const actions = {
 
     resolvePendingWarningConfirmation(true);
   },
+  confirmUninstallDependantsModal(doNotShowAgain: boolean) {
+    appState.update((state) => ({
+      ...state,
+      uninstallDependantsModal: null,
+      warningPrefs: {
+        ...state.warningPrefs,
+        uninstallWithDependants: doNotShowAgain ? false : state.warningPrefs.uninstallWithDependants
+      }
+    }));
+
+    if (doNotShowAgain) {
+      void setWarningPreferenceApi("uninstallWithDependants", false).then((prefs) => {
+        appState.update((state) => ({
+          ...state,
+          warningPrefs: prefs
+        }));
+      });
+    }
+
+    resolvePendingUninstallDependantsConfirmation(true);
+  },
   async setWarningPreference(
-    kind: "red" | "broken" | "installWithoutDependencies",
+    kind: "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants",
     enabled: boolean
   ) {
     try {
@@ -1835,48 +1962,25 @@ export const actions = {
     }
   },
   async uninstallInstalledMod(profileId: string, packageId: string, versionId: string) {
+    if (get(appState).activeProfile?.id !== profileId) {
+      return;
+    }
+
     const targetMod = get(appState).activeProfile?.installedMods.find(
       (entry) => entry.packageId === packageId && entry.versionId === versionId
     );
-    const modLabel = targetMod
-      ? `${targetMod.packageName} ${targetMod.versionNumber}`
-      : `${packageId}:${versionId}`;
+    const packageName = targetMod?.packageName ?? packageId;
+    const versionNumber = targetMod?.versionNumber ?? versionId;
 
-    try {
-      const [activeProfile, profiles, profilesStorageSummary] = await Promise.all([
-        uninstallInstalledModApi({
-          profileId,
-          packageId,
-          versionId
-        }),
-        listProfilesApi(),
-        getProfilesStorageSummaryApi()
-      ]);
-
-      appState.update((state) =>
-        appendActivity(
-          {
-            ...mapActiveProfile(state, activeProfile),
-            profiles,
-            profilesStorageSummary,
-            profileError: null,
-            desktopError: null
-          },
-          withActivity("Mod uninstalled", `${modLabel} was removed from the active profile.`, "warning")
-        )
-      );
-    } catch (error) {
-      appState.update((state) => ({
-        ...state,
-        profileError: error instanceof Error ? error.message : "Failed to uninstall the mod.",
-        desktopError:
-          state.runtimeKind === "tauri"
-            ? error instanceof Error
-              ? error.message
-              : "Failed to uninstall the mod in the desktop backend."
-            : state.desktopError
-      }));
-    }
+    await uninstallInstalledVersionsForActiveProfile({
+      packageId,
+      packageName,
+      versionIds: [versionId],
+      title: "Mod uninstalled",
+      detail: `${packageName} ${versionNumber} was removed from the active profile.`,
+      tone: "warning",
+      warnOnDependants: true
+    });
   },
   async createProfile(input: CreateProfileInput) {
     try {
@@ -2115,6 +2219,8 @@ export const actions = {
         profiles: [],
         activeProfile: undefined,
         selectedProfileId: "default",
+        modal: null,
+        uninstallDependantsModal: null,
         dependencyModal: null,
         focusedVersion: null,
         catalogCards: [],

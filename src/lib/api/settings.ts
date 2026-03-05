@@ -6,7 +6,7 @@ export function getWarningPrefs(): Promise<WarningPrefsDto> {
 }
 
 export function setWarningPreference(
-  kind: "red" | "broken" | "installWithoutDependencies",
+  kind: "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants",
   enabled: boolean
 ): Promise<WarningPrefsDto> {
   return invokeCommand("set_warning_preference", {

@@ -6,13 +6,14 @@
     red: boolean;
     broken: boolean;
     installWithoutDependencies: boolean;
+    uninstallWithDependants: boolean;
   };
   export let cacheSummary: CacheSummaryDto | undefined;
   export let profilesStorageSummary: ProfilesStorageSummaryDto | undefined;
   export let isLoadingProfilesStorageSummary = false;
   export let settingsError: string | null = null;
   export let onWarningPrefChange: (
-    kind: "red" | "broken" | "installWithoutDependencies",
+    kind: "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants",
     enabled: boolean
   ) => void | Promise<void>;
   export let onOpenCacheFolder: () => void | Promise<void>;
@@ -126,6 +127,29 @@
               name={warningPrefs.installWithoutDependencies ? "check" : "circle"}
             />
             <span>{warningPrefs.installWithoutDependencies ? "On" : "Off"}</span>
+          </button>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>Warn on uninstall with dependants</strong>
+            <p>Ask before uninstalling mods that other installed mods depend on.</p>
+          </div>
+          <button
+            aria-pressed={warningPrefs.uninstallWithDependants}
+            class="ghost-button icon-button toggle-icon-button"
+            type="button"
+            on:click={() =>
+              onWarningPrefChange(
+                "uninstallWithDependants",
+                !warningPrefs.uninstallWithDependants
+              )}
+          >
+            <Icon
+              label={warningPrefs.uninstallWithDependants ? "Enabled" : "Disabled"}
+              name={warningPrefs.uninstallWithDependants ? "check" : "circle"}
+            />
+            <span>{warningPrefs.uninstallWithDependants ? "On" : "Off"}</span>
           </button>
         </div>
       </div>

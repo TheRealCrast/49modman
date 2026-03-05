@@ -158,6 +158,20 @@ export interface UninstallInstalledModInput {
   versionId: string;
 }
 
+export interface GetUninstallDependantsInput {
+  profileId: string;
+  packageId: string;
+  versionIds: string[];
+}
+
+export interface UninstallDependantDto {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  minDepth: number;
+}
+
 export interface DeleteProfileResult {
   deletedId: string;
   nextActiveProfileId: string | null;
@@ -329,6 +343,14 @@ export interface WarningPrefsDto {
   red: boolean;
   broken: boolean;
   installWithoutDependencies: boolean;
+  uninstallWithDependants: boolean;
+}
+
+export interface UninstallDependantsModalState {
+  packageId: string;
+  packageName: string;
+  versionIds: string[];
+  dependants: UninstallDependantDto[];
 }
 
 export type ResetProgressStep = "deleting" | "restoring" | "browse" | "finalizing";
@@ -358,6 +380,7 @@ export interface AppState {
   activities: ActivityItem[];
   warningPrefs: WarningPrefsDto;
   modal: WarningModalState | null;
+  uninstallDependantsModal: UninstallDependantsModalState | null;
   resetProgress: ResetProgressState | null;
   dependencyModal: DependencyModalState | null;
   focusedVersion: FocusedVersionState | null;

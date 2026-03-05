@@ -11,6 +11,7 @@ import {
   getPackageDetailMock,
   getProfileDetailMock,
   getProfilesStorageSummaryMock,
+  getUninstallDependantsMock,
   getWarningPrefsMock,
   listActiveDownloadsMock,
   listProfilesMock,
@@ -51,6 +52,7 @@ type CommandMap = {
   get_profiles_storage_summary: typeof getProfilesStorageSummaryMock;
   set_installed_mod_enabled: typeof setInstalledModEnabledMock;
   uninstall_installed_mod: typeof uninstallInstalledModMock;
+  get_uninstall_dependants: typeof getUninstallDependantsMock;
   list_reference_rows: typeof listReferenceRowsMock;
   set_reference_state: typeof setReferenceStateMock;
   get_warning_prefs: typeof getWarningPrefsMock;
@@ -84,6 +86,7 @@ const mockCommands: CommandMap = {
   get_profiles_storage_summary: getProfilesStorageSummaryMock,
   set_installed_mod_enabled: setInstalledModEnabledMock,
   uninstall_installed_mod: uninstallInstalledModMock,
+  get_uninstall_dependants: getUninstallDependantsMock,
   list_reference_rows: listReferenceRowsMock,
   set_reference_state: setReferenceStateMock,
   get_warning_prefs: getWarningPrefsMock,

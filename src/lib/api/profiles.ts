@@ -2,10 +2,12 @@ import { invokeCommand } from "./client";
 import type {
   CreateProfileInput,
   DeleteProfileResult,
+  GetUninstallDependantsInput,
   ProfileDetailDto,
   ProfilesStorageSummaryDto,
   ProfileSummaryDto,
   SetInstalledModEnabledInput,
+  UninstallDependantDto,
   UninstallInstalledModInput,
   UpdateProfileInput
 } from "../types";
@@ -60,4 +62,10 @@ export function setInstalledModEnabled(input: SetInstalledModEnabledInput): Prom
 
 export function uninstallInstalledMod(input: UninstallInstalledModInput): Promise<ProfileDetailDto> {
   return invokeCommand("uninstall_installed_mod", { input });
+}
+
+export function getUninstallDependants(
+  input: GetUninstallDependantsInput
+): Promise<UninstallDependantDto[]> {
+  return invokeCommand("get_uninstall_dependants", { input });
 }

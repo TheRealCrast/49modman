@@ -51,6 +51,7 @@ fn main() {
             commands::profiles::get_profile_detail,
             commands::profiles::set_installed_mod_enabled,
             commands::profiles::uninstall_installed_mod,
+            commands::profiles::get_uninstall_dependants,
             commands::profiles::reset_all_data,
             commands::profiles::open_profiles_folder,
             commands::profiles::open_active_profile_folder,

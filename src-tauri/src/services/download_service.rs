@@ -16,8 +16,8 @@ use crate::{
     db::now_rfc3339,
     error::InternalError,
     services::cache_service::{
-        cached_archive_path, cached_archive_relative_path, mark_archive_used, thunderstore_archive_path,
-        upsert_cached_archive, verify_cached_archive,
+        cached_archive_path, cached_archive_relative_path, mark_archive_used,
+        thunderstore_archive_path, upsert_cached_archive, verify_cached_archive,
     },
     services::profile_service::{
         get_active_profile_id, get_profile_detail, install_cached_archive_into_profile,
@@ -461,7 +461,15 @@ fn process_cache_task(
                 ..JobUpdate::default()
             },
         );
-        let _ = mark_task_finished(state, task_id, false, Some(error_message), "verifying", 3, 4);
+        let _ = mark_task_finished(
+            state,
+            task_id,
+            false,
+            Some(error_message),
+            "verifying",
+            3,
+            4,
+        );
         return Err(error);
     }
 

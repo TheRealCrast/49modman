@@ -12,6 +12,7 @@ pub struct WarningPrefsDto {
     pub red: bool,
     pub broken: bool,
     pub install_without_dependencies: bool,
+    pub uninstall_with_dependants: bool,
 }
 
 pub fn get_warning_prefs(connection: &Connection) -> Result<WarningPrefsDto, InternalError> {
@@ -23,6 +24,11 @@ pub fn get_warning_prefs(connection: &Connection) -> Result<WarningPrefsDto, Int
             "warning.install_without_dependencies",
             true,
         )?,
+        uninstall_with_dependants: get_bool_setting(
+            connection,
+            "warning.uninstall_with_dependants",
+            true,
+        )?,
     })
 }
 
@@ -31,7 +37,10 @@ pub fn set_warning_preference(
     kind: &str,
     enabled: bool,
 ) -> Result<WarningPrefsDto, InternalError> {
-    if !matches!(kind, "red" | "broken" | "installWithoutDependencies") {
+    if !matches!(
+        kind,
+        "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants"
+    ) {
         return Err(InternalError::app(
             "SETTINGS_SAVE_FAILED",
             format!("Unsupported warning preference: {kind}"),
@@ -42,6 +51,7 @@ pub fn set_warning_preference(
         "red" => "warning.red",
         "broken" => "warning.broken",
         "installWithoutDependencies" => "warning.install_without_dependencies",
+        "uninstallWithDependants" => "warning.uninstall_with_dependants",
         _ => unreachable!("validated above"),
     };
     let updated_at = now_rfc3339()?;

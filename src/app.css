@@ -1162,7 +1162,7 @@ img {
 }
 
 .modal-toggle {
-  margin-top: 4px;
+  margin-bottom: 12px;
 }
 
 .reference-row {
@@ -1530,6 +1530,31 @@ img {
   border-radius: var(--radius-md);
   border: 1px solid var(--panel-border);
   background: var(--panel-alt);
+}
+
+.dependants-title {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+
+.dependants-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.dependants-list li {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.dependant-depth {
+  color: var(--text-faint);
+  font-size: 0.88rem;
 }
 
 .version-menu-trigger {

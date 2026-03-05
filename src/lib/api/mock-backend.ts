@@ -17,6 +17,7 @@ import type {
   DeleteProfileResult,
   DownloadJobDto,
   EffectiveStatus,
+  GetUninstallDependantsInput,
   GetVersionDependenciesInput,
   DependencyResolutionKind,
   InstallTaskDto,
@@ -39,6 +40,7 @@ import type {
   SetInstalledModEnabledInput,
   SyncCatalogInput,
   SyncCatalogResult,
+  UninstallDependantDto,
   UninstallInstalledModInput,
   UpdateProfileInput,
   UnresolvedDependencySummaryItemDto,
@@ -84,7 +86,8 @@ const defaultDb: MockDb = {
   warningPrefs: {
     red: true,
     broken: true,
-    installWithoutDependencies: true
+    installWithoutDependencies: true,
+    uninstallWithDependants: true
   },
   lastSyncAt: null,
   overrides: [],
@@ -143,7 +146,8 @@ function normalizeDb(db: MockDb): MockDb {
     warningPrefs: {
       red: db.warningPrefs?.red ?? true,
       broken: db.warningPrefs?.broken ?? true,
-      installWithoutDependencies: db.warningPrefs?.installWithoutDependencies ?? true
+      installWithoutDependencies: db.warningPrefs?.installWithoutDependencies ?? true,
+      uninstallWithDependants: db.warningPrefs?.uninstallWithDependants ?? true
     },
     profiles,
     activeProfileId: hasActive ? db.activeProfileId : "default",
@@ -874,6 +878,18 @@ export async function uninstallInstalledModMock(
   return profile;
 }
 
+export async function getUninstallDependantsMock(
+  input: GetUninstallDependantsInput
+): Promise<UninstallDependantDto[]> {
+  const profile = await getProfileDetailMock(input.profileId);
+
+  if (!profile) {
+    throw new Error(`Profile ${input.profileId} does not exist.`);
+  }
+
+  return [];
+}
+
 export async function resetAllDataMock(): Promise<void> {
   saveDb(clone(defaultDb));
 }
@@ -1107,7 +1123,7 @@ export async function getWarningPrefsMock(): Promise<WarningPrefsDto> {
 }
 
 export async function setWarningPreferenceMock(
-  kind: "red" | "broken" | "installWithoutDependencies",
+  kind: "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants",
   enabled: boolean
 ): Promise<WarningPrefsDto> {
   const db = normalizeDb(loadDb());

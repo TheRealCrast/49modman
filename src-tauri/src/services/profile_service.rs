@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     fs, io,
     io::Write,
     path::{Path, PathBuf},
@@ -96,6 +97,24 @@ pub struct UninstallInstalledModInput {
     pub profile_id: String,
     pub package_id: String,
     pub version_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetUninstallDependantsInput {
+    pub profile_id: String,
+    pub package_id: String,
+    pub version_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UninstallDependantDto {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+    pub min_depth: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -648,6 +667,185 @@ pub fn uninstall_profile_mod(
     Ok(updated_profile)
 }
 
+pub fn get_uninstall_dependants(
+    state: &AppState,
+    connection: &Connection,
+    input: GetUninstallDependantsInput,
+) -> Result<Vec<UninstallDependantDto>, InternalError> {
+    let Some(_profile) = get_profile_detail(connection, &input.profile_id)? else {
+        return Err(InternalError::app(
+            "PROFILE_NOT_FOUND",
+            format!("Profile {} does not exist.", input.profile_id),
+        ));
+    };
+
+    let version_ids = input
+        .version_ids
+        .into_iter()
+        .filter(|entry| !entry.trim().is_empty())
+        .collect::<HashSet<_>>();
+    if version_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let installed_mods = read_profile_manifest_mods(state, &input.profile_id)?;
+    if installed_mods.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    #[derive(Debug, Clone)]
+    struct InstalledNode {
+        package_id: String,
+        package_name: String,
+        version_id: String,
+        version_number: String,
+        dependency_keys: Vec<String>,
+    }
+
+    let mut nodes_by_key = HashMap::<String, InstalledNode>::new();
+    let mut node_key_by_raw_dependency = HashMap::<String, String>::new();
+
+    for entry in &installed_mods {
+        let key = installed_node_key(&entry.package_id, &entry.version_id);
+        nodes_by_key.insert(
+            key.clone(),
+            InstalledNode {
+                package_id: entry.package_id.clone(),
+                package_name: entry.package_name.clone(),
+                version_id: entry.version_id.clone(),
+                version_number: entry.version_number.clone(),
+                dependency_keys: Vec::new(),
+            },
+        );
+        node_key_by_raw_dependency.insert(
+            dependency_raw_key(&entry.package_name, &entry.version_number),
+            key,
+        );
+    }
+
+    let removed_version_keys = installed_mods
+        .iter()
+        .filter(|entry| {
+            entry.package_id == input.package_id && version_ids.contains(&entry.version_id)
+        })
+        .map(|entry| installed_node_key(&entry.package_id, &entry.version_id))
+        .collect::<HashSet<_>>();
+    if removed_version_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut dependency_statement =
+        connection.prepare("SELECT dependencies_json FROM package_versions WHERE id = ?1")?;
+
+    for node in nodes_by_key.values_mut() {
+        let dependencies_json = dependency_statement
+            .query_row(params![node.version_id.clone()], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?;
+        let Some(dependencies_json) = dependencies_json else {
+            continue;
+        };
+
+        for dependency_raw in parse_dependency_entries(&dependencies_json) {
+            let dependency_raw = dependency_raw.trim();
+            if dependency_raw.is_empty() {
+                continue;
+            }
+
+            if let Some(dependency_key) = node_key_by_raw_dependency.get(dependency_raw) {
+                node.dependency_keys.push(dependency_key.clone());
+            }
+        }
+    }
+
+    fn min_depth_to_removed(
+        key: &str,
+        nodes_by_key: &HashMap<String, InstalledNode>,
+        removed_version_keys: &HashSet<String>,
+        memo: &mut HashMap<String, Option<usize>>,
+        visiting: &mut HashSet<String>,
+    ) -> Option<usize> {
+        if let Some(cached) = memo.get(key) {
+            return *cached;
+        }
+
+        if !visiting.insert(key.to_string()) {
+            return None;
+        }
+
+        let mut best: Option<usize> = None;
+        if let Some(node) = nodes_by_key.get(key) {
+            for dependency_key in &node.dependency_keys {
+                let candidate = if removed_version_keys.contains(dependency_key) {
+                    Some(1)
+                } else {
+                    min_depth_to_removed(
+                        dependency_key,
+                        nodes_by_key,
+                        removed_version_keys,
+                        memo,
+                        visiting,
+                    )
+                    .map(|depth| depth.saturating_add(1))
+                };
+
+                if let Some(depth) = candidate {
+                    best = match best {
+                        Some(current) => Some(current.min(depth)),
+                        None => Some(depth),
+                    };
+                }
+            }
+        }
+
+        visiting.remove(key);
+        memo.insert(key.to_string(), best);
+        best
+    }
+
+    let mut memo = HashMap::<String, Option<usize>>::new();
+    let mut dependants = Vec::new();
+
+    for (key, node) in &nodes_by_key {
+        if removed_version_keys.contains(key) {
+            continue;
+        }
+
+        let mut visiting = HashSet::new();
+        let Some(min_depth) = min_depth_to_removed(
+            key,
+            &nodes_by_key,
+            &removed_version_keys,
+            &mut memo,
+            &mut visiting,
+        ) else {
+            continue;
+        };
+
+        dependants.push(UninstallDependantDto {
+            package_id: node.package_id.clone(),
+            package_name: node.package_name.clone(),
+            version_id: node.version_id.clone(),
+            version_number: node.version_number.clone(),
+            min_depth,
+        });
+    }
+
+    dependants.sort_by(|left, right| {
+        left.min_depth
+            .cmp(&right.min_depth)
+            .then_with(|| {
+                left.package_name
+                    .to_lowercase()
+                    .cmp(&right.package_name.to_lowercase())
+            })
+            .then_with(|| left.version_number.cmp(&right.version_number))
+    });
+
+    Ok(dependants)
+}
+
 pub fn install_cached_archive_into_profile(
     state: &AppState,
     profile: &ProfileDetailDto,
@@ -864,6 +1062,28 @@ fn sanitize_path_segment(value: &str) -> String {
         "mod".to_string()
     } else {
         sanitized
+    }
+}
+
+fn dependency_raw_key(package_name: &str, version_number: &str) -> String {
+    format!("{package_name}-{version_number}")
+}
+
+fn installed_node_key(package_id: &str, version_id: &str) -> String {
+    format!("{package_id}:{version_id}")
+}
+
+fn parse_dependency_entries(value: &str) -> Vec<String> {
+    match serde_json::from_str::<Vec<String>>(value) {
+        Ok(entries) => entries,
+        Err(_) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() || trimmed == "[]" || trimmed == "null" {
+                Vec::new()
+            } else {
+                vec![trimmed.to_string()]
+            }
+        }
     }
 }
 
