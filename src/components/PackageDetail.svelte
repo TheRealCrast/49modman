@@ -5,6 +5,7 @@
   import type { IconName } from "../lib/icons";
   import type {
     EffectiveStatus,
+    InstallActionOptions,
     InstallRequest,
     ModPackage,
     ModVersion,
@@ -16,8 +17,12 @@
   export let pkg: ModPackage | undefined;
   export let visibleStatuses: string[];
   export let onToggleStatus: (status: "verified" | "broken" | "green" | "yellow" | "orange" | "red") => void;
-  export let onInstall: (request: InstallRequest) => void;
-  export let onSwitchVersion: (request: InstallRequest, switchFromVersionIds: string[]) => void;
+  export let onInstall: (request: InstallRequest, options?: InstallActionOptions) => void;
+  export let onSwitchVersion: (
+    request: InstallRequest,
+    switchFromVersionIds: string[],
+    options?: InstallActionOptions
+  ) => void;
   export let onUninstallPackage: (packageId: string, packageName: string) => void;
   export let onUninstallVersion: (
     packageId: string,
@@ -56,6 +61,13 @@
         y: number;
       }
     | null = null;
+  let installModeMenu:
+    | {
+        versionId: string;
+        x: number;
+        y: number;
+      }
+    | null = null;
   let lastFocusedKey = "";
 
   function openMenuForVersion(
@@ -73,6 +85,36 @@
       x: Math.max(16, Math.min(window.innerWidth - 236, x)),
       y: Math.max(16, Math.min(window.innerHeight - 220, y))
     };
+    installModeMenu = null;
+  }
+
+  function versionHasDependencies(version: ModVersion | undefined) {
+    return (version?.dependencies?.length ?? 0) > 0;
+  }
+
+  function openInstallModeMenu(version: ModVersion, x: number, y: number) {
+    if (isLocked) {
+      return;
+    }
+
+    installModeMenu = {
+      versionId: version.id,
+      x: Math.max(16, Math.min(window.innerWidth - 268, x)),
+      y: Math.max(16, Math.min(window.innerHeight - 132, y))
+    };
+    menu = null;
+  }
+
+  function openInstallModeMenuFromButton(event: MouseEvent, version: ModVersion) {
+    if (isLocked || !versionHasDependencies(version)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const button = event.currentTarget as HTMLButtonElement;
+    const rect = button.getBoundingClientRect();
+    openInstallModeMenu(version, rect.left - 188, rect.bottom + 8);
   }
 
   function openContextMenu(event: MouseEvent, version: ModVersion) {
@@ -96,8 +138,17 @@
     openMenuForVersion(version, rect.left - 188, rect.bottom + 8);
   }
 
-  function closeMenu() {
+  function closeVersionMenu() {
     menu = null;
+  }
+
+  function closeInstallModeMenu() {
+    installModeMenu = null;
+  }
+
+  function closeMenus() {
+    closeVersionMenu();
+    closeInstallModeMenu();
   }
 
   function pickInstallVersion() {
@@ -153,7 +204,7 @@
       versionId: menu.versionId,
       versionNumber: menu.versionNumber
     });
-    closeMenu();
+    closeVersionMenu();
   }
 
   async function viewPackageInBrowser() {
@@ -166,7 +217,32 @@
     }
 
     await openExternalUrl(pkg.websiteUrl);
-    closeMenu();
+    closeMenus();
+  }
+
+  function runInstallAction(
+    version: ModVersion,
+    options: InstallActionOptions = {}
+  ) {
+    if (isLocked || !pkg) {
+      return;
+    }
+
+    const request = buildInstallRequest(version.id);
+    if (!request) {
+      return;
+    }
+
+    if (packageHasInstalledVersion && !installedVersionIds.has(version.id)) {
+      onSwitchVersion(
+        request,
+        installedPackageMods.map((entry) => entry.versionId),
+        options
+      );
+      return;
+    }
+
+    onInstall(request, options);
   }
 
   function runPrimaryInstallAction() {
@@ -197,6 +273,20 @@
     onInstall(request);
   }
 
+  function runInstallWithoutDependenciesFromMenu() {
+    if (isLocked || !pkg || !installModeMenu) {
+      return;
+    }
+
+    const targetVersion = pkg.versions.find((entry) => entry.id === installModeMenu?.versionId);
+    if (!targetVersion) {
+      return;
+    }
+
+    runInstallAction(targetVersion, { includeDependencies: false });
+    closeInstallModeMenu();
+  }
+
   function applyReference(state: "verified" | "broken" | "neutral") {
     if (isLocked) {
       return;
@@ -207,22 +297,27 @@
     }
 
     onSetReference(pkg.id, menu.versionId, state);
-    closeMenu();
+    closeVersionMenu();
   }
 
   function handleWindowPointerDown(event: PointerEvent) {
     const target = event.target as HTMLElement | null;
 
-    if (target?.closest(".version-menu") || target?.closest(".version-menu-trigger")) {
+    if (
+      target?.closest(".version-menu") ||
+      target?.closest(".version-menu-trigger") ||
+      target?.closest(".install-mode-menu") ||
+      target?.closest(".install-mode-trigger")
+    ) {
       return;
     }
 
-    closeMenu();
+    closeMenus();
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
-      closeMenu();
+      closeMenus();
     }
   }
 
@@ -231,7 +326,7 @@
     window.removeEventListener("keydown", handleWindowKeydown);
   });
 
-  $: if (menu) {
+  $: if (menu || installModeMenu) {
     window.addEventListener("pointerdown", handleWindowPointerDown);
     window.addEventListener("keydown", handleWindowKeydown);
   } else {
@@ -259,8 +354,8 @@
     installIcon = "download";
   }
 
-  $: if (isLocked && menu) {
-    closeMenu();
+  $: if (isLocked && (menu || installModeMenu)) {
+    closeMenus();
   }
 
   async function scrollFocusedVersionIntoView(versionId: string) {
@@ -299,21 +394,34 @@
 
     <div class="detail-primary-actions">
       {#key installVersion?.id ?? `${pkg.id}-install`}
-        <button
-          class={`solid-button icon-button package-install-button ${installStatusClass}`}
-          type="button"
-          disabled={isLocked}
-          on:click={runPrimaryInstallAction}
-        >
-          <Icon
-            label={packageHasInstalledVersion
-              ? `Uninstall ${pkg.fullName}`
-              : `Install ${installVersion?.versionNumber ?? "recommended version"}`}
-            name={installIcon}
-            forceWhite={true}
-          />
-          <span>{installLabel}</span>
-        </button>
+        <div class="install-action-group">
+          <button
+            class={`solid-button icon-button package-install-button ${installStatusClass}`}
+            type="button"
+            disabled={isLocked}
+            on:click={runPrimaryInstallAction}
+          >
+            <Icon
+              label={packageHasInstalledVersion
+                ? `Uninstall ${pkg.fullName}`
+                : `Install ${installVersion?.versionNumber ?? "recommended version"}`}
+              name={installIcon}
+              forceWhite={true}
+            />
+            <span>{installLabel}</span>
+          </button>
+          {#if !packageHasInstalledVersion && installVersion && versionHasDependencies(installVersion)}
+            <button
+              aria-expanded={installModeMenu?.versionId === installVersion.id}
+              class="ghost-button icon-button install-mode-trigger"
+              type="button"
+              disabled={isLocked}
+              on:click={(event) => openInstallModeMenuFromButton(event, installVersion)}
+            >
+              <Icon label="Install options" name="three-dots-vertical" />
+            </button>
+          {/if}
+        </div>
       {/key}
       <button
         class="ghost-button icon-button detail-link-button"
@@ -381,44 +489,43 @@
             </div>
 
             <div class="version-actions">
-              <button
-                class={`icon-button version-install-button ${versionInstalled ? "danger-button package-install-button uninstall" : "solid-button"}`}
-                type="button"
-                disabled={isLocked}
-                on:click={() => {
-                  if (isLocked) {
-                    return;
-                  }
-                  if (!pkg) {
-                    return;
-                  }
-
-                  if (versionInstalled) {
-                    onUninstallVersion(pkg.id, version.id, pkg.fullName, version.versionNumber);
-                    return;
-                  }
-
-                  const request = buildInstallRequest(version.id);
-                  if (request) {
-                    if (packageHasInstalledVersion) {
-                      onSwitchVersion(
-                        request,
-                        installedPackageMods.map((entry) => entry.versionId)
-                      );
+              <div class="install-action-group">
+                <button
+                  class={`icon-button version-install-button ${versionInstalled ? "danger-button package-install-button uninstall" : "solid-button"}`}
+                  type="button"
+                  disabled={isLocked}
+                  on:click={() => {
+                    if (isLocked || !pkg) {
                       return;
                     }
 
-                    onInstall(request);
-                  }
-                }}
-              >
-                <Icon
-                  label={versionActionLabel}
-                  name={versionInstalled ? "trash" : "download"}
-                  forceWhite={true}
-                />
-                <span>{versionActionLabel}</span>
-              </button>
+                    if (versionInstalled) {
+                      onUninstallVersion(pkg.id, version.id, pkg.fullName, version.versionNumber);
+                      return;
+                    }
+
+                    runInstallAction(version);
+                  }}
+                >
+                  <Icon
+                    label={versionActionLabel}
+                    name={versionInstalled ? "trash" : "download"}
+                    forceWhite={true}
+                  />
+                  <span>{versionActionLabel}</span>
+                </button>
+                {#if !versionInstalled && versionHasDependencies(version)}
+                  <button
+                    aria-expanded={installModeMenu?.versionId === version.id}
+                    class="ghost-button icon-button install-mode-trigger"
+                    type="button"
+                    disabled={isLocked}
+                    on:click={(event) => openInstallModeMenuFromButton(event, version)}
+                  >
+                    <Icon label="Install options" name="three-dots-vertical" />
+                  </button>
+                {/if}
+              </div>
               <button
                 aria-expanded={menu?.versionId === version.id}
                 class="ghost-button icon-button version-menu-trigger"
@@ -451,6 +558,15 @@
         <button class="version-menu-item" type="button" on:click={() => applyReference("neutral")}>
           <Icon label="Clear mark" name="x-close" size={16} />
           <span>Clear mark</span>
+        </button>
+      </div>
+    {/if}
+
+    {#if installModeMenu}
+      <div class="install-mode-menu version-menu panel" style={`left:${installModeMenu.x}px;top:${installModeMenu.y}px;`}>
+        <button class="version-menu-item" type="button" on:click={runInstallWithoutDependenciesFromMenu}>
+          <Icon label="Install without dependencies" name="download" size={16} />
+          <span>Install without dependencies</span>
         </button>
       </div>
     {/if}

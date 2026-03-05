@@ -5,12 +5,16 @@
   export let warningPrefs: {
     red: boolean;
     broken: boolean;
+    installWithoutDependencies: boolean;
   };
   export let cacheSummary: CacheSummaryDto | undefined;
   export let profilesStorageSummary: ProfilesStorageSummaryDto | undefined;
   export let isLoadingProfilesStorageSummary = false;
   export let settingsError: string | null = null;
-  export let onWarningPrefChange: (kind: "red" | "broken", enabled: boolean) => void | Promise<void>;
+  export let onWarningPrefChange: (
+    kind: "red" | "broken" | "installWithoutDependencies",
+    enabled: boolean
+  ) => void | Promise<void>;
   export let onOpenCacheFolder: () => void | Promise<void>;
   export let onOpenProfilesFolder: () => void | Promise<void>;
   export let onOpenActiveProfileFolder: () => void | Promise<void>;
@@ -92,6 +96,29 @@
           >
             <Icon label={warningPrefs.broken ? "Enabled" : "Disabled"} name={warningPrefs.broken ? "check" : "circle"} />
             <span>{warningPrefs.broken ? "On" : "Off"}</span>
+          </button>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>Warn on install without dependencies</strong>
+            <p>Ask for confirmation before installing while skipping dependency installs.</p>
+          </div>
+          <button
+            aria-pressed={warningPrefs.installWithoutDependencies}
+            class="ghost-button icon-button toggle-icon-button"
+            type="button"
+            on:click={() =>
+              onWarningPrefChange(
+                "installWithoutDependencies",
+                !warningPrefs.installWithoutDependencies
+              )}
+          >
+            <Icon
+              label={warningPrefs.installWithoutDependencies ? "Enabled" : "Disabled"}
+              name={warningPrefs.installWithoutDependencies ? "check" : "circle"}
+            />
+            <span>{warningPrefs.installWithoutDependencies ? "On" : "Off"}</span>
           </button>
         </div>
       </div>

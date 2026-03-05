@@ -29,6 +29,14 @@ pub fn seed_defaults(connection: &Connection) -> Result<(), InternalError> {
         "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
         params!["warning.broken", serde_json::to_string(&true)?, now],
     )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "warning.install_without_dependencies",
+            serde_json::to_string(&true)?,
+            now_rfc3339()?
+        ],
+    )?;
 
     connection.execute(
         "INSERT OR IGNORE INTO profiles (

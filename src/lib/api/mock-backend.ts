@@ -83,7 +83,8 @@ const STORAGE_KEY = "49modman.mock-backend.v1";
 const defaultDb: MockDb = {
   warningPrefs: {
     red: true,
-    broken: true
+    broken: true,
+    installWithoutDependencies: true
   },
   lastSyncAt: null,
   overrides: [],
@@ -139,6 +140,11 @@ function normalizeDb(db: MockDb): MockDb {
 
   return {
     ...db,
+    warningPrefs: {
+      red: db.warningPrefs?.red ?? true,
+      broken: db.warningPrefs?.broken ?? true,
+      installWithoutDependencies: db.warningPrefs?.installWithoutDependencies ?? true
+    },
     profiles,
     activeProfileId: hasActive ? db.activeProfileId : "default",
     cachedVersions: db.cachedVersions ?? [],
@@ -1097,14 +1103,14 @@ export async function setReferenceStateMock(input: SetReferenceStateInput): Prom
 }
 
 export async function getWarningPrefsMock(): Promise<WarningPrefsDto> {
-  return loadDb().warningPrefs;
+  return normalizeDb(loadDb()).warningPrefs;
 }
 
 export async function setWarningPreferenceMock(
-  kind: "red" | "broken",
+  kind: "red" | "broken" | "installWithoutDependencies",
   enabled: boolean
 ): Promise<WarningPrefsDto> {
-  const db = loadDb();
+  const db = normalizeDb(loadDb());
   db.warningPrefs = {
     ...db.warningPrefs,
     [kind]: enabled

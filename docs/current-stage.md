@@ -39,6 +39,17 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - while a package install/uninstall/switch operation is in progress:
     - that package card action button is disabled, grey, and shows spinner-only
     - if the same package is selected in detail, the detail panel is locked with `Waiting...`
+- Browse install/switch actions now support dependency-aware installation:
+  - default install/switch queues the selected version and then resolves/queues dependencies from cached catalog metadata
+  - dependency actions are manifest-aware:
+    - skip if exact dependency package+version is already installed
+    - if same package is installed at a different version, switch only when required version is higher
+    - skip lower/equal required versions for already-installed packages
+    - install dependency when package is not installed
+- Browse detail install/switch actions now expose an install-mode dropdown (excluding uninstall actions):
+  - `Install without dependencies` skips dependency installs for that action
+  - this path uses a confirmation prompt when enabled by warning settings
+  - Settings `Warn options` now include `Warn on install without dependencies`
 
 ## Next Milestone
 
@@ -100,7 +111,7 @@ Current locked behavior:
 
 ## Current Uncommitted Work
 
-Current working tree includes the install-state control follow-up and manifest reconciliation fixes (pending commit).
+Dependency-install follow-up and Browse install-mode UI changes are now captured in this checkpoint.
 
 ## Profile Milestone Notes
 
@@ -219,6 +230,15 @@ Current working tree includes the install-state control follow-up and manifest r
   - detail `Install version` buttons
 - busy card action now uses the shared inline loading spinner element:
   - `<div class="loading-spinner" aria-hidden="true"></div>`
+- default Browse install/switch now resolves dependencies and applies manifest-aware dependency actions:
+  - skip already-installed exact dependency versions
+  - switch dependency package versions only when required dependency version is higher than installed
+  - skip lower/equal required dependency versions for already-installed packages
+  - queue installs for missing dependency packages
+- detail-panel install/switch buttons now include an install-mode dropdown for dependency-bearing targets:
+  - `Install without dependencies` option
+  - uninstall actions intentionally do not include this option
+  - warning prompt for this path can be toggled via `warning.install_without_dependencies`
 - uninstall-related Browse actions now use a dedicated trash icon:
   - package-card `Uninstall`
   - detail-panel `Uninstall`

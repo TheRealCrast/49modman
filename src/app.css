@@ -495,6 +495,16 @@ img {
   margin-top: 6px;
 }
 
+.install-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.install-mode-trigger {
+  padding-inline: 10px;
+}
+
 .search-inline {
   flex: 1;
   min-width: 240px;
@@ -1501,6 +1511,10 @@ img {
   display: grid;
   gap: 4px;
   z-index: 40;
+}
+
+.install-mode-menu {
+  width: 264px;
 }
 
 .version-menu-item {

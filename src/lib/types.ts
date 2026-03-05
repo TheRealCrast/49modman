@@ -225,6 +225,10 @@ export interface InstallRequest {
   referenceNote?: string;
 }
 
+export interface InstallActionOptions {
+  includeDependencies?: boolean;
+}
+
 export type DependencyResolutionKind = "resolved" | "unresolved" | "cycle" | "repeated";
 
 export interface DependencyNodeDto {
@@ -324,6 +328,7 @@ export interface ReferenceRow {
 export interface WarningPrefsDto {
   red: boolean;
   broken: boolean;
+  installWithoutDependencies: boolean;
 }
 
 export type ResetProgressStep = "deleting" | "restoring" | "browse" | "finalizing";

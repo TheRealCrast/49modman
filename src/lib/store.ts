@@ -24,15 +24,18 @@ import {
 } from "./api/settings";
 import { seedActivities, seedPackages } from "./mock-data";
 import { getRuntimeKind } from "./runtime";
+import { compareVersionNumbers } from "./status";
 import type {
   ActivityItem,
   AppState,
   AppView,
   CacheSummaryDto,
   CreateProfileInput,
+  DependencySummaryItemDto,
   DependencyModalState,
   DownloadJobDto,
   EffectiveStatus,
+  InstallActionOptions,
   FocusedVersionState,
   InstallRequest,
   ModPackage,
@@ -50,6 +53,7 @@ let downloadPollHandle: number | null = null;
 let focusedVersionClearHandle: number | null = null;
 const busyPackageRefCounts = new Map<string, number>();
 const activeInstallTaskPackageIds = new Map<string, string>();
+let pendingWarningConfirmationResolver: ((confirmed: boolean) => void) | null = null;
 
 const initialState: AppState = {
   view: "browse",
@@ -70,7 +74,8 @@ const initialState: AppState = {
   activities: seedActivities,
   warningPrefs: {
     red: true,
-    broken: true
+    broken: true,
+    installWithoutDependencies: true
   },
   modal: null,
   resetProgress: null,
@@ -863,13 +868,6 @@ async function refreshCatalog(
   }
 }
 
-function installVersion(state: AppState): AppState {
-  return {
-    ...state,
-    modal: null
-  };
-}
-
 function findInstalledModsForPackage(
   installedMods: ProfileInstalledModDto[] | undefined,
   packageId: string
@@ -877,51 +875,290 @@ function findInstalledModsForPackage(
   return (installedMods ?? []).filter((entry) => entry.packageId === packageId);
 }
 
-function requestInstallWithOptionalSwitch(request: InstallRequest, switchFromVersionIds: string[] = []) {
+type InstallFlowOptions = {
+  includeDependencies?: boolean;
+  promptWithoutDependencies?: boolean;
+};
+
+type DependencyInstallPlanStep = {
+  request: InstallRequest;
+  switchFromVersionIds: string[];
+  kind: "install" | "switch";
+};
+
+type DependencyInstallPlan = {
+  steps: DependencyInstallPlanStep[];
+  skippedAlreadyInstalledCount: number;
+  skippedLowerOrEqualCount: number;
+};
+
+function resolvePendingWarningConfirmation(confirmed: boolean) {
+  const resolver = pendingWarningConfirmationResolver;
+  pendingWarningConfirmationResolver = null;
+  if (resolver) {
+    resolver(confirmed);
+  }
+}
+
+async function confirmWarningForInstallIfNeeded(
+  request: InstallRequest,
+  switchFromVersionIds: string[] = []
+) {
+  const state = get(appState);
   const uniqueSwitchFromVersionIds = [...new Set(switchFromVersionIds)];
+  const shouldWarnBroken = request.effectiveStatus === "broken" && state.warningPrefs.broken;
+  const shouldWarnRed = request.effectiveStatus === "red" && state.warningPrefs.red;
+  if (!shouldWarnBroken && !shouldWarnRed) {
+    return true;
+  }
 
-  appState.update((state) => {
-    if (request.effectiveStatus === "broken" && state.warningPrefs.broken) {
-      return {
-        ...state,
-        modal: {
-          packageId: request.packageId,
-          packageName: request.packageName,
-          versionId: request.versionId,
-          versionNumber: request.versionNumber,
-          status: "broken",
-          referenceNote: request.referenceNote,
-          switchFromVersionIds:
-            uniqueSwitchFromVersionIds.length > 0 ? uniqueSwitchFromVersionIds : undefined
-        }
-      };
+  if (pendingWarningConfirmationResolver) {
+    resolvePendingWarningConfirmation(false);
+  }
+
+  appState.update((current) => ({
+    ...current,
+    modal: {
+      packageId: request.packageId,
+      packageName: request.packageName,
+      versionId: request.versionId,
+      versionNumber: request.versionNumber,
+      status: shouldWarnBroken ? "broken" : "red",
+      referenceNote: request.referenceNote,
+      switchFromVersionIds:
+        uniqueSwitchFromVersionIds.length > 0 ? uniqueSwitchFromVersionIds : undefined
     }
+  }));
 
-    if (request.effectiveStatus === "red" && state.warningPrefs.red) {
-      return {
-        ...state,
-        modal: {
-          packageId: request.packageId,
-          packageName: request.packageName,
-          versionId: request.versionId,
-          versionNumber: request.versionNumber,
-          status: "red",
-          switchFromVersionIds:
-            uniqueSwitchFromVersionIds.length > 0 ? uniqueSwitchFromVersionIds : undefined
-        }
-      };
-    }
-
-    return installVersion(state);
+  return new Promise<boolean>((resolve) => {
+    pendingWarningConfirmationResolver = resolve;
   });
+}
 
-  if (!get(appState).modal) {
-    if (uniqueSwitchFromVersionIds.length > 0) {
-      void actions.switchInstalledPackageVersion(request, uniqueSwitchFromVersionIds);
+function confirmInstallWithoutDependenciesIfNeeded() {
+  const state = get(appState);
+  if (!state.warningPrefs.installWithoutDependencies) {
+    return true;
+  }
+
+  return window.confirm(
+    "Install without dependencies? The selected mod may fail if required dependencies are missing."
+  );
+}
+
+function buildDependencyInstallPlan(
+  rootRequest: InstallRequest,
+  installedMods: ProfileInstalledModDto[],
+  dependencies: DependencySummaryItemDto[]
+): DependencyInstallPlan {
+  const steps: DependencyInstallPlanStep[] = [];
+  let skippedAlreadyInstalledCount = 0;
+  let skippedLowerOrEqualCount = 0;
+  const installedByPackage = new Map<string, ProfileInstalledModDto[]>();
+
+  for (const entry of installedMods) {
+    const existing = installedByPackage.get(entry.packageId) ?? [];
+    installedByPackage.set(entry.packageId, [...existing, entry]);
+  }
+
+  for (const dependency of dependencies) {
+    if (dependency.packageId === rootRequest.packageId) {
+      continue;
+    }
+
+    const installedForPackage = installedByPackage.get(dependency.packageId) ?? [];
+
+    if (installedForPackage.some((entry) => entry.versionId === dependency.versionId)) {
+      skippedAlreadyInstalledCount += 1;
+      continue;
+    }
+
+    const dependencyRequest: InstallRequest = {
+      packageId: dependency.packageId,
+      packageName: dependency.packageName,
+      versionId: dependency.versionId,
+      versionNumber: dependency.versionNumber,
+      effectiveStatus: dependency.effectiveStatus,
+      referenceNote: dependency.referenceNote
+    };
+
+    if (installedForPackage.length === 0) {
+      steps.push({
+        request: dependencyRequest,
+        switchFromVersionIds: [],
+        kind: "install"
+      });
+      installedByPackage.set(dependency.packageId, [
+        {
+          packageId: dependency.packageId,
+          packageName: dependency.packageName,
+          versionId: dependency.versionId,
+          versionNumber: dependency.versionNumber,
+          enabled: true,
+          sourceKind: "thunderstore",
+          installDir: "",
+          installedAt: ""
+        }
+      ]);
+      continue;
+    }
+
+    const highestInstalled = installedForPackage.reduce((best, current) =>
+      compareVersionNumbers(current.versionNumber, best.versionNumber) > 0 ? current : best
+    );
+    if (compareVersionNumbers(dependency.versionNumber, highestInstalled.versionNumber) <= 0) {
+      skippedLowerOrEqualCount += 1;
+      continue;
+    }
+
+    steps.push({
+      request: dependencyRequest,
+      switchFromVersionIds: installedForPackage.map((entry) => entry.versionId),
+      kind: "switch"
+    });
+    installedByPackage.set(dependency.packageId, [
+      {
+        packageId: dependency.packageId,
+        packageName: dependency.packageName,
+        versionId: dependency.versionId,
+        versionNumber: dependency.versionNumber,
+        enabled: true,
+        sourceKind: "thunderstore",
+        installDir: "",
+        installedAt: ""
+      }
+    ]);
+  }
+
+  return {
+    steps,
+    skippedAlreadyInstalledCount,
+    skippedLowerOrEqualCount
+  };
+}
+
+async function performInstallOperation(request: InstallRequest, switchFromVersionIds: string[] = []) {
+  const confirmed = await confirmWarningForInstallIfNeeded(request, switchFromVersionIds);
+  if (!confirmed) {
+    return false;
+  }
+
+  if (switchFromVersionIds.length > 0) {
+    return switchInstalledPackageVersionInternal(request, switchFromVersionIds);
+  }
+
+  return queueVersionForCache(request);
+}
+
+async function queueDependencyInstallsForRequest(rootRequest: InstallRequest) {
+  try {
+    const resolvedDependencies = await getVersionDependencies({
+      packageId: rootRequest.packageId,
+      versionId: rootRequest.versionId
+    });
+    const dependencyItems = [
+      ...resolvedDependencies.summary.direct,
+      ...resolvedDependencies.summary.transitive
+    ];
+    const installedMods = get(appState).activeProfile?.installedMods ?? [];
+    const plan = buildDependencyInstallPlan(rootRequest, installedMods, dependencyItems);
+
+    if (plan.steps.length === 0) {
+      if (resolvedDependencies.summary.unresolved.length > 0) {
+        appState.update((state) =>
+          appendActivity(
+            state,
+            withActivity(
+              "Dependency install skipped",
+              `${resolvedDependencies.summary.unresolved.length} dependenc${resolvedDependencies.summary.unresolved.length === 1 ? "y is" : "ies are"} unresolved in the cached catalog.`,
+              "warning"
+            )
+          )
+        );
+      }
       return;
     }
 
-    void queueVersionForCache(request);
+    let installedCount = 0;
+    let switchedCount = 0;
+
+    for (const step of plan.steps) {
+      const started = await performInstallOperation(step.request, step.switchFromVersionIds);
+      if (!started) {
+        break;
+      }
+
+      if (step.kind === "switch") {
+        switchedCount += 1;
+      } else {
+        installedCount += 1;
+      }
+    }
+
+    const skippedCount = plan.skippedAlreadyInstalledCount + plan.skippedLowerOrEqualCount;
+    const detailParts: string[] = [];
+    if (installedCount > 0) {
+      detailParts.push(
+        `${installedCount} dependenc${installedCount === 1 ? "y" : "ies"} queued for install`
+      );
+    }
+    if (switchedCount > 0) {
+      detailParts.push(
+        `${switchedCount} dependenc${switchedCount === 1 ? "y" : "ies"} queued for version switch`
+      );
+    }
+    if (skippedCount > 0) {
+      detailParts.push(`${skippedCount} skipped`);
+    }
+    const detail =
+      detailParts.length > 0 ? detailParts.join(" · ") : "No dependency installs were queued.";
+
+    appState.update((state) =>
+      appendActivity(
+        state,
+        withActivity(
+          "Dependency actions queued",
+          detail,
+          resolvedDependencies.summary.unresolved.length > 0 ? "warning" : "neutral"
+        )
+      )
+    );
+  } catch (error) {
+    const fallbackMessage = "Failed to resolve dependencies for install.";
+    const errorMessage = error instanceof Error ? `${fallbackMessage} ${error.message}` : fallbackMessage;
+    appState.update((state) =>
+      appendActivity(
+        {
+          ...state,
+          desktopError: state.runtimeKind === "tauri" ? errorMessage : state.desktopError
+        },
+        withActivity("Dependency install skipped", errorMessage, "warning")
+      )
+    );
+  }
+}
+
+async function requestInstallWithOptionalSwitch(
+  request: InstallRequest,
+  switchFromVersionIds: string[] = [],
+  options: InstallFlowOptions = {}
+) {
+  const { includeDependencies = true, promptWithoutDependencies = false } = options;
+
+  if (!includeDependencies && promptWithoutDependencies) {
+    const confirmed = confirmInstallWithoutDependenciesIfNeeded();
+    if (!confirmed) {
+      return;
+    }
+  }
+
+  const started = await performInstallOperation(request, switchFromVersionIds);
+  if (!started) {
+    return;
+  }
+
+  if (includeDependencies) {
+    await queueDependencyInstallsForRequest(request);
   }
 }
 
@@ -1077,6 +1314,47 @@ async function queueVersionForCache(
     }));
     return false;
   }
+}
+
+async function switchInstalledPackageVersionInternal(
+  request: InstallRequest,
+  switchFromVersionIds: string[]
+) {
+  acquirePackageBusy(request.packageId);
+  const currentState = get(appState);
+  const installedVersions = findInstalledModsForPackage(
+    currentState.activeProfile?.installedMods,
+    request.packageId
+  )
+    .filter((entry) => switchFromVersionIds.includes(entry.versionId))
+    .map((entry) => entry.versionNumber);
+  const sourceLabel =
+    installedVersions.length > 0 ? installedVersions.join(", ") : "installed version";
+
+  let handoffToInstallTask = false;
+
+  try {
+    const switched = await uninstallInstalledVersionsForActiveProfile({
+      packageId: request.packageId,
+      versionIds: switchFromVersionIds,
+      title: "Switching version",
+      detail: `Removing ${request.packageName} ${sourceLabel} before installing ${request.versionNumber}.`,
+      tone: "neutral",
+      managePackageLock: false
+    });
+
+    if (switched) {
+      const queued = await queueVersionForCache(request, { lockAlreadyHeld: true });
+      handoffToInstallTask = queued;
+      return queued;
+    }
+  } finally {
+    if (!handoffToInstallTask) {
+      releasePackageBusy(request.packageId);
+    }
+  }
+
+  return false;
 }
 
 export const actions = {
@@ -1247,46 +1525,24 @@ export const actions = {
       }));
     }
   },
-  requestInstall(request: InstallRequest) {
-    requestInstallWithOptionalSwitch(request);
+  requestInstall(request: InstallRequest, options: InstallActionOptions = {}) {
+    void requestInstallWithOptionalSwitch(request, [], {
+      includeDependencies: options.includeDependencies ?? true,
+      promptWithoutDependencies: options.includeDependencies === false
+    });
   },
-  requestSwitchVersion(request: InstallRequest, switchFromVersionIds: string[]) {
-    requestInstallWithOptionalSwitch(request, switchFromVersionIds);
+  requestSwitchVersion(
+    request: InstallRequest,
+    switchFromVersionIds: string[],
+    options: InstallActionOptions = {}
+  ) {
+    void requestInstallWithOptionalSwitch(request, switchFromVersionIds, {
+      includeDependencies: options.includeDependencies ?? true,
+      promptWithoutDependencies: options.includeDependencies === false
+    });
   },
   async switchInstalledPackageVersion(request: InstallRequest, switchFromVersionIds: string[]) {
-    acquirePackageBusy(request.packageId);
-    const currentState = get(appState);
-    const installedVersions = findInstalledModsForPackage(
-      currentState.activeProfile?.installedMods,
-      request.packageId
-    )
-      .filter((entry) => switchFromVersionIds.includes(entry.versionId))
-      .map((entry) => entry.versionNumber);
-    const sourceLabel =
-      installedVersions.length > 0 ? installedVersions.join(", ") : "installed version";
-
-    let handoffToInstallTask = false;
-
-    try {
-      const switched = await uninstallInstalledVersionsForActiveProfile({
-        packageId: request.packageId,
-        versionIds: switchFromVersionIds,
-        title: "Switching version",
-        detail: `Removing ${request.packageName} ${sourceLabel} before installing ${request.versionNumber}.`,
-        tone: "neutral",
-        managePackageLock: false
-      });
-
-      if (switched) {
-        const queued = await queueVersionForCache(request, { lockAlreadyHeld: true });
-        handoffToInstallTask = queued;
-        return;
-      }
-    } finally {
-      if (!handoffToInstallTask) {
-        releasePackageBusy(request.packageId);
-      }
-    }
+    await switchInstalledPackageVersionInternal(request, switchFromVersionIds);
   },
   async uninstallPackageFromBrowse(packageId: string, packageName: string) {
     const installed = findInstalledModsForPackage(get(appState).activeProfile?.installedMods, packageId);
@@ -1327,6 +1583,7 @@ export const actions = {
       ...state,
       modal: null
     }));
+    resolvePendingWarningConfirmation(false);
   },
   openDependencyModal(request: {
     packageId: string;
@@ -1426,11 +1683,15 @@ export const actions = {
         warningPrefs: {
           red: state.modal.status === "red" && doNotShowAgain ? false : state.warningPrefs.red,
           broken:
-            state.modal.status === "broken" && doNotShowAgain ? false : state.warningPrefs.broken
+            state.modal.status === "broken" && doNotShowAgain ? false : state.warningPrefs.broken,
+          installWithoutDependencies: state.warningPrefs.installWithoutDependencies
         }
       };
 
-      return installVersion(nextState);
+      return {
+        ...nextState,
+        modal: null
+      };
     });
 
     if (doNotShowAgain && modal?.status) {
@@ -1442,25 +1703,12 @@ export const actions = {
       });
     }
 
-    if (modal) {
-      const request: InstallRequest = {
-        packageId: modal.packageId,
-        packageName: modal.packageName,
-        versionId: modal.versionId,
-        versionNumber: modal.versionNumber,
-        effectiveStatus: modal.status,
-        referenceNote: modal.referenceNote
-      };
-
-      if (modal.switchFromVersionIds && modal.switchFromVersionIds.length > 0) {
-        void actions.switchInstalledPackageVersion(request, modal.switchFromVersionIds);
-        return;
-      }
-
-      void queueVersionForCache(request);
-    }
+    resolvePendingWarningConfirmation(true);
   },
-  async setWarningPreference(kind: "red" | "broken", enabled: boolean) {
+  async setWarningPreference(
+    kind: "red" | "broken" | "installWithoutDependencies",
+    enabled: boolean
+  ) {
     try {
       const prefs = await setWarningPreferenceApi(kind, enabled);
       appState.update((state) => ({

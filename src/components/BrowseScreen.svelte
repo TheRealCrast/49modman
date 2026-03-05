@@ -1,5 +1,11 @@
 <script lang="ts">
-  import type { EffectiveStatus, InstallRequest, ModPackage, ProfileInstalledModDto } from "../lib/types";
+  import type {
+    EffectiveStatus,
+    InstallActionOptions,
+    InstallRequest,
+    ModPackage,
+    ProfileInstalledModDto
+  } from "../lib/types";
   import Icon from "./Icon.svelte";
   import PackageDetail from "./PackageDetail.svelte";
   import StatusPill from "./StatusPill.svelte";
@@ -34,8 +40,12 @@
   export let onLoadMore: () => void;
   export let onToggleStatus: (status: EffectiveStatus) => void;
   export let onSelectPackage: (packageId: string) => void;
-  export let onInstall: (request: InstallRequest) => void;
-  export let onSwitchVersion: (request: InstallRequest, switchFromVersionIds: string[]) => void;
+  export let onInstall: (request: InstallRequest, options?: InstallActionOptions) => void;
+  export let onSwitchVersion: (
+    request: InstallRequest,
+    switchFromVersionIds: string[],
+    options?: InstallActionOptions
+  ) => void;
   export let onUninstallPackage: (packageId: string, packageName: string) => void;
   export let onUninstallVersion: (
     packageId: string,

@@ -11,12 +11,18 @@ use crate::{
 pub struct WarningPrefsDto {
     pub red: bool,
     pub broken: bool,
+    pub install_without_dependencies: bool,
 }
 
 pub fn get_warning_prefs(connection: &Connection) -> Result<WarningPrefsDto, InternalError> {
     Ok(WarningPrefsDto {
         red: get_bool_setting(connection, "warning.red", true)?,
         broken: get_bool_setting(connection, "warning.broken", true)?,
+        install_without_dependencies: get_bool_setting(
+            connection,
+            "warning.install_without_dependencies",
+            true,
+        )?,
     })
 }
 
@@ -25,18 +31,23 @@ pub fn set_warning_preference(
     kind: &str,
     enabled: bool,
 ) -> Result<WarningPrefsDto, InternalError> {
-    if !matches!(kind, "red" | "broken") {
+    if !matches!(kind, "red" | "broken" | "installWithoutDependencies") {
         return Err(InternalError::app(
             "SETTINGS_SAVE_FAILED",
             format!("Unsupported warning preference: {kind}"),
         ));
     }
 
-    let key = format!("warning.{kind}");
+    let key = match kind {
+        "red" => "warning.red",
+        "broken" => "warning.broken",
+        "installWithoutDependencies" => "warning.install_without_dependencies",
+        _ => unreachable!("validated above"),
+    };
     let updated_at = now_rfc3339()?;
     let value_json = serde_json::to_string(&enabled)?;
 
-    upsert_setting(connection, &key, &value_json, &updated_at)?;
+    upsert_setting(connection, key, &value_json, &updated_at)?;
     get_warning_prefs(connection)
 }
 
