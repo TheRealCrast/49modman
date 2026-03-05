@@ -36,6 +36,9 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - other version-row actions become `Switch version` and replace currently installed version(s) of that package
   - switch-version flow preserves red/broken warning modal behavior before proceeding
   - Browse empty/loading status panels now include additional padding for readability
+  - while a package install/uninstall/switch operation is in progress:
+    - that package card action button is disabled, grey, and shows spinner-only
+    - if the same package is selected in detail, the detail panel is locked with `Waiting...`
 
 ## Next Milestone
 
@@ -209,10 +212,13 @@ Current working tree includes the install-state control follow-up and manifest r
 - install-start failures now surface more context:
   - clearer frontend error text
   - failed Downloads rows show backend error messages
+- Browse now tracks per-package busy state so install/uninstall actions lock only the relevant package card and selected package detail panel
 - install-related download icons now force white fill for consistency across status-colored install buttons:
   - Browse card quick-install button
   - detail `Install {version}` button
   - detail `Install version` buttons
+- busy card action now uses the shared inline loading spinner element:
+  - `<div class="loading-spinner" aria-hidden="true"></div>`
 - uninstall-related Browse actions now use a dedicated trash icon:
   - package-card `Uninstall`
   - detail-panel `Uninstall`

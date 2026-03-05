@@ -48,6 +48,8 @@ const defaultReferencePageSize = 50;
 const downloadPollIntervalMs = 500;
 let downloadPollHandle: number | null = null;
 let focusedVersionClearHandle: number | null = null;
+const busyPackageRefCounts = new Map<string, number>();
+const activeInstallTaskPackageIds = new Map<string, string>();
 
 const initialState: AppState = {
   view: "browse",
@@ -64,6 +66,7 @@ const initialState: AppState = {
   cacheSummary: undefined,
   profilesStorageSummary: undefined,
   activeCacheTaskIds: [],
+  busyPackageIds: [],
   activities: seedActivities,
   warningPrefs: {
     red: true,
@@ -186,6 +189,40 @@ function clearFocusedVersionTimer() {
     window.clearTimeout(focusedVersionClearHandle);
     focusedVersionClearHandle = null;
   }
+}
+
+function syncBusyPackageState() {
+  appState.update((state) => ({
+    ...state,
+    busyPackageIds: [...busyPackageRefCounts.keys()]
+  }));
+}
+
+function acquirePackageBusy(packageId: string) {
+  const current = busyPackageRefCounts.get(packageId) ?? 0;
+  busyPackageRefCounts.set(packageId, current + 1);
+  syncBusyPackageState();
+}
+
+function releasePackageBusy(packageId: string) {
+  const current = busyPackageRefCounts.get(packageId);
+  if (!current) {
+    return;
+  }
+
+  if (current <= 1) {
+    busyPackageRefCounts.delete(packageId);
+  } else {
+    busyPackageRefCounts.set(packageId, current - 1);
+  }
+
+  syncBusyPackageState();
+}
+
+function clearBusyPackages() {
+  busyPackageRefCounts.clear();
+  activeInstallTaskPackageIds.clear();
+  syncBusyPackageState();
 }
 
 function scheduleFocusedVersionClear(focusedVersion: FocusedVersionState) {
@@ -423,6 +460,12 @@ async function loadActiveDownloads() {
     const activeTaskIds = [
       ...new Set(downloads.filter((entry) => entry.status !== "failed").map((entry) => entry.taskId))
     ];
+    for (const [taskId, packageId] of activeInstallTaskPackageIds.entries()) {
+      if (!activeTaskIds.includes(taskId)) {
+        activeInstallTaskPackageIds.delete(taskId);
+        releasePackageBusy(packageId);
+      }
+    }
     const hadActiveTasks = previous.activeCacheTaskIds.length > 0;
 
     appState.update((current) => ({
@@ -888,18 +931,26 @@ async function uninstallInstalledVersionsForActiveProfile(options: {
   title: string;
   detail: string;
   tone: ActivityItem["tone"];
+  managePackageLock?: boolean;
 }) {
-  const { packageId, versionIds, title, detail, tone } = options;
+  const { packageId, versionIds, title, detail, tone, managePackageLock = true } = options;
   const uniqueVersionIds = [...new Set(versionIds)];
 
   if (uniqueVersionIds.length === 0) {
     return true;
   }
 
+  if (managePackageLock) {
+    acquirePackageBusy(packageId);
+  }
+
   const state = get(appState);
   const activeProfile = state.activeProfile;
 
   if (!activeProfile) {
+    if (managePackageLock) {
+      releasePackageBusy(packageId);
+    }
     return false;
   }
 
@@ -945,6 +996,10 @@ async function uninstallInstalledVersionsForActiveProfile(options: {
           : current.desktopError
     }));
     return false;
+  } finally {
+    if (managePackageLock) {
+      releasePackageBusy(packageId);
+    }
   }
 }
 
@@ -956,12 +1011,21 @@ function dependencyModalMatches(
   return modal?.packageId === packageId && modal.versionId === versionId;
 }
 
-async function queueVersionForCache(request: InstallRequest) {
+async function queueVersionForCache(
+  request: InstallRequest,
+  options: { lockAlreadyHeld?: boolean } = {}
+) {
+  const { lockAlreadyHeld = false } = options;
+  if (!lockAlreadyHeld) {
+    acquirePackageBusy(request.packageId);
+  }
+
   try {
     const result = await queueInstallToCache({
       packageId: request.packageId,
       versionId: request.versionId
     });
+    activeInstallTaskPackageIds.set(result.taskId, request.packageId);
 
     appState.update((current) =>
       appendActivity(
@@ -985,7 +1049,12 @@ async function queueVersionForCache(request: InstallRequest) {
 
     startDownloadPolling();
     await Promise.all([loadActiveDownloads(), loadCacheSummary()]);
+    return true;
   } catch (error) {
+    if (!lockAlreadyHeld) {
+      releasePackageBusy(request.packageId);
+    }
+
     const fallbackMessage = `Failed to start the install task for ${request.packageName} ${request.versionNumber}.`;
     const errorMessage = error instanceof Error ? `${fallbackMessage} ${error.message}` : fallbackMessage;
 
@@ -1006,12 +1075,14 @@ async function queueVersionForCache(request: InstallRequest) {
       downloadError: errorMessage,
       desktopError: current.runtimeKind === "tauri" ? errorMessage : current.desktopError
     }));
+    return false;
   }
 }
 
 export const actions = {
   async bootstrap() {
     const runtimeKind = getRuntimeKind();
+    clearBusyPackages();
 
     appState.update((state) => ({
       ...state,
@@ -1183,6 +1254,7 @@ export const actions = {
     requestInstallWithOptionalSwitch(request, switchFromVersionIds);
   },
   async switchInstalledPackageVersion(request: InstallRequest, switchFromVersionIds: string[]) {
+    acquirePackageBusy(request.packageId);
     const currentState = get(appState);
     const installedVersions = findInstalledModsForPackage(
       currentState.activeProfile?.installedMods,
@@ -1193,16 +1265,27 @@ export const actions = {
     const sourceLabel =
       installedVersions.length > 0 ? installedVersions.join(", ") : "installed version";
 
-    const switched = await uninstallInstalledVersionsForActiveProfile({
-      packageId: request.packageId,
-      versionIds: switchFromVersionIds,
-      title: "Switching version",
-      detail: `Removing ${request.packageName} ${sourceLabel} before installing ${request.versionNumber}.`,
-      tone: "neutral"
-    });
+    let handoffToInstallTask = false;
 
-    if (switched) {
-      await queueVersionForCache(request);
+    try {
+      const switched = await uninstallInstalledVersionsForActiveProfile({
+        packageId: request.packageId,
+        versionIds: switchFromVersionIds,
+        title: "Switching version",
+        detail: `Removing ${request.packageName} ${sourceLabel} before installing ${request.versionNumber}.`,
+        tone: "neutral",
+        managePackageLock: false
+      });
+
+      if (switched) {
+        const queued = await queueVersionForCache(request, { lockAlreadyHeld: true });
+        handoffToInstallTask = queued;
+        return;
+      }
+    } finally {
+      if (!handoffToInstallTask) {
+        releasePackageBusy(request.packageId);
+      }
     }
   },
   async uninstallPackageFromBrowse(packageId: string, packageName: string) {
@@ -1683,6 +1766,7 @@ export const actions = {
     try {
       const cacheSummary = await clearCache();
       stopDownloadPolling();
+      clearBusyPackages();
       appState.update((state) =>
         appendActivity(
           {
@@ -1740,6 +1824,7 @@ export const actions = {
 
       await resetAllDataApi();
       stopDownloadPolling();
+      clearBusyPackages();
 
       setResetProgress(
         "restoring",

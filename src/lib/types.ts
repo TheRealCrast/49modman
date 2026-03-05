@@ -349,6 +349,7 @@ export interface AppState {
   cacheSummary?: CacheSummaryDto;
   profilesStorageSummary?: ProfilesStorageSummaryDto;
   activeCacheTaskIds: string[];
+  busyPackageIds: string[];
   activities: ActivityItem[];
   warningPrefs: WarningPrefsDto;
   modal: WarningModalState | null;

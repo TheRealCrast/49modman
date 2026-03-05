@@ -368,6 +368,10 @@ img {
   filter: brightness(0) invert(1);
 }
 
+.icon-spinning {
+  animation: spin 0.9s linear infinite;
+}
+
 .screen-stack > .panel,
 .settings-grid > .panel,
 .browser-controls,
@@ -842,6 +846,26 @@ img {
 
 .package-card-install-button.uninstall span {
   display: inline;
+}
+
+.package-card-install-button.busy,
+.package-card-install-button.busy:hover {
+  background: #8f99ab;
+  border-color: #8f99ab;
+  color: #fff;
+}
+
+.package-card-install-button.busy {
+  cursor: wait;
+  min-width: 42px;
+}
+
+.package-card-install-button.busy .loading-spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
 }
 
 .warning-copy {

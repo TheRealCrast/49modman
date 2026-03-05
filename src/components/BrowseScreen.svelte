@@ -21,6 +21,7 @@
   export let selectedPackage: ModPackage | undefined;
   export let searchDraft = "";
   export let visibleStatuses: EffectiveStatus[] = [];
+  export let busyPackageIds: string[] = [];
   export let isRefreshingCatalog = false;
   export let isLoadingFirstPage = false;
   export let isLoadingNextPage = false;
@@ -56,6 +57,8 @@
   const filters: EffectiveStatus[] = ["verified", "green", "yellow", "orange", "red", "broken"];
   let listElement: HTMLElement | undefined;
   let autoloadQueued = false;
+  let selectedPackageBusy = false;
+  let detailLockMessage = "Searching cached mods...";
 
   function buildCardInstallRequest(card: (typeof cards)[number]): InstallRequest {
     return {
@@ -94,7 +97,15 @@
     return installedMods.some((entry) => entry.packageId === packageId);
   }
 
+  function isPackageBusy(packageId: string) {
+    return busyPackageIds.includes(packageId);
+  }
+
   function handleCardPrimaryAction(card: (typeof cards)[number]) {
+    if (isPackageBusy(card.id)) {
+      return;
+    }
+
     if (isPackageInstalled(card.id)) {
       onUninstallPackage(card.id, card.fullName);
       return;
@@ -102,6 +113,9 @@
 
     onInstall(buildCardInstallRequest(card));
   }
+
+  $: selectedPackageBusy = selectedPackage ? isPackageBusy(selectedPackage.id) : false;
+  $: detailLockMessage = selectedPackageBusy ? "Waiting..." : "Searching cached mods...";
 </script>
 
 <section class="browse-grid">
@@ -183,6 +197,7 @@
 
         {#each cards as card}
           {@const packageInstalled = isPackageInstalled(card.id)}
+          {@const packageBusy = isPackageBusy(card.id)}
           <article class="package-card panel">
             <button class="package-card-select" type="button" on:click={() => onSelectPackage(card.id)}>
               <div class="package-card-header">
@@ -211,22 +226,41 @@
               </div>
 
               <button
-                class={`solid-button icon-button package-install-button package-card-install-button ${packageInstalled ? "uninstall" : card.effectiveStatus}`}
+                class={`solid-button icon-button package-install-button package-card-install-button ${packageBusy ? "busy" : packageInstalled ? "uninstall" : card.effectiveStatus}`}
                 type="button"
+                disabled={packageBusy}
                 aria-label={
-                  packageInstalled
+                  packageBusy
+                    ? `Working on ${card.fullName}`
+                    : packageInstalled
                     ? `Uninstall ${card.fullName}`
                     : `Install ${card.fullName} ${card.recommendedVersion}`
                 }
-                title={packageInstalled ? "Uninstall" : `Install ${card.recommendedVersion}`}
+                title={
+                  packageBusy
+                    ? "Working..."
+                    : packageInstalled
+                    ? "Uninstall"
+                    : `Install ${card.recommendedVersion}`
+                }
                 on:click={() => handleCardPrimaryAction(card)}
               >
-                <Icon
-                  label={packageInstalled ? `Uninstall ${card.fullName}` : `Install ${card.recommendedVersion}`}
-                  name={packageInstalled ? "trash" : "download"}
-                  forceWhite={true}
-                />
-                <span>{packageInstalled ? "Uninstall" : "Install"}</span>
+                {#if packageBusy}
+                  <div class="loading-spinner" aria-hidden="true"></div>
+                {:else}
+                  <Icon
+                    label={
+                      packageInstalled
+                        ? `Uninstall ${card.fullName}`
+                        : `Install ${card.recommendedVersion}`
+                    }
+                    name={packageInstalled ? "trash" : "download"}
+                    forceWhite={true}
+                  />
+                {/if}
+                {#if !packageBusy}
+                  <span>{packageInstalled ? "Uninstall" : "Install"}</span>
+                {/if}
               </button>
             </div>
           </article>
@@ -262,7 +296,8 @@
   <PackageDetail
     focusedVersionId={focusedVersionId}
     focusedVersionToken={focusedVersionToken}
-    isLocked={isLoadingFirstPage}
+    isLocked={isLoadingFirstPage || selectedPackageBusy}
+    lockMessage={detailLockMessage}
     pkg={selectedPackage}
     visibleStatuses={visibleStatuses}
     onToggleStatus={onToggleStatus}

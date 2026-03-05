@@ -133,6 +133,7 @@
         onToggleStatus={toggleStatus}
         refreshLabel={$appState.lastCatalogRefreshLabel}
         searchDraft={$appState.browseSearchDraft}
+        busyPackageIds={$appState.busyPackageIds}
         selectedPackage={$appState.selectedPackageDetail}
         installedMods={$selectedProfile?.installedMods ?? []}
         visibleStatuses={$appState.visibleStatuses}

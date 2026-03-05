@@ -35,6 +35,7 @@
   export let focusedVersionId: string | undefined = undefined;
   export let focusedVersionToken = 0;
   export let isLocked = false;
+  export let lockMessage = "Searching cached mods...";
 
   const filters = ["verified", "green", "yellow", "orange", "red", "broken"] as const;
   const versionRowElements = new Map<string, HTMLElement>();
@@ -458,7 +459,7 @@
       <div class="detail-lock-overlay" aria-live="polite">
         <div class="detail-lock-card">
           <div class="loading-spinner" aria-hidden="true"></div>
-          <p>Searching cached mods...</p>
+          <p>{lockMessage}</p>
         </div>
       </div>
     {/if}
