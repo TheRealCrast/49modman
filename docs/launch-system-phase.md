@@ -44,6 +44,12 @@ This phase starts from current state (`cache + profile install + profile manifes
 - Activation stale cleanup is now non-blocking for retained non-empty managed directories; only remaining managed files block new activation.
 - Linux direct launch sets `WINEDLLOVERRIDES=winhttp=n,b` in-process for Doorstop/BepInEx injection reliability.
 - Linux Steam launch remains dependent on Steam compatibility environment; when Steam is already running, game-specific launch options may still be required.
+- Linux modded Steam launch now performs a preflight check against Steam app launch options and returns a user-friendly remediation message if required options are missing.
+- Steam launch-options parsing now supports escaped quotes in `localconfig.vdf`, preventing false negatives for valid values such as `WINEDLLOVERRIDES=\"winhttp=n,b\" %command%`.
+- Launch feedback UI was refined:
+  - feedback stack no longer expands to fill the primary content row
+  - feedback panel text now preserves multiline instructions and wraps safely
+  - warning/success heading spacing and icon mapping were corrected
 
 ## Required End State For This Phase
 

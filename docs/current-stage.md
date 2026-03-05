@@ -81,6 +81,10 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - `.lethalbundle` payloads from non-anchor roots are remapped into `BepInEx/plugins/...` so LethalLevelLoader can discover custom levels
   - stale activation cleanup now treats remaining managed files as blocking, while retained non-empty managed directories no longer block re-activation
   - Linux direct launch now sets `WINEDLLOVERRIDES=winhttp=n,b` for Doorstop/BepInEx injection
+  - Linux modded Steam launch now validates Steam per-game launch options before activation and fails with actionable guidance when `%command%` + `WINEDLLOVERRIDES=winhttp=n,b` are missing
+  - Steam `localconfig.vdf` parsing now handles escaped quotes in launch option values (for example `WINEDLLOVERRIDES=\"winhttp=n,b\" %command%`)
+  - launch feedback panel layout was fixed so warning/success panels no longer consume the full content area; panel padding and heading spacing were tightened for readability
+  - launch success icon mapping was corrected from an invalid key to a valid icon token
 
 ## Next Milestone
 

@@ -134,125 +134,129 @@
       </div>
     </header>
 
-    {#if $appState.desktopError}
-      <section class="panel desktop-error-panel">
-        <div class="compact-heading compact-heading-left">
-          <Icon label="Warning" name="warning" />
-          <h3>Desktop backend error</h3>
-        </div>
-        <p>{$appState.desktopError}</p>
-      </section>
-    {/if}
+    <div class="main-content">
+      <div class="feedback-stack">
+        {#if $appState.desktopError}
+          <section class="panel desktop-error-panel">
+            <div class="compact-heading compact-heading-left">
+              <Icon label="Warning" name="warning" />
+              <h3>Desktop backend error</h3>
+            </div>
+            <p>{$appState.desktopError}</p>
+          </section>
+        {/if}
 
-    {#if $appState.launchFeedback}
-      <section class="panel launch-feedback-panel" class:warning={$appState.launchFeedback.tone === "warning"} class:positive={$appState.launchFeedback.tone === "positive"}>
-        <div class="compact-heading compact-heading-left">
-          <Icon
-            label="Launch feedback"
-            name={$appState.launchFeedback.tone === "warning" ? "warning" : "check-confirm"}
-          />
-          <h3>{$appState.launchFeedback.title}</h3>
-        </div>
-        <p>{$appState.launchFeedback.detail}</p>
-        <div class="launch-feedback-actions">
-          {#if $appState.launchFeedback.diagnosticsPath}
-            <button
-              class="ghost-button icon-button"
-              type="button"
-              on:click={() => void actions.openLaunchDiagnostics($appState.launchFeedback?.diagnosticsPath)}
-            >
-              <Icon label="Open diagnostics" name="external-link" />
-              <span>Open diagnostics</span>
-            </button>
-          {/if}
+        {#if $appState.launchFeedback}
+          <section class="panel launch-feedback-panel" class:warning={$appState.launchFeedback.tone === "warning"} class:positive={$appState.launchFeedback.tone === "positive"}>
+            <div class="compact-heading compact-heading-left">
+              <Icon
+                label="Launch feedback"
+                name={$appState.launchFeedback.tone === "warning" ? "warning" : "check"}
+              />
+              <h3>{$appState.launchFeedback.title}</h3>
+            </div>
+            <p>{$appState.launchFeedback.detail}</p>
+            <div class="launch-feedback-actions">
+              {#if $appState.launchFeedback.diagnosticsPath}
+                <button
+                  class="ghost-button icon-button"
+                  type="button"
+                  on:click={() => void actions.openLaunchDiagnostics($appState.launchFeedback?.diagnosticsPath)}
+                >
+                  <Icon label="Open diagnostics" name="external-link" />
+                  <span>Open diagnostics</span>
+                </button>
+              {/if}
 
-          {#if $appState.launchFeedback.canRepair}
-            <button
-              class="ghost-button icon-button"
-              type="button"
-              disabled={$appState.isLaunching}
-              on:click={() => void actions.repairLaunchActivation()}
-            >
-              <Icon label="Repair activation" name="refresh" spinning={$appState.isLaunching} />
-              <span>{$appState.isLaunching ? "Repairing..." : "Repair activation"}</span>
-            </button>
-          {/if}
+              {#if $appState.launchFeedback.canRepair}
+                <button
+                  class="ghost-button icon-button"
+                  type="button"
+                  disabled={$appState.isLaunching}
+                  on:click={() => void actions.repairLaunchActivation()}
+                >
+                  <Icon label="Repair activation" name="refresh" spinning={$appState.isLaunching} />
+                  <span>{$appState.isLaunching ? "Repairing..." : "Repair activation"}</span>
+                </button>
+              {/if}
 
-          <button
-            class="ghost-button"
-            type="button"
-            on:click={() => actions.dismissLaunchFeedback()}
-          >
-            Dismiss
-          </button>
-        </div>
-      </section>
-    {/if}
+              <button
+                class="ghost-button"
+                type="button"
+                on:click={() => actions.dismissLaunchFeedback()}
+              >
+                Dismiss
+              </button>
+            </div>
+          </section>
+        {/if}
+      </div>
 
-    {#if $appState.view === "overview"}
-      <OverviewScreen
-        activeProfile={$selectedProfile}
-        lastCatalogRefreshLabel={$appState.lastCatalogRefreshLabel}
-        onJumpToInstalledModDetails={actions.jumpToInstalledModDetails}
-        onToggleInstalledMod={actions.toggleInstalledMod}
-        onUninstallInstalledMod={actions.uninstallInstalledMod}
-      />
-    {:else if $appState.view === "browse"}
-      <BrowseScreen
-        cards={$appState.catalogCards}
-        catalogError={$appState.catalogError}
-        {focusedVersionId}
-        {focusedVersionToken}
-        hasMore={$appState.catalogHasMore}
-        isLoadingFirstPage={$appState.isLoadingCatalogFirstPage}
-        isLoadingNextPage={$appState.isLoadingCatalogNextPage}
-        isRefreshingCatalog={$appState.isRefreshingCatalog}
-        onInstall={actions.requestInstall}
-        onSwitchVersion={actions.requestSwitchVersion}
-        onLoadMore={actions.loadMoreCatalog}
-        onRefresh={actions.refreshCatalog}
-        onSelectPackage={actions.selectPackage}
-        onUninstallPackage={actions.uninstallPackageFromBrowse}
-        onUninstallVersion={actions.uninstallVersionFromBrowse}
-        onSetReference={actions.setReferenceState}
-        onViewDependencies={actions.openDependencyModal}
-        onSearchDraftChange={actions.setBrowseSearchDraft}
-        onSubmitSearch={actions.submitBrowseSearch}
-        onToggleStatus={toggleStatus}
-        refreshLabel={$appState.lastCatalogRefreshLabel}
-        searchDraft={$appState.browseSearchDraft}
-        busyPackageIds={$appState.busyPackageIds}
-        selectedPackage={$appState.selectedPackageDetail}
-        installedMods={$selectedProfile?.installedMods ?? []}
-        visibleStatuses={$appState.visibleStatuses}
-      />
-    {:else if $appState.view === "profiles"}
-      <ProfilesScreen
-        onCreateProfile={actions.createProfile}
-        onDeleteSelectedProfile={actions.deleteSelectedProfile}
-        onSelectProfile={actions.selectProfile}
-        onUpdateProfile={actions.updateProfile}
-        profileError={$appState.profileError}
-        profiles={$appState.profiles}
-        selectedProfile={$selectedProfile}
-      />
-    {:else if $appState.view === "downloads"}
-      <DownloadsScreen downloads={$appState.downloads} />
-    {:else if $appState.view === "settings"}
-      <SettingsScreen
-        cacheSummary={$appState.cacheSummary}
-        isLoadingProfilesStorageSummary={$appState.isLoadingProfilesStorageSummary}
-        profilesStorageSummary={$appState.profilesStorageSummary}
-        onOpenActiveProfileFolder={actions.openActiveProfileFolder}
-        onClearCache={actions.clearCache}
-        onOpenCacheFolder={actions.openCacheFolder}
-        onOpenProfilesFolder={actions.openProfilesFolder}
-        onResetAllData={actions.resetAllData}
-        onWarningPrefChange={actions.setWarningPreference}
-        settingsError={$appState.settingsError}
-        warningPrefs={$appState.warningPrefs}
-      />
-    {/if}
+      {#if $appState.view === "overview"}
+        <OverviewScreen
+          activeProfile={$selectedProfile}
+          lastCatalogRefreshLabel={$appState.lastCatalogRefreshLabel}
+          onJumpToInstalledModDetails={actions.jumpToInstalledModDetails}
+          onToggleInstalledMod={actions.toggleInstalledMod}
+          onUninstallInstalledMod={actions.uninstallInstalledMod}
+        />
+      {:else if $appState.view === "browse"}
+        <BrowseScreen
+          cards={$appState.catalogCards}
+          catalogError={$appState.catalogError}
+          {focusedVersionId}
+          {focusedVersionToken}
+          hasMore={$appState.catalogHasMore}
+          isLoadingFirstPage={$appState.isLoadingCatalogFirstPage}
+          isLoadingNextPage={$appState.isLoadingCatalogNextPage}
+          isRefreshingCatalog={$appState.isRefreshingCatalog}
+          onInstall={actions.requestInstall}
+          onSwitchVersion={actions.requestSwitchVersion}
+          onLoadMore={actions.loadMoreCatalog}
+          onRefresh={actions.refreshCatalog}
+          onSelectPackage={actions.selectPackage}
+          onUninstallPackage={actions.uninstallPackageFromBrowse}
+          onUninstallVersion={actions.uninstallVersionFromBrowse}
+          onSetReference={actions.setReferenceState}
+          onViewDependencies={actions.openDependencyModal}
+          onSearchDraftChange={actions.setBrowseSearchDraft}
+          onSubmitSearch={actions.submitBrowseSearch}
+          onToggleStatus={toggleStatus}
+          refreshLabel={$appState.lastCatalogRefreshLabel}
+          searchDraft={$appState.browseSearchDraft}
+          busyPackageIds={$appState.busyPackageIds}
+          selectedPackage={$appState.selectedPackageDetail}
+          installedMods={$selectedProfile?.installedMods ?? []}
+          visibleStatuses={$appState.visibleStatuses}
+        />
+      {:else if $appState.view === "profiles"}
+        <ProfilesScreen
+          onCreateProfile={actions.createProfile}
+          onDeleteSelectedProfile={actions.deleteSelectedProfile}
+          onSelectProfile={actions.selectProfile}
+          onUpdateProfile={actions.updateProfile}
+          profileError={$appState.profileError}
+          profiles={$appState.profiles}
+          selectedProfile={$selectedProfile}
+        />
+      {:else if $appState.view === "downloads"}
+        <DownloadsScreen downloads={$appState.downloads} />
+      {:else if $appState.view === "settings"}
+        <SettingsScreen
+          cacheSummary={$appState.cacheSummary}
+          isLoadingProfilesStorageSummary={$appState.isLoadingProfilesStorageSummary}
+          profilesStorageSummary={$appState.profilesStorageSummary}
+          onOpenActiveProfileFolder={actions.openActiveProfileFolder}
+          onClearCache={actions.clearCache}
+          onOpenCacheFolder={actions.openCacheFolder}
+          onOpenProfilesFolder={actions.openProfilesFolder}
+          onResetAllData={actions.resetAllData}
+          onWarningPrefChange={actions.setWarningPreference}
+          settingsError={$appState.settingsError}
+          warningPrefs={$appState.warningPrefs}
+        />
+      {/if}
+    </div>
   </main>
 </div>
 

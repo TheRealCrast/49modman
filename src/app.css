@@ -158,6 +158,25 @@ img {
   overflow: hidden;
 }
 
+.main-content {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.feedback-stack {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.feedback-stack:empty {
+  display: none;
+}
+
 .topbar {
   padding: 10px 16px;
   display: flex;
@@ -168,6 +187,7 @@ img {
 
 .desktop-error-panel {
   padding: 12px 16px;
+  align-self: start;
 }
 
 .desktop-error-panel p {
@@ -392,6 +412,8 @@ img {
 
 .launch-feedback-panel {
   border-color: var(--panel-border);
+  padding: 12px 16px;
+  align-self: start;
 }
 
 .launch-feedback-panel.warning {
@@ -405,6 +427,19 @@ img {
 .launch-feedback-panel p {
   margin-top: 10px;
   margin-bottom: 0;
+  color: var(--text-soft);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.launch-feedback-panel .compact-heading {
+  margin-bottom: 10px;
+  margin-top: 6px;
+}
+
+.launch-feedback-panel .compact-heading h3 {
+  margin: 0;
+  line-height: 1.25;
 }
 
 .launch-feedback-actions {

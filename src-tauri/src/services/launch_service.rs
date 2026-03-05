@@ -196,6 +196,11 @@ struct ResolvedGamePath {
     source: &'static str,
 }
 
+#[derive(Debug, Clone)]
+struct SteamLaunchOptionsRecord {
+    value: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ActivationManifestV1 {
@@ -710,6 +715,37 @@ pub fn launch_profile(
             },
         )?;
         return Ok(result);
+    }
+
+    if cfg!(target_os = "linux") && launch_mode == "steam" {
+        if let Err(error) = validate_linux_steam_modded_launch_options() {
+            let app_error = error.to_app_error();
+            let result = LaunchResult {
+                ok: false,
+                code: app_error.code.to_string(),
+                message: app_error.message,
+                pid: None,
+                used_game_path: preflight.resolved_game_path.clone(),
+                used_profile_id: Some(profile_id.clone()),
+                used_launch_mode: Some(launch_mode.clone()),
+                diagnostics_path: Some(path_to_string(&diagnostics_dir)),
+            };
+            write_launch_diagnostics(
+                &diagnostics_dir,
+                &LaunchDiagnosticsRecord {
+                    timestamp: now_rfc3339()?,
+                    variant: "modded".to_string(),
+                    launch_mode,
+                    profile_id: Some(profile_id),
+                    game_path: preflight.resolved_game_path,
+                    ok: result.ok,
+                    code: result.code.clone(),
+                    message: result.message.clone(),
+                    pid: None,
+                },
+            )?;
+            return Ok(result);
+        }
     }
 
     let activation_result = match activate_profile(
@@ -2114,6 +2150,176 @@ fn launch_steam(diagnostics_dir: &Path) -> Result<u32, InternalError> {
     ))
 }
 
+fn validate_linux_steam_modded_launch_options() -> Result<(), InternalError> {
+    let records = discover_steam_launch_options_records(STEAM_APP_ID)?;
+    let expected = r#"WINEDLLOVERRIDES="winhttp=n,b" %command%"#;
+
+    if records.is_empty() {
+        return Err(InternalError::app(
+            "STEAM_LAUNCH_OPTIONS_INVALID",
+            format_steam_launch_options_user_message(expected, None),
+        ));
+    }
+
+    for record in &records {
+        let normalized = record.value.trim().to_ascii_lowercase();
+        let has_command_placeholder = normalized.contains("%command%");
+        let has_winhttp_override = normalized.contains("winhttp=n,b");
+        if has_command_placeholder && has_winhttp_override {
+            return Ok(());
+        }
+    }
+
+    let current_values = records
+        .iter()
+        .map(|record| {
+            let value = record.value.trim();
+            if value.is_empty() {
+                "<empty>".to_string()
+            } else {
+                value.to_string()
+            }
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .take(3)
+        .collect::<Vec<_>>();
+
+    Err(InternalError::app(
+        "STEAM_LAUNCH_OPTIONS_INVALID",
+        format_steam_launch_options_user_message(expected, Some(current_values)),
+    ))
+}
+
+fn format_steam_launch_options_user_message(
+    expected: &str,
+    current_values: Option<Vec<String>>,
+) -> String {
+    let mut message = String::from(
+        "Steam launch options are preventing modded Steam launch.\n\
+Open Steam -> Lethal Company -> Properties -> Launch Options, then set:\n\
+",
+    );
+    message.push_str(expected);
+
+    if let Some(values) = current_values {
+        if !values.is_empty() {
+            message.push_str("\n\nCurrent Launch Options value(s):");
+            for value in values {
+                message.push_str("\n- ");
+                message.push_str(&value);
+            }
+        }
+    }
+
+    message.push_str("\n\nAfter saving, launch modded again.");
+    message
+}
+
+fn discover_steam_launch_options_records(
+    app_id: &str,
+) -> Result<Vec<SteamLaunchOptionsRecord>, InternalError> {
+    let mut records = Vec::<SteamLaunchOptionsRecord>::new();
+    for config_path in collect_steam_localconfig_paths() {
+        let content = fs::read_to_string(&config_path)?;
+        if let Some(value) = parse_steam_launch_options_from_vdf_content(&content, app_id) {
+            records.push(SteamLaunchOptionsRecord { value });
+        }
+    }
+    Ok(records)
+}
+
+fn collect_steam_localconfig_paths() -> Vec<PathBuf> {
+    let mut paths = BTreeSet::<PathBuf>::new();
+
+    for steam_root in collect_steam_root_candidates() {
+        let userdata_dir = steam_root.join("userdata");
+        if !userdata_dir.is_dir() {
+            continue;
+        }
+
+        let Ok(user_entries) = fs::read_dir(&userdata_dir) else {
+            continue;
+        };
+
+        for user_entry in user_entries.flatten() {
+            let user_path = user_entry.path();
+            if !user_path.is_dir() {
+                continue;
+            }
+
+            let Some(user_dir_name) = user_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !user_dir_name.chars().all(|ch| ch.is_ascii_digit()) {
+                continue;
+            }
+
+            let config_path = user_path.join("config").join("localconfig.vdf");
+            if config_path.is_file() {
+                paths.insert(config_path);
+            }
+        }
+    }
+
+    paths.into_iter().collect()
+}
+
+fn parse_steam_launch_options_from_vdf_content(content: &str, app_id: &str) -> Option<String> {
+    let mut object_stack = Vec::<String>::new();
+    let mut pending_key: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+
+        let tokens = extract_quoted_tokens(trimmed);
+        if tokens.len() >= 2 {
+            if stack_ends_with_case_insensitive(&object_stack, &["apps", app_id])
+                && tokens[0].eq_ignore_ascii_case("LaunchOptions")
+            {
+                return Some(tokens[1].clone());
+            }
+            pending_key = None;
+        } else if tokens.len() == 1 {
+            pending_key = Some(tokens[0].clone());
+        }
+
+        let open_count = trimmed.chars().filter(|ch| *ch == '{').count();
+        for _ in 0..open_count {
+            if let Some(key) = pending_key.take() {
+                object_stack.push(key);
+            } else {
+                object_stack.push(String::new());
+            }
+        }
+
+        let close_count = trimmed.chars().filter(|ch| *ch == '}').count();
+        for _ in 0..close_count {
+            let _ = object_stack.pop();
+        }
+        if close_count > 0 {
+            pending_key = None;
+        }
+    }
+
+    None
+}
+
+fn stack_ends_with_case_insensitive(stack: &[String], expected_suffix: &[&str]) -> bool {
+    if stack.len() < expected_suffix.len() {
+        return false;
+    }
+
+    let start = stack.len() - expected_suffix.len();
+    stack[start..]
+        .iter()
+        .zip(expected_suffix.iter())
+        .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
+}
+
 fn profile_root_dir(state: &AppState, profile_id: &str) -> PathBuf {
     state.profiles_dir.join(profile_id)
 }
@@ -2630,22 +2836,36 @@ fn extract_quoted_tokens(line: &str) -> Vec<String> {
     let mut tokens = Vec::<String>::new();
     let mut current = String::new();
     let mut in_quotes = false;
+    let mut escaped = false;
 
     for ch in line.chars() {
-        if ch == '"' {
-            if in_quotes {
+        if in_quotes {
+            if escaped {
+                current.push(ch);
+                escaped = false;
+                continue;
+            }
+
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+
+            if ch == '"' {
                 tokens.push(current.clone());
                 current.clear();
                 in_quotes = false;
-            } else {
-                in_quotes = true;
+                continue;
             }
-            continue;
-        }
 
-        if in_quotes {
             current.push(ch);
+        } else if ch == '"' {
+            in_quotes = true;
         }
+    }
+
+    if in_quotes && escaped {
+        current.push('\\');
     }
 
     tokens
@@ -2677,7 +2897,8 @@ mod tests {
 
     use super::{
         collect_relative_files, extract_quoted_tokens, normalize_sha256,
-        normalize_stage_relative_path, parse_dependency_entries, should_skip_stage_path,
+        normalize_stage_relative_path, parse_dependency_entries,
+        parse_steam_launch_options_from_vdf_content, should_skip_stage_path,
     };
 
     #[test]
@@ -2704,7 +2925,21 @@ mod tests {
     #[test]
     fn extract_quoted_tokens_reads_vdf_lines() {
         let tokens = extract_quoted_tokens("\t\"path\"\t\"D:\\\\SteamLibrary\"");
-        assert_eq!(tokens, vec!["path", "D:\\\\SteamLibrary"]);
+        assert_eq!(tokens, vec!["path", "D:\\SteamLibrary"]);
+    }
+
+    #[test]
+    fn extract_quoted_tokens_handles_escaped_quotes() {
+        let tokens = extract_quoted_tokens(
+            "\"LaunchOptions\"\t\"WINEDLLOVERRIDES=\\\"winhttp=n,b\\\" %command%\"",
+        );
+        assert_eq!(
+            tokens,
+            vec![
+                "LaunchOptions".to_string(),
+                "WINEDLLOVERRIDES=\"winhttp=n,b\" %command%".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -2778,6 +3013,41 @@ mod tests {
                 .to_string_lossy()
                 .replace('\\', "/"),
             "BepInEx/plugins/Maritopia/maritopia.lethalbundle"
+        );
+    }
+
+    #[test]
+    fn parse_steam_launch_options_from_vdf_content_reads_app_launch_options() {
+        let content = r#"
+"UserLocalConfigStore"
+{
+    "Software"
+    {
+        "Valve"
+        {
+            "Steam"
+            {
+                "apps"
+                {
+                    "1966720"
+                    {
+                        "LaunchOptions"		"./Lethal Company.exe"
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+
+        assert_eq!(
+            parse_steam_launch_options_from_vdf_content(content, "1966720")
+                .as_deref()
+                .unwrap_or_default(),
+            "./Lethal Company.exe"
+        );
+        assert!(
+            parse_steam_launch_options_from_vdf_content(content, "9999999").is_none()
         );
     }
 

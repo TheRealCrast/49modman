@@ -1591,7 +1591,10 @@ function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla"
   return {
     tone: "warning" as const,
     title: `${launchVariantLabel(variant)} launch failed`,
-    detail: `${result.code}: ${result.message}`,
+    detail:
+      result.code === "STEAM_LAUNCH_OPTIONS_INVALID"
+        ? result.message
+        : `${result.code}: ${result.message}`,
     diagnosticsPath: result.diagnosticsPath,
     canRepair: shouldOfferRepairForCode(result.code)
   };
