@@ -46,10 +46,13 @@ This phase starts from current state (`cache + profile install + profile manifes
 - Linux Steam launch remains dependent on Steam compatibility environment; when Steam is already running, game-specific launch options may still be required.
 - Linux modded Steam launch now performs a preflight check against Steam app launch options and returns a user-friendly remediation message if required options are missing.
 - Steam launch-options parsing now supports escaped quotes in `localconfig.vdf`, preventing false negatives for valid values such as `WINEDLLOVERRIDES=\"winhttp=n,b\" %command%`.
+- Steam launch-option validation now treats any launch-options value containing both `%command%` and `winhttp=n,b` as valid, so existing extra flags/args do not cause false failures.
 - Launch feedback UI was refined:
   - feedback stack no longer expands to fill the primary content row
   - feedback panel text now preserves multiline instructions and wraps safely
   - warning/success heading spacing and icon mapping were corrected
+- Topbar launch labels now append mode suffix only for direct mode (`(Direct)`), not Steam mode.
+- Proton runtime selection is now grouped under Settings -> `Launch (Linux)`.
 
 ## Required End State For This Phase
 

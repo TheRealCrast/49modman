@@ -9,6 +9,7 @@ import {
   resolveEffectiveStatus
 } from "../status";
 import type {
+  CachePrunePreviewDto,
   CacheSummaryDto,
   CatalogSummaryDto,
   ActivateProfileInput,
@@ -1066,6 +1067,58 @@ export async function clearCacheMock(): Promise<CacheSummaryDto> {
     return task?.status === "failed";
   });
   db.tasks = db.tasks.filter((task) => task.status === "failed");
+  saveDb(db);
+  return getCacheSummaryMock();
+}
+
+export async function previewClearCacheUnreferencedMock(): Promise<CachePrunePreviewDto> {
+  const db = normalizeDb(loadDb());
+  if (db.tasks.some((task) => task.status === "queued" || task.status === "running")) {
+    throw new Error("Cannot clear the cache while downloads are active.");
+  }
+
+  const installedVersionIds = new Set<string>();
+  const removable = db.cachedVersions
+    .filter((entry) => !installedVersionIds.has(entry.versionId))
+    .map((entry) => ({
+      packageId: entry.packageId,
+      packageName: entry.packageName,
+      versionId: entry.versionId,
+      versionNumber: entry.versionLabel,
+      archiveName: `${entry.versionId}.zip`,
+      fileSize: entry.fileSize
+    }));
+
+  const removableBytes = removable.reduce((sum, entry) => sum + entry.fileSize, 0);
+
+  return {
+    removableCount: removable.length,
+    removableBytes,
+    candidates: removable
+  };
+}
+
+export async function clearCacheUnreferencedMock(): Promise<CacheSummaryDto> {
+  const db = normalizeDb(loadDb());
+  if (db.tasks.some((task) => task.status === "queued" || task.status === "running")) {
+    throw new Error("Cannot clear the cache while downloads are active.");
+  }
+
+  const installedVersionIds = new Set<string>();
+  db.cachedVersions = db.cachedVersions.filter((entry) => installedVersionIds.has(entry.versionId));
+  db.downloads = db.downloads.filter((entry) => {
+    const task = db.tasks.find((taskEntry) => taskEntry.id === entry.taskId);
+    if (!task || task.kind !== "cache_version") {
+      return true;
+    }
+    return installedVersionIds.has(task.detail);
+  });
+  db.tasks = db.tasks.filter((task) => {
+    if (task.kind !== "cache_version") {
+      return true;
+    }
+    return installedVersionIds.has(task.detail);
+  });
   saveDb(db);
   return getCacheSummaryMock();
 }

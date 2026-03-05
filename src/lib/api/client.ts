@@ -1,4 +1,5 @@
 import {
+  clearCacheUnreferencedMock,
   clearCacheMock,
   createProfileMock,
   deleteProfileMock,
@@ -29,6 +30,7 @@ import {
   openCacheFolderMock,
   openActiveProfileFolderMock,
   openProfilesFolderMock,
+  previewClearCacheUnreferencedMock,
   setInstalledModEnabledMock,
   queueInstallToCacheMock,
   resetAllDataMock,
@@ -71,6 +73,8 @@ type CommandMap = {
   get_cache_summary: typeof getCacheSummaryMock;
   open_cache_folder: typeof openCacheFolderMock;
   clear_cache: typeof clearCacheMock;
+  preview_clear_cache_unreferenced: typeof previewClearCacheUnreferencedMock;
+  clear_cache_unreferenced: typeof clearCacheUnreferencedMock;
   list_active_downloads: typeof listActiveDownloadsMock;
   get_task: typeof getTaskMock;
   open_external_url: (url: string) => Promise<void>;
@@ -115,6 +119,8 @@ const mockCommands: CommandMap = {
   get_cache_summary: getCacheSummaryMock,
   open_cache_folder: openCacheFolderMock,
   clear_cache: clearCacheMock,
+  preview_clear_cache_unreferenced: previewClearCacheUnreferencedMock,
+  clear_cache_unreferenced: clearCacheUnreferencedMock,
   list_active_downloads: listActiveDownloadsMock,
   get_task: getTaskMock,
   scan_steam_installations: scanSteamInstallationsMock,

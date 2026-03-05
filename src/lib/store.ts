@@ -1,5 +1,12 @@
 import { derived, get, writable } from "svelte/store";
-import { clearCache, getCacheSummary, openCacheFolder, queueInstallToCache } from "./api/cache";
+import {
+  clearCache,
+  clearCacheUnreferenced,
+  getCacheSummary,
+  openCacheFolder,
+  previewClearCacheUnreferenced,
+  queueInstallToCache
+} from "./api/cache";
 import { getCatalogSummary, getPackageDetail, searchPackages, syncCatalog } from "./api/catalog";
 import { getVersionDependencies, warmDependencyIndex } from "./api/dependencies";
 import { listActiveDownloads } from "./api/downloads";
@@ -80,6 +87,7 @@ const initialState: AppState = {
   activeProfile: undefined,
   downloads: [],
   cacheSummary: undefined,
+  clearUnreferencedCacheModal: null,
   profilesStorageSummary: undefined,
   activeCacheTaskIds: [],
   busyPackageIds: [],
@@ -2095,6 +2103,109 @@ export const actions = {
     }));
     resolvePendingUninstallDependantsConfirmation(false);
   },
+  async requestClearUnreferencedCache() {
+    try {
+      const preview = await previewClearCacheUnreferenced();
+
+      if (preview.removableCount === 0) {
+        appState.update((state) =>
+          appendActivity(
+            {
+              ...state,
+              clearUnreferencedCacheModal: null,
+              settingsError: null,
+              cacheError: null,
+              desktopError: null
+            },
+            withActivity(
+              "Cache unchanged",
+              "No unreferenced cached mod versions were found to remove.",
+              "neutral"
+            )
+          )
+        );
+        return;
+      }
+
+      appState.update((state) => ({
+        ...state,
+        clearUnreferencedCacheModal: preview,
+        settingsError: null,
+        cacheError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        settingsError:
+          error instanceof Error
+            ? error.message
+            : "Failed to prepare unreferenced cache cleanup.",
+        cacheError:
+          error instanceof Error
+            ? error.message
+            : "Failed to prepare unreferenced cache cleanup.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to prepare unreferenced cache cleanup in the desktop backend."
+            : state.desktopError
+      }));
+    }
+  },
+  dismissClearUnreferencedCacheModal() {
+    appState.update((state) => ({
+      ...state,
+      clearUnreferencedCacheModal: null
+    }));
+  },
+  async confirmClearUnreferencedCacheModal() {
+    const preview = get(appState).clearUnreferencedCacheModal;
+    if (!preview) {
+      return;
+    }
+
+    try {
+      const cacheSummary = await clearCacheUnreferenced();
+      stopDownloadPolling();
+      clearBusyPackages();
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            clearUnreferencedCacheModal: null,
+            cacheSummary,
+            downloads: [],
+            activeCacheTaskIds: [],
+            downloadError: null,
+            cacheError: null,
+            settingsError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Cache cleaned",
+            `Removed ${preview.removableCount} cached mod ${preview.removableCount === 1 ? "archive" : "archives"} not installed in any profile.`,
+            "warning"
+          )
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        settingsError:
+          error instanceof Error ? error.message : "Failed to clear unreferenced cache entries.",
+        cacheError:
+          error instanceof Error ? error.message : "Failed to clear unreferenced cache entries.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to clear unreferenced cache entries in the desktop backend."
+            : state.desktopError
+      }));
+    }
+  },
   openDependencyModal(request: {
     packageId: string;
     packageName: string;
@@ -2581,6 +2692,7 @@ export const actions = {
         selectedProfileId: "default",
         modal: null,
         uninstallDependantsModal: null,
+        clearUnreferencedCacheModal: null,
         dependencyModal: null,
         focusedVersion: null,
         catalogCards: [],

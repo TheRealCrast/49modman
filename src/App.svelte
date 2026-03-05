@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import BrowseScreen from "./components/BrowseScreen.svelte";
+  import ClearUnreferencedCacheModal from "./components/ClearUnreferencedCacheModal.svelte";
   import DependencyModal from "./components/DependencyModal.svelte";
   import DownloadsScreen from "./components/DownloadsScreen.svelte";
   import Icon from "./components/Icon.svelte";
@@ -21,7 +22,7 @@
       : undefined;
   $: focusedVersionToken = $appState.focusedVersion?.highlightToken ?? 0;
   $: activeLaunchMode = $selectedProfile?.launchModeDefault ?? "steam";
-  $: launchModeLabel = activeLaunchMode === "direct" ? "Direct" : "Steam";
+  $: launchModeSuffix = activeLaunchMode === "direct" ? " (Direct)" : "";
   $: launchingModded = $appState.isLaunching && $appState.launchingVariant === "modded";
   $: launchingVanilla = $appState.isLaunching && $appState.launchingVariant === "vanilla";
 
@@ -97,7 +98,7 @@
               forceWhite={true}
               spinning={launchingModded}
             />
-            <span>{launchingModded ? "Launching..." : `Launch modded (${launchModeLabel})`}</span>
+            <span>{launchingModded ? "Launching..." : `Launch modded${launchModeSuffix}`}</span>
           </button>
           <button
             class="ghost-button icon-button"
@@ -110,27 +111,9 @@
               name={launchingVanilla ? "refresh" : "circle"}
               spinning={launchingVanilla}
             />
-            <span>{launchingVanilla ? "Launching..." : `Launch vanilla (${launchModeLabel})`}</span>
+            <span>{launchingVanilla ? "Launching..." : `Launch vanilla${launchModeSuffix}`}</span>
           </button>
         </div>
-
-        {#if $appState.protonRuntimes.length > 0}
-          <label class="profile-select proton-select">
-            <span>Proton runtime</span>
-            <select
-              disabled={$appState.isLaunching || $appState.isLoadingProtonRuntimes}
-              value={$appState.selectedProtonRuntimeId ?? ""}
-              on:change={(event) => void actions.selectProtonRuntime((event.currentTarget as HTMLSelectElement).value)}
-            >
-              <option value="" disabled={true}>Select runtime</option>
-              {#each $appState.protonRuntimes as runtime}
-                <option value={runtime.id} disabled={!runtime.isValid}>
-                  {runtime.displayName}{runtime.isValid ? "" : " (invalid)"}
-                </option>
-              {/each}
-            </select>
-          </label>
-        {/if}
       </div>
     </header>
 
@@ -245,12 +228,17 @@
         <SettingsScreen
           cacheSummary={$appState.cacheSummary}
           isLoadingProfilesStorageSummary={$appState.isLoadingProfilesStorageSummary}
+          protonRuntimes={$appState.protonRuntimes}
+          selectedProtonRuntimeId={$appState.selectedProtonRuntimeId}
+          isLoadingProtonRuntimes={$appState.isLoadingProtonRuntimes}
           profilesStorageSummary={$appState.profilesStorageSummary}
           onOpenActiveProfileFolder={actions.openActiveProfileFolder}
           onClearCache={actions.clearCache}
+          onClearUnreferencedCache={actions.requestClearUnreferencedCache}
           onOpenCacheFolder={actions.openCacheFolder}
           onOpenProfilesFolder={actions.openProfilesFolder}
           onResetAllData={actions.resetAllData}
+          onSelectProtonRuntime={actions.selectProtonRuntime}
           onWarningPrefChange={actions.setWarningPreference}
           settingsError={$appState.settingsError}
           warningPrefs={$appState.warningPrefs}
@@ -320,6 +308,14 @@
     dependants={$appState.uninstallDependantsModal.dependants}
     onCancel={actions.dismissUninstallDependantsModal}
     onConfirm={actions.confirmUninstallDependantsModal}
+  />
+{/if}
+
+{#if $appState.clearUnreferencedCacheModal}
+  <ClearUnreferencedCacheModal
+    preview={$appState.clearUnreferencedCacheModal}
+    onCancel={actions.dismissClearUnreferencedCacheModal}
+    onConfirm={actions.confirmClearUnreferencedCacheModal}
   />
 {/if}
 

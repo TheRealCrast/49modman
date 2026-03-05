@@ -1,5 +1,10 @@
 import { invokeCommand } from "./client";
-import type { CacheSummaryDto, QueueInstallToCacheInput, QueueInstallToCacheResult } from "../types";
+import type {
+  CachePrunePreviewDto,
+  CacheSummaryDto,
+  QueueInstallToCacheInput,
+  QueueInstallToCacheResult
+} from "../types";
 
 export function queueInstallToCache(
   input: QueueInstallToCacheInput
@@ -17,4 +22,12 @@ export function openCacheFolder(): Promise<void> {
 
 export function clearCache(): Promise<CacheSummaryDto> {
   return invokeCommand("clear_cache");
+}
+
+export function previewClearCacheUnreferenced(): Promise<CachePrunePreviewDto> {
+  return invokeCommand("preview_clear_cache_unreferenced");
+}
+
+export function clearCacheUnreferenced(): Promise<CacheSummaryDto> {
+  return invokeCommand("clear_cache_unreferenced");
 }

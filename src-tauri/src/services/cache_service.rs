@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -7,7 +8,12 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
-use crate::{app_state::AppState, db::now_rfc3339, error::InternalError};
+use crate::{
+    app_state::AppState,
+    db::now_rfc3339,
+    error::InternalError,
+    services::profile_service::read_profile_manifest_mods,
+};
 
 #[derive(Debug, Clone)]
 pub struct CachedArchive {
@@ -22,6 +28,33 @@ pub struct CacheSummaryDto {
     pub total_bytes: i64,
     pub cache_path: String,
     pub has_active_downloads: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachePruneCandidateDto {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+    pub archive_name: String,
+    pub file_size: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachePrunePreviewDto {
+    pub removable_count: usize,
+    pub removable_bytes: i64,
+    pub candidates: Vec<CachePruneCandidateDto>,
+}
+
+#[derive(Debug, Clone)]
+struct RemovableArchiveRow {
+    cache_key: String,
+    relative_path: String,
+    version_id: Option<String>,
+    candidate: CachePruneCandidateDto,
 }
 
 pub fn get_cached_archive(
@@ -152,16 +185,7 @@ pub fn get_cache_summary(
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
     )?;
 
-    let has_active_downloads = connection.query_row(
-        "SELECT EXISTS(
-            SELECT 1
-            FROM install_tasks
-            WHERE kind = 'cache_version'
-              AND status IN ('queued', 'running')
-        )",
-        [],
-        |row| row.get::<_, i64>(0),
-    )? != 0;
+    let has_active_downloads = has_active_cache_downloads(connection)?;
 
     Ok(CacheSummaryDto {
         archive_count: archive_count.max(0) as usize,
@@ -196,16 +220,7 @@ pub fn clear_cache(
     state: &AppState,
     connection: &Connection,
 ) -> Result<CacheSummaryDto, InternalError> {
-    let has_active_downloads = connection.query_row(
-        "SELECT EXISTS(
-            SELECT 1
-            FROM install_tasks
-            WHERE kind = 'cache_version'
-              AND status IN ('queued', 'running')
-        )",
-        [],
-        |row| row.get::<_, i64>(0),
-    )? != 0;
+    let has_active_downloads = has_active_cache_downloads(connection)?;
 
     if has_active_downloads {
         return Err(InternalError::app(
@@ -230,10 +245,190 @@ pub fn clear_cache(
     get_cache_summary(state, connection)
 }
 
+pub fn preview_clear_cache_unreferenced(
+    state: &AppState,
+    connection: &Connection,
+) -> Result<CachePrunePreviewDto, InternalError> {
+    if has_active_cache_downloads(connection)? {
+        return Err(InternalError::app(
+            "CACHE_CLEAR_BLOCKED",
+            "Cannot clear the cache while downloads are active.",
+        ));
+    }
+
+    let removable = list_removable_archives(state, connection)?;
+    let removable_bytes = removable
+        .iter()
+        .fold(0_i64, |sum, row| sum.saturating_add(row.candidate.file_size));
+
+    Ok(CachePrunePreviewDto {
+        removable_count: removable.len(),
+        removable_bytes,
+        candidates: removable.into_iter().map(|row| row.candidate).collect(),
+    })
+}
+
+pub fn clear_cache_unreferenced(
+    state: &AppState,
+    connection: &Connection,
+) -> Result<CacheSummaryDto, InternalError> {
+    if has_active_cache_downloads(connection)? {
+        return Err(InternalError::app(
+            "CACHE_CLEAR_BLOCKED",
+            "Cannot clear the cache while downloads are active.",
+        ));
+    }
+
+    let removable = list_removable_archives(state, connection)?;
+    let mut removed_version_ids = HashSet::new();
+
+    for row in removable {
+        let archive_path = cached_archive_path(state, &row.relative_path);
+        if archive_path.is_file() {
+            fs::remove_file(&archive_path)?;
+        } else if archive_path.is_dir() {
+            fs::remove_dir_all(&archive_path)?;
+        }
+
+        connection.execute(
+            "DELETE FROM cached_archives WHERE cache_key = ?1",
+            params![row.cache_key],
+        )?;
+
+        if let Some(version_id) = row.version_id {
+            removed_version_ids.insert(version_id);
+        }
+    }
+
+    for version_id in removed_version_ids {
+        connection.execute(
+            "DELETE FROM download_jobs
+             WHERE task_id IN (
+               SELECT id
+               FROM install_tasks
+               WHERE kind = 'cache_version'
+                 AND detail = ?1
+             )",
+            params![version_id],
+        )?;
+        connection.execute(
+            "DELETE FROM install_tasks
+             WHERE kind = 'cache_version'
+               AND detail = ?1",
+            params![version_id],
+        )?;
+    }
+
+    get_cache_summary(state, connection)
+}
+
 pub fn clear_cache_files(state: &AppState) -> Result<(), InternalError> {
     clear_directory_contents(&state.cache_archives_dir)?;
     clear_directory_contents(&state.cache_tmp_dir)?;
     Ok(())
+}
+
+fn has_active_cache_downloads(connection: &Connection) -> Result<bool, InternalError> {
+    let has_active_downloads = connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM install_tasks
+            WHERE kind = 'cache_version'
+              AND status IN ('queued', 'running')
+        )",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+
+    Ok(has_active_downloads)
+}
+
+fn collect_installed_version_ids(
+    state: &AppState,
+    connection: &Connection,
+) -> Result<HashSet<String>, InternalError> {
+    let mut statement = connection.prepare("SELECT id FROM profiles")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+
+    let mut installed_version_ids = HashSet::new();
+    for row in rows {
+        let profile_id = row?;
+        let installed_mods = read_profile_manifest_mods(state, &profile_id)?;
+        for installed_mod in installed_mods {
+            installed_version_ids.insert(installed_mod.version_id);
+        }
+    }
+
+    Ok(installed_version_ids)
+}
+
+fn list_removable_archives(
+    state: &AppState,
+    connection: &Connection,
+) -> Result<Vec<RemovableArchiveRow>, InternalError> {
+    let installed_version_ids = collect_installed_version_ids(state, connection)?;
+    let mut statement = connection.prepare(
+        "SELECT
+            ca.cache_key,
+            ca.relative_path,
+            ca.package_id,
+            ca.version_id,
+            ca.archive_name,
+            ca.file_size,
+            p.full_name,
+            pv.version_number
+         FROM cached_archives ca
+         LEFT JOIN packages p ON p.id = ca.package_id
+         LEFT JOIN package_versions pv ON pv.id = ca.version_id
+         ORDER BY COALESCE(p.full_name, ca.package_id, ca.archive_name) COLLATE NOCASE ASC,
+                  COALESCE(pv.version_number, ca.archive_name) COLLATE NOCASE ASC",
+    )?;
+
+    let rows = statement.query_map([], |row| {
+        let package_id = row.get::<_, Option<String>>(2)?;
+        let version_id = row.get::<_, Option<String>>(3)?;
+        let archive_name = row.get::<_, String>(4)?;
+        let package_name = row.get::<_, Option<String>>(6)?;
+        let version_number = row.get::<_, Option<String>>(7)?;
+
+        let fallback_package_id = package_id.clone().unwrap_or_else(|| "unknown-package".to_string());
+        let fallback_version_id = version_id.clone().unwrap_or_else(|| archive_name.clone());
+        let fallback_package_name = package_name
+            .or(package_id)
+            .unwrap_or_else(|| "Unknown package".to_string());
+        let fallback_version_number = version_number
+            .or(version_id.clone())
+            .unwrap_or_else(|| archive_name.clone());
+
+        Ok(RemovableArchiveRow {
+            cache_key: row.get(0)?,
+            relative_path: row.get(1)?,
+            version_id,
+            candidate: CachePruneCandidateDto {
+                package_id: fallback_package_id,
+                package_name: fallback_package_name,
+                version_id: fallback_version_id,
+                version_number: fallback_version_number,
+                archive_name,
+                file_size: row.get(5)?,
+            },
+        })
+    })?;
+
+    let mut removable = Vec::new();
+    for row in rows {
+        let row = row?;
+        let is_installed = row
+            .version_id
+            .as_ref()
+            .map(|version_id| installed_version_ids.contains(version_id))
+            .unwrap_or(false);
+        if !is_installed {
+            removable.push(row);
+        }
+    }
+
+    Ok(removable)
 }
 
 fn clear_directory_contents(path: &Path) -> Result<(), InternalError> {

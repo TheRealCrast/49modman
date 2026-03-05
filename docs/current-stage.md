@@ -85,6 +85,18 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - Steam `localconfig.vdf` parsing now handles escaped quotes in launch option values (for example `WINEDLLOVERRIDES=\"winhttp=n,b\" %command%`)
   - launch feedback panel layout was fixed so warning/success panels no longer consume the full content area; panel padding and heading spacing were tightened for readability
   - launch success icon mapping was corrected from an invalid key to a valid icon token
+  - Linux Steam launch-option validation now accepts any launch-options value that contains both `%command%` and `winhttp=n,b`, instead of requiring an exact string match
+  - Steam launch-option error copy now uses explicit step-by-step wording for casual Steam/Proton users
+- Launch/settings UX follow-up polish is now in place:
+  - `Preferred Proton runtime` is now grouped under Settings -> `Launch (Linux)`
+  - topbar launch buttons now append `(Direct)` only for direct mode
+  - topbar launch buttons no longer append `(Steam)` in steam mode
+- Cache follow-up is now in place:
+  - Settings -> `Cache` now includes `Clear unreferenced cache` alongside full `Clear cache`
+  - unreferenced cleanup has a confirmation modal that previews exactly which cached mod versions will be removed
+  - preview includes package/version rows and per-version size
+  - cleanup preserves versions installed in any profile, including disabled installed mods
+  - cleanup removes only unreferenced cache entries (and their cache-task rows), not the entire cache
 
 ## Next Milestone
 
@@ -146,7 +158,7 @@ Current locked behavior:
 
 ## Current Uncommitted Work
 
-Dependency-install follow-up and Browse install-mode UI changes are now captured in this checkpoint.
+Launch/settings follow-up polish and selective cache-prune flow are now captured in this checkpoint.
 
 ## Profile Milestone Notes
 

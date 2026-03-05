@@ -307,6 +307,21 @@ export interface CacheSummaryDto {
   hasActiveDownloads: boolean;
 }
 
+export interface CachePruneCandidateDto {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  archiveName: string;
+  fileSize: number;
+}
+
+export interface CachePrunePreviewDto {
+  removableCount: number;
+  removableBytes: number;
+  candidates: CachePruneCandidateDto[];
+}
+
 export interface ProfilesStorageSummaryDto {
   profileCount: number;
   profilesTotalBytes: number;
@@ -497,6 +512,7 @@ export interface AppState {
   activeProfile?: ProfileDetailDto;
   downloads: DownloadJobDto[];
   cacheSummary?: CacheSummaryDto;
+  clearUnreferencedCacheModal: CachePrunePreviewDto | null;
   profilesStorageSummary?: ProfilesStorageSummaryDto;
   activeCacheTaskIds: string[];
   busyPackageIds: string[];

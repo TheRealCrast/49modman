@@ -34,6 +34,8 @@ fn main() {
             commands::cache::get_cache_summary,
             commands::cache::open_cache_folder,
             commands::cache::clear_cache,
+            commands::cache::preview_clear_cache_unreferenced,
+            commands::cache::clear_cache_unreferenced,
             commands::catalog::sync_catalog,
             commands::catalog::get_catalog_summary,
             commands::catalog::search_packages,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CacheSummaryDto, ProfilesStorageSummaryDto } from "../lib/types";
+  import type { CacheSummaryDto, ProfilesStorageSummaryDto, ProtonRuntime } from "../lib/types";
   import Icon from "./Icon.svelte";
 
   export let warningPrefs: {
@@ -11,6 +11,9 @@
   export let cacheSummary: CacheSummaryDto | undefined;
   export let profilesStorageSummary: ProfilesStorageSummaryDto | undefined;
   export let isLoadingProfilesStorageSummary = false;
+  export let protonRuntimes: ProtonRuntime[] = [];
+  export let selectedProtonRuntimeId: string | null = null;
+  export let isLoadingProtonRuntimes = false;
   export let settingsError: string | null = null;
   export let onWarningPrefChange: (
     kind: "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants",
@@ -20,7 +23,9 @@
   export let onOpenProfilesFolder: () => void | Promise<void>;
   export let onOpenActiveProfileFolder: () => void | Promise<void>;
   export let onClearCache: () => void | Promise<void>;
+  export let onClearUnreferencedCache: () => void | Promise<void>;
   export let onResetAllData: () => void | Promise<void>;
+  export let onSelectProtonRuntime: (runtimeId: string) => void | Promise<void>;
 
   function formatDiskSpace(value = 0) {
     const bytes = Math.max(0, Math.trunc(value));
@@ -59,6 +64,11 @@
     }
 
     await onResetAllData();
+  }
+
+  function handleProtonRuntimeChange(event: Event) {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    void onSelectProtonRuntime(value);
   }
 </script>
 
@@ -193,8 +203,62 @@
             Clear cache
           </button>
         </div>
+
+        <div class="switch-row danger-row">
+          <div>
+            <strong>Clear unreferenced cache</strong>
+            <p>Remove cached versions not installed in any profile. Disabled installed mods are kept.</p>
+          </div>
+          <button
+            class="ghost-button danger-outline"
+            disabled={cacheSummary?.hasActiveDownloads}
+            type="button"
+            on:click={onClearUnreferencedCache}
+          >
+            Review and clear
+          </button>
+        </div>
       </div>
     </div>
+
+    {#if isLoadingProtonRuntimes || protonRuntimes.length > 0 || selectedProtonRuntimeId}
+      <div class="settings-section">
+        <div class="settings-subheading">
+          <h3>Launch (Linux)</h3>
+        </div>
+
+        <div class="preference-list">
+          <div class="switch-row">
+            <div>
+              <strong>Preferred Proton runtime</strong>
+              <p>Used for Direct launch mode. Steam launch mode still uses Steam compatibility settings.</p>
+            </div>
+            <label class="settings-select">
+              <select
+                disabled={isLoadingProtonRuntimes || protonRuntimes.length === 0}
+                value={selectedProtonRuntimeId ?? ""}
+                on:change={handleProtonRuntimeChange}
+              >
+                <option value="" disabled={true}>
+                  {#if isLoadingProtonRuntimes}
+                    Loading runtimes...
+                  {:else if protonRuntimes.length === 0}
+                    No runtimes found
+                  {:else}
+                    Select runtime
+                  {/if}
+                </option>
+                {#each protonRuntimes as runtime}
+                  <option value={runtime.id} disabled={!runtime.isValid}>
+                    {runtime.displayName}{runtime.isValid ? "" : " (invalid)"}
+                  </option>
+                {/each}
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <div class="settings-section">
       <div class="settings-subheading">

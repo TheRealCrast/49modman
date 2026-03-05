@@ -553,6 +553,22 @@ Add:
 - confirmation required
 - button disabled while active downloads exist
 
+## Post-M1 follow-up: selective cache cleanup
+
+After the initial cache milestone shipped, Settings gained a second cache-cleanup action:
+
+- `Clear unreferenced cache`
+- opens a dedicated confirmation modal (instead of a plain browser confirm)
+- previews the exact cached mod versions that will be removed
+- shows per-version size and total removable size
+
+Cleanup rules:
+
+- preserve cached versions that are installed in any profile
+- treat disabled installed mods as still installed (preserve those cache entries)
+- remove only cache entries not referenced by any profile manifest
+- keep full `Clear cache` behavior available for full wipe scenarios
+
 ## Failure modes and handling
 
 ### Missing package/version metadata
