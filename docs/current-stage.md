@@ -239,6 +239,9 @@ Dependency-install follow-up and Browse install-mode UI changes are now captured
   - `Install without dependencies` option
   - uninstall actions intentionally do not include this option
   - warning prompt for this path can be toggled via `warning.install_without_dependencies`
+- desktop `get_package_detail` now includes parsed per-version dependency arrays from `dependencies_json`, which the detail-panel install-mode UI uses to decide when to show dependency install options
+- install-mode triggers now use the dedicated `down-arrow-small.svg` icon and render as merged split buttons with the adjacent install action when dependency options are available
+- split-button sizing now uses a shared explicit height so both halves match exactly instead of relying on per-button padding heuristics
 - uninstall-related Browse actions now use a dedicated trash icon:
   - package-card `Uninstall`
   - detail-panel `Uninstall`

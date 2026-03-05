@@ -394,7 +394,7 @@
 
     <div class="detail-primary-actions">
       {#key installVersion?.id ?? `${pkg.id}-install`}
-        <div class="install-action-group">
+        <div class={`install-action-group ${!packageHasInstalledVersion && installVersion && versionHasDependencies(installVersion) ? "merged" : ""}`}>
           <button
             class={`solid-button icon-button package-install-button ${installStatusClass}`}
             type="button"
@@ -413,12 +413,12 @@
           {#if !packageHasInstalledVersion && installVersion && versionHasDependencies(installVersion)}
             <button
               aria-expanded={installModeMenu?.versionId === installVersion.id}
-              class="ghost-button icon-button install-mode-trigger"
+              class={`icon-button install-mode-trigger split-dropdown-button solid-button package-install-button ${installStatusClass}`}
               type="button"
               disabled={isLocked}
               on:click={(event) => openInstallModeMenuFromButton(event, installVersion)}
             >
-              <Icon label="Install options" name="three-dots-vertical" />
+              <Icon label="Install options" name="down-arrow-small" size={16} forceWhite={true} />
             </button>
           {/if}
         </div>
@@ -489,7 +489,7 @@
             </div>
 
             <div class="version-actions">
-              <div class="install-action-group">
+              <div class={`install-action-group ${!versionInstalled && versionHasDependencies(version) ? "merged" : ""}`}>
                 <button
                   class={`icon-button version-install-button ${versionInstalled ? "danger-button package-install-button uninstall" : "solid-button"}`}
                   type="button"
@@ -517,12 +517,12 @@
                 {#if !versionInstalled && versionHasDependencies(version)}
                   <button
                     aria-expanded={installModeMenu?.versionId === version.id}
-                    class="ghost-button icon-button install-mode-trigger"
+                    class="icon-button install-mode-trigger split-dropdown-button solid-button"
                     type="button"
                     disabled={isLocked}
                     on:click={(event) => openInstallModeMenuFromButton(event, version)}
                   >
-                    <Icon label="Install options" name="three-dots-vertical" />
+                    <Icon label="Install options" name="down-arrow-small" size={18} forceWhite={true} />
                   </button>
                 {/if}
               </div>

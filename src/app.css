@@ -27,6 +27,7 @@
   --radius-lg: 14px;
   --radius-md: 12px;
   --radius-sm: 10px;
+  --install-split-height: 46px;
 }
 
 * {
@@ -501,8 +502,39 @@ img {
   gap: 6px;
 }
 
+.install-action-group.merged {
+  gap: 0;
+  height: var(--install-split-height);
+  align-items: stretch;
+}
+
+.install-action-group.merged > button {
+  height: 100%;
+}
+
+.install-action-group.merged > :first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.install-action-group.merged > :last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.split-dropdown-button {
+  justify-content: center;
+  min-width: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .install-mode-trigger {
   padding-inline: 10px;
+}
+
+.install-action-group.merged .split-dropdown-button {
+  border-left-color: rgba(255, 255, 255, 0.42);
 }
 
 .search-inline {

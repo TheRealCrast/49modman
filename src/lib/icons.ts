@@ -2,6 +2,7 @@ import broken from "./icons/broken.svg";
 import check from "./icons/check-confirm.svg";
 import circle from "./icons/circle.svg";
 import details from "./icons/details.svg";
+import downArrowSmall from "./icons/down-arrow-small.svg";
 import download from "./icons/download.svg";
 import edit from "./icons/edit.svg";
 import externalLink from "./icons/external-link.svg";
@@ -24,6 +25,7 @@ export type IconName =
   | "check"
   | "circle"
   | "details"
+  | "down-arrow-small"
   | "download"
   | "edit"
   | "external-link"
@@ -46,6 +48,7 @@ export const iconMap: Record<IconName, string> = {
   check,
   circle,
   details,
+  "down-arrow-small": downArrowSmall,
   download,
   edit,
   "external-link": externalLink,

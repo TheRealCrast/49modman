@@ -86,6 +86,7 @@ pub struct PackageVersionDto {
     pub version_number: String,
     pub published_at: String,
     pub downloads: i64,
+    pub dependencies: Vec<String>,
     pub base_zone: BaseZone,
     pub bundled_reference_state: Option<ReferenceState>,
     pub bundled_reference_note: Option<String>,
@@ -450,6 +451,7 @@ fn load_versions_for_package(
                 pv.version_number,
                 pv.published_at,
                 pv.downloads,
+                pv.dependencies_json,
                 pv.base_zone,
                 pv.bundled_reference_state,
                 pv.bundled_reference_note,
@@ -463,20 +465,20 @@ fn load_versions_for_package(
     )?;
 
     let rows = statement.query_map(params![package_id], |row| {
-        let base_zone = parse_base_zone(&row.get::<_, String>(4)?);
+        let base_zone = parse_base_zone(&row.get::<_, String>(5)?);
         let bundled_reference_state = row
-            .get::<_, Option<String>>(5)?
+            .get::<_, Option<String>>(6)?
             .as_deref()
             .and_then(parse_reference_state);
         let override_reference_state = row
-            .get::<_, Option<String>>(7)?
+            .get::<_, Option<String>>(8)?
             .as_deref()
             .and_then(parse_reference_state);
         let effective_status =
             resolve_effective_status(base_zone, bundled_reference_state, override_reference_state);
-        let reference_source = if row.get::<_, Option<String>>(7)?.is_some() {
+        let reference_source = if row.get::<_, Option<String>>(8)?.is_some() {
             Some("override".to_string())
-        } else if row.get::<_, Option<String>>(5)?.is_some() {
+        } else if row.get::<_, Option<String>>(6)?.is_some() {
             Some("bundled".to_string())
         } else {
             None
@@ -487,11 +489,12 @@ fn load_versions_for_package(
             version_number: row.get(1)?,
             published_at: row.get(2)?,
             downloads: row.get(3)?,
+            dependencies: parse_dependency_entries(&row.get::<_, String>(4)?),
             base_zone,
             bundled_reference_state,
-            bundled_reference_note: row.get(6)?,
+            bundled_reference_note: row.get(7)?,
             override_reference_state,
-            override_reference_note: row.get(8)?,
+            override_reference_note: row.get(9)?,
             effective_status,
             reference_source,
         })
@@ -547,6 +550,7 @@ fn load_versions_for_packages(
                 pv.version_number,
                 pv.published_at,
                 pv.downloads,
+                pv.dependencies_json,
                 pv.base_zone,
                 pv.bundled_reference_state,
                 pv.bundled_reference_note,
@@ -561,20 +565,20 @@ fn load_versions_for_packages(
     let mut statement = connection.prepare(&query)?;
     let rows = statement.query_map(rusqlite::params_from_iter(package_ids.iter()), |row| {
         let package_id: String = row.get(0)?;
-        let base_zone = parse_base_zone(&row.get::<_, String>(5)?);
+        let base_zone = parse_base_zone(&row.get::<_, String>(6)?);
         let bundled_reference_state = row
-            .get::<_, Option<String>>(6)?
+            .get::<_, Option<String>>(7)?
             .as_deref()
             .and_then(parse_reference_state);
         let override_reference_state = row
-            .get::<_, Option<String>>(8)?
+            .get::<_, Option<String>>(9)?
             .as_deref()
             .and_then(parse_reference_state);
         let effective_status =
             resolve_effective_status(base_zone, bundled_reference_state, override_reference_state);
-        let reference_source = if row.get::<_, Option<String>>(8)?.is_some() {
+        let reference_source = if row.get::<_, Option<String>>(9)?.is_some() {
             Some("override".to_string())
-        } else if row.get::<_, Option<String>>(6)?.is_some() {
+        } else if row.get::<_, Option<String>>(7)?.is_some() {
             Some("bundled".to_string())
         } else {
             None
@@ -587,11 +591,12 @@ fn load_versions_for_packages(
                 version_number: row.get(2)?,
                 published_at: row.get(3)?,
                 downloads: row.get(4)?,
+                dependencies: parse_dependency_entries(&row.get::<_, String>(5)?),
                 base_zone,
                 bundled_reference_state,
-                bundled_reference_note: row.get(7)?,
+                bundled_reference_note: row.get(8)?,
                 override_reference_state,
-                override_reference_note: row.get(9)?,
+                override_reference_note: row.get(10)?,
                 effective_status,
                 reference_source,
             },
@@ -634,6 +639,20 @@ fn effective_status_rank(status: EffectiveStatus) -> i32 {
         EffectiveStatus::Orange => 2,
         EffectiveStatus::Broken => 1,
         EffectiveStatus::Red => 0,
+    }
+}
+
+fn parse_dependency_entries(value: &str) -> Vec<String> {
+    match serde_json::from_str::<Vec<String>>(value) {
+        Ok(entries) => entries,
+        Err(_) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() || trimmed == "[]" || trimmed == "null" {
+                Vec::new()
+            } else {
+                vec![trimmed.to_string()]
+            }
+        }
     }
 }
 
