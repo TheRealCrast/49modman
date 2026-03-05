@@ -4,6 +4,13 @@ import { getCatalogSummary, getPackageDetail, searchPackages, syncCatalog } from
 import { getVersionDependencies, warmDependencyIndex } from "./api/dependencies";
 import { listActiveDownloads } from "./api/downloads";
 import {
+  launchProfile as launchProfileApi,
+  launchVanilla as launchVanillaApi,
+  listProtonRuntimes as listProtonRuntimesApi,
+  repairActivation as repairActivationApi,
+  setPreferredProtonRuntime as setPreferredProtonRuntimeApi
+} from "./api/launch";
+import {
   createProfile as createProfileApi,
   deleteProfile as deleteProfileApi,
   getActiveProfile as getActiveProfileApi,
@@ -23,6 +30,7 @@ import {
   getWarningPrefs,
   setWarningPreference as setWarningPreferenceApi
 } from "./api/settings";
+import { openExternalUrl } from "./api/system";
 import { seedActivities, seedPackages } from "./mock-data";
 import { getRuntimeKind } from "./runtime";
 import { compareVersionNumbers, resolveEffectiveStatus } from "./status";
@@ -39,6 +47,8 @@ import type {
   InstallActionOptions,
   FocusedVersionState,
   InstallRequest,
+  LaunchMode,
+  LaunchResult,
   ModPackage,
   ProfileDetailDto,
   ProfileInstalledModDto,
@@ -74,6 +84,12 @@ const initialState: AppState = {
   activeCacheTaskIds: [],
   busyPackageIds: [],
   activities: seedActivities,
+  protonRuntimes: [],
+  selectedProtonRuntimeId: null,
+  isLoadingProtonRuntimes: false,
+  isLaunching: false,
+  launchingVariant: null,
+  launchFeedback: null,
   warningPrefs: {
     red: true,
     broken: true,
@@ -149,6 +165,24 @@ function withActivity(title: string, detail: string, tone: ActivityItem["tone"])
     detail,
     tone
   };
+}
+
+function resolveLaunchMode(profile: ProfileDetailDto | undefined): LaunchMode {
+  return profile?.launchModeDefault === "direct" ? "direct" : "steam";
+}
+
+function shouldOfferRepairForCode(code: string): boolean {
+  return code === "ACTIVATION_FAILED" || code === "VANILLA_CLEANUP_INCOMPLETE";
+}
+
+function toFileUrl(path: string): string {
+  if (path.startsWith("file://")) {
+    return path;
+  }
+
+  const normalized = path.replace(/\\/g, "/");
+  const prefix = normalized.startsWith("/") ? "file://" : "file:///";
+  return `${prefix}${encodeURI(normalized)}`;
 }
 
 function mergeMockReferenceState(
@@ -438,6 +472,43 @@ async function loadSettingsState() {
     settingsError: null,
     desktopError: null
   }));
+}
+
+async function loadProtonRuntimesState() {
+  appState.update((state) => ({
+    ...state,
+    isLoadingProtonRuntimes: true
+  }));
+
+  try {
+    const protonRuntimes = await listProtonRuntimesApi();
+    appState.update((state) => {
+      const validIds = new Set(protonRuntimes.filter((entry) => entry.isValid).map((entry) => entry.id));
+      const selectedProtonRuntimeId =
+        state.selectedProtonRuntimeId && validIds.has(state.selectedProtonRuntimeId)
+          ? state.selectedProtonRuntimeId
+          : protonRuntimes.find((entry) => entry.isValid)?.id ?? null;
+
+      return {
+        ...state,
+        protonRuntimes,
+        selectedProtonRuntimeId,
+        isLoadingProtonRuntimes: false,
+        desktopError: null
+      };
+    });
+  } catch (error) {
+    appState.update((state) => ({
+      ...state,
+      isLoadingProtonRuntimes: false,
+      desktopError:
+        state.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to detect Proton runtimes from the desktop backend."
+          : state.desktopError
+    }));
+  }
 }
 
 async function loadProfilesStorageSummary() {
@@ -1498,6 +1569,34 @@ async function switchInstalledPackageVersionInternal(
   return false;
 }
 
+function launchVariantLabel(variant: "modded" | "vanilla") {
+  return variant === "modded" ? "Modded" : "Vanilla";
+}
+
+function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla") {
+  if (result.ok) {
+    const modeLabel = result.usedLaunchMode === "direct" ? "Direct" : "Steam";
+    return {
+      tone: "positive" as const,
+      title: `${launchVariantLabel(variant)} launch started`,
+      detail:
+        result.pid !== undefined
+          ? `${modeLabel} launch started (pid ${result.pid}).`
+          : `${modeLabel} launch command started.`,
+      diagnosticsPath: result.diagnosticsPath,
+      canRepair: false
+    };
+  }
+
+  return {
+    tone: "warning" as const,
+    title: `${launchVariantLabel(variant)} launch failed`,
+    detail: `${result.code}: ${result.message}`,
+    diagnosticsPath: result.diagnosticsPath,
+    canRepair: shouldOfferRepairForCode(result.code)
+  };
+}
+
 export const actions = {
   async bootstrap() {
     const runtimeKind = getRuntimeKind();
@@ -1527,7 +1626,8 @@ export const actions = {
         loadSettingsState(),
         loadProfilesStorageSummary(),
         loadCacheSummary(),
-        loadActiveDownloads()
+        loadActiveDownloads(),
+        loadProtonRuntimesState()
       ]);
 
       if (!summary.hasCatalog) {
@@ -1601,6 +1701,263 @@ export const actions = {
 
     if (view === "settings") {
       void loadProfilesStorageSummary();
+    }
+  },
+  dismissLaunchFeedback() {
+    appState.update((state) => ({
+      ...state,
+      launchFeedback: null
+    }));
+  },
+  async selectProtonRuntime(runtimeId: string) {
+    const previous = get(appState).selectedProtonRuntimeId;
+    if (!runtimeId || previous === runtimeId) {
+      return;
+    }
+
+    appState.update((state) => ({
+      ...state,
+      selectedProtonRuntimeId: runtimeId
+    }));
+
+    try {
+      await setPreferredProtonRuntimeApi(runtimeId);
+      appState.update((state) => ({
+        ...state,
+        settingsError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        selectedProtonRuntimeId: previous ?? state.selectedProtonRuntimeId,
+        settingsError:
+          error instanceof Error ? error.message : "Failed to save preferred Proton runtime.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to save preferred desktop Proton runtime."
+            : state.desktopError
+      }));
+    }
+  },
+  async launchModded() {
+    const snapshot = get(appState);
+    if (snapshot.isBootstrapping || snapshot.isLaunching) {
+      return;
+    }
+
+    if (!snapshot.activeProfile) {
+      appState.update((state) => ({
+        ...state,
+        profileError: "No active profile is available for modded launch."
+      }));
+      return;
+    }
+
+    const launchMode = resolveLaunchMode(snapshot.activeProfile);
+    appState.update((state) => ({
+      ...state,
+      isLaunching: true,
+      launchingVariant: "modded",
+      launchFeedback: {
+        tone: "neutral",
+        title: "Launching modded profile",
+        detail: `Running ${launchMode} preflight and activation...`,
+        canRepair: false
+      },
+      desktopError: null
+    }));
+
+    try {
+      const result = await launchProfileApi({
+        profileId: snapshot.activeProfile.id,
+        launchMode,
+        protonRuntimeId: snapshot.selectedProtonRuntimeId ?? undefined
+      });
+      const feedback = buildLaunchFeedback(result, "modded");
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            isLaunching: false,
+            launchingVariant: null,
+            launchFeedback: feedback
+          },
+          withActivity(feedback.title, feedback.detail, feedback.tone)
+        )
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Launch request failed before the backend could return a result.";
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            isLaunching: false,
+            launchingVariant: null,
+            launchFeedback: {
+              tone: "warning",
+              title: "Modded launch failed",
+              detail: message,
+              canRepair: false
+            },
+            desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+          },
+          withActivity("Modded launch failed", message, "warning")
+        )
+      );
+    }
+  },
+  async launchVanilla() {
+    const snapshot = get(appState);
+    if (snapshot.isBootstrapping || snapshot.isLaunching) {
+      return;
+    }
+
+    const launchMode = resolveLaunchMode(snapshot.activeProfile);
+    appState.update((state) => ({
+      ...state,
+      isLaunching: true,
+      launchingVariant: "vanilla",
+      launchFeedback: {
+        tone: "neutral",
+        title: "Launching vanilla",
+        detail: `Running ${launchMode} cleanup and preflight...`,
+        canRepair: false
+      },
+      desktopError: null
+    }));
+
+    try {
+      const result = await launchVanillaApi({
+        launchMode,
+        protonRuntimeId: snapshot.selectedProtonRuntimeId ?? undefined
+      });
+      const feedback = buildLaunchFeedback(result, "vanilla");
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            isLaunching: false,
+            launchingVariant: null,
+            launchFeedback: feedback
+          },
+          withActivity(feedback.title, feedback.detail, feedback.tone)
+        )
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Vanilla launch request failed before the backend could return a result.";
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            isLaunching: false,
+            launchingVariant: null,
+            launchFeedback: {
+              tone: "warning",
+              title: "Vanilla launch failed",
+              detail: message,
+              canRepair: false
+            },
+            desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+          },
+          withActivity("Vanilla launch failed", message, "warning")
+        )
+      );
+    }
+  },
+  async repairLaunchActivation() {
+    const snapshot = get(appState);
+    if (snapshot.isLaunching) {
+      return;
+    }
+
+    appState.update((state) => ({
+      ...state,
+      isLaunching: true,
+      launchingVariant: null,
+      launchFeedback: {
+        tone: "neutral",
+        title: "Repairing activation",
+        detail: "Cleaning managed files from previous activation...",
+        canRepair: false
+      }
+    }));
+
+    try {
+      const result = await repairActivationApi();
+      const tone = result.ok ? "positive" : "warning";
+      const title = result.ok ? "Activation repaired" : "Activation repair incomplete";
+      const detail = `${result.code}: ${result.message}`;
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            isLaunching: false,
+            launchingVariant: null,
+            launchFeedback: {
+              tone,
+              title,
+              detail,
+              diagnosticsPath: state.launchFeedback?.diagnosticsPath,
+              canRepair: !result.ok
+            }
+          },
+          withActivity(title, detail, tone)
+        )
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to run activation repair.";
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            isLaunching: false,
+            launchingVariant: null,
+            launchFeedback: {
+              tone: "warning",
+              title: "Activation repair failed",
+              detail: message,
+              canRepair: true
+            },
+            desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+          },
+          withActivity("Activation repair failed", message, "warning")
+        )
+      );
+    }
+  },
+  async openLaunchDiagnostics(path?: string) {
+    const diagnosticsPath = path ?? get(appState).launchFeedback?.diagnosticsPath;
+    if (!diagnosticsPath) {
+      return;
+    }
+
+    try {
+      await openExternalUrl(toFileUrl(diagnosticsPath));
+      appState.update((state) => ({
+        ...state,
+        desktopError: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to open diagnostics folder from desktop backend."
+            : state.desktopError
+      }));
     }
   },
   setBrowseSearchDraft(search: string) {
@@ -2239,6 +2596,12 @@ export const actions = {
         cacheSummary: undefined,
         profilesStorageSummary: undefined,
         activeCacheTaskIds: [],
+        protonRuntimes: [],
+        selectedProtonRuntimeId: null,
+        isLoadingProtonRuntimes: false,
+        isLaunching: false,
+        launchingVariant: null,
+        launchFeedback: null,
         activities: seedActivities,
         isCatalogOverlayVisible: false,
         catalogOverlayTitle: null,
@@ -2262,7 +2625,8 @@ export const actions = {
         loadSettingsState(),
         loadProfilesStorageSummary(),
         loadCacheSummary(),
-        loadActiveDownloads()
+        loadActiveDownloads(),
+        loadProtonRuntimesState()
       ]);
 
       setResetProgress(

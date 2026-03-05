@@ -286,6 +286,10 @@ img {
   color: var(--text-soft);
 }
 
+.proton-select {
+  min-width: 260px;
+}
+
 .profile-select select,
 .search-field input {
   border-radius: var(--radius-md);
@@ -355,6 +359,19 @@ img {
   background: #c13737;
 }
 
+.solid-button:disabled,
+.ghost-button:disabled,
+.danger-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.solid-button:disabled:hover,
+.ghost-button:disabled:hover,
+.danger-button:disabled:hover {
+  background: inherit;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -371,6 +388,30 @@ img {
 
 .icon-spinning {
   animation: spin 0.9s linear infinite;
+}
+
+.launch-feedback-panel {
+  border-color: var(--panel-border);
+}
+
+.launch-feedback-panel.warning {
+  border-color: rgba(209, 67, 67, 0.4);
+}
+
+.launch-feedback-panel.positive {
+  border-color: rgba(44, 135, 90, 0.4);
+}
+
+.launch-feedback-panel p {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.launch-feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .screen-stack > .panel,

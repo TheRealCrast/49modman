@@ -71,6 +71,16 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
     - opens the package detail panel
     - focuses/highlights the exact installed version row
     - auto-enables that version's status filter if currently hidden so the target row is visible
+- Launch system milestones `L0` through `L5` are now implemented and wired:
+  - backend launch preflight, staging, activation/deactivation, launch execution, diagnostics
+  - Linux Proton runtime discovery/selection for direct launch
+  - UI launch feedback panel with diagnostics/open and activation repair actions
+- Launch hardening fixes are now in place:
+  - runtime stage path normalization strips package wrapper roots (for example `BepInExPack/`)
+  - top-level `plugins/patchers/config/core` payloads are remapped into `BepInEx/...`
+  - `.lethalbundle` payloads from non-anchor roots are remapped into `BepInEx/plugins/...` so LethalLevelLoader can discover custom levels
+  - stale activation cleanup now treats remaining managed files as blocking, while retained non-empty managed directories no longer block re-activation
+  - Linux direct launch now sets `WINEDLLOVERRIDES=winhttp=n,b` for Doorstop/BepInEx injection
 
 ## Next Milestone
 

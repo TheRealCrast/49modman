@@ -24,7 +24,26 @@ This phase starts from current state (`cache + profile install + profile manifes
 - Runtime scaffold folders exist at:
   - `profiles/<id>/runtime/BepInEx/plugins/`
   - `profiles/<id>/runtime/BepInEx/config/`
-- Topbar launch buttons are UI-only and not wired to backend launch commands.
+- Topbar launch buttons are wired to backend launch commands for modded and vanilla launch flows.
+
+## Implementation Status (L0-L5)
+
+- `L0` completed: game-path resolution + v49 validation + dependency checks.
+- `L1` completed: deterministic runtime stage builder with stale temp cleanup.
+- `L2` completed: activation/deactivation engine with ownership manifest.
+- `L3` completed: launch execution + diagnostics artifacts.
+- `L4` completed: Linux/Proton runtime detection + direct/steam launch handling.
+- `L5` completed: UI wiring for launch state, repair action, and diagnostics open.
+
+## Post-Implementation Notes
+
+- Runtime stage normalization now handles common Thunderstore layout variance:
+  - strips wrapper roots such as `BepInExPack/`
+  - remaps top-level `plugins`, `patchers`, `config`, `core` into `BepInEx/...`
+  - remaps `.lethalbundle` payloads from non-anchor roots into `BepInEx/plugins/...` so LethalLevelLoader auto-detects bundle content
+- Activation stale cleanup is now non-blocking for retained non-empty managed directories; only remaining managed files block new activation.
+- Linux direct launch sets `WINEDLLOVERRIDES=winhttp=n,b` in-process for Doorstop/BepInEx injection reliability.
+- Linux Steam launch remains dependent on Steam compatibility environment; when Steam is already running, game-specific launch options may still be required.
 
 ## Required End State For This Phase
 

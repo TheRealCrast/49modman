@@ -11,6 +11,14 @@ import {
 import type {
   CacheSummaryDto,
   CatalogSummaryDto,
+  ActivateProfileInput,
+  ActivationApplyResult,
+  BuildRuntimeStageInput,
+  LaunchProfileInput,
+  LaunchResult,
+  LaunchVanillaInput,
+  ProtonRuntime,
+  RuntimeStageBuildResult,
   DependencySummaryItemDto,
   CreateProfileInput,
   DependencyNodeDto,
@@ -38,12 +46,16 @@ import type {
   QueueInstallToCacheInput,
   QueueInstallToCacheResult,
   SetInstalledModEnabledInput,
+  ValidateV49InstallInput,
   SyncCatalogInput,
   SyncCatalogResult,
+  SteamScanResult,
   UninstallDependantDto,
   UninstallInstalledModInput,
   UpdateProfileInput,
   UnresolvedDependencySummaryItemDto,
+  V49ValidationResult,
+  VanillaCleanupResult,
   VersionDependenciesDto,
   WarningPrefsDto
 } from "../types";
@@ -1134,3 +1146,162 @@ export async function setWarningPreferenceMock(
   saveDb(db);
   return db.warningPrefs;
 }
+
+export async function scanSteamInstallationsMock(): Promise<SteamScanResult> {
+  return {
+    steamRootPaths: [],
+    libraryPaths: [],
+    gamePaths: [],
+    selectedGamePath: null
+  };
+}
+
+export async function validateV49InstallMock(
+  input: ValidateV49InstallInput = {}
+): Promise<V49ValidationResult> {
+  if (input.gamePathOverride?.trim()) {
+    return {
+      ok: true,
+      code: "OK",
+      message: "Mock validation succeeded for the provided game path.",
+      resolvedGamePath: input.gamePathOverride.trim(),
+      resolvedFrom: "input_override",
+      selectedProfileId: normalizeDb(loadDb()).activeProfileId,
+      checks: [
+        {
+          key: "pathResolution",
+          ok: true,
+          code: "GAME_PATH_RESOLVED",
+          message: "Resolved game path from explicit override.",
+          detail: input.gamePathOverride.trim()
+        }
+      ],
+      hardlinkSupported: true
+    };
+  }
+
+  return {
+    ok: false,
+    code: "GAME_PATH_RESOLUTION_FAILED",
+    message: "Mock validation could not resolve a game path.",
+    resolvedGamePath: null,
+    resolvedFrom: null,
+    selectedProfileId: normalizeDb(loadDb()).activeProfileId,
+    checks: [
+      {
+        key: "pathResolution",
+        ok: false,
+        code: "GAME_PATH_RESOLUTION_FAILED",
+        message: "Set a game path override to simulate a valid install in browser mode."
+      }
+    ],
+    hardlinkSupported: undefined
+  };
+}
+
+export async function buildRuntimeStageMock(
+  input: BuildRuntimeStageInput = {}
+): Promise<RuntimeStageBuildResult> {
+  const db = normalizeDb(loadDb());
+  const profileId = input.profileId ?? db.activeProfileId;
+  const profile = db.profiles.find((entry) => entry.id === profileId);
+
+  if (!profile) {
+    throw new Error(`Profile not found: ${profileId}`);
+  }
+
+  return {
+    profileId: profile.id,
+    stagePath: `/mock/profiles/${profile.id}/runtime/active-stage`,
+    mergedModCount: 0,
+    copiedFileCount: 0,
+    overwrittenFileCount: 0,
+    sourceMods: []
+  };
+}
+
+export async function activateProfileMock(
+  input: ActivateProfileInput = {}
+): Promise<ActivationApplyResult> {
+  const stage = await buildRuntimeStageMock({ profileId: input.profileId });
+  const gamePath = input.gamePathOverride?.trim() || "/mock/game/Lethal Company";
+
+  return {
+    ok: true,
+    code: "ACTIVATION_APPLIED",
+    message: "Mock activation succeeded.",
+    profileId: stage.profileId,
+    gamePath,
+    stagePath: stage.stagePath,
+    manifestPath: "/mock/state/activation-manifest-v1.json",
+    cleanedPreviousActivation: true,
+    fileCount: stage.copiedFileCount,
+    dirCount: 0
+  };
+}
+
+export async function deactivateToVanillaMock(): Promise<VanillaCleanupResult> {
+  return {
+    ok: true,
+    code: "VANILLA_CLEANUP_COMPLETE",
+    message: "Mock vanilla cleanup succeeded.",
+    manifestPath: "/mock/state/activation-manifest-v1.json",
+    gamePath: "/mock/game/Lethal Company",
+    removedFileCount: 0,
+    removedDirCount: 0,
+    missingEntryCount: 0,
+    remainingEntryCount: 0
+  };
+}
+
+export async function repairActivationMock(): Promise<VanillaCleanupResult> {
+  return deactivateToVanillaMock();
+}
+
+export async function launchProfileMock(input: LaunchProfileInput): Promise<LaunchResult> {
+  const activation = await activateProfileMock({
+    profileId: input.profileId,
+    gamePathOverride: input.gamePathOverride
+  });
+
+  return {
+    ok: true,
+    code: "OK",
+    message: "Mock modded launch started.",
+    pid: Math.floor(Date.now() % 100000),
+    usedGamePath: activation.gamePath,
+    usedProfileId: input.profileId,
+    usedLaunchMode: input.launchMode,
+    diagnosticsPath: "/mock/logs/launch/run-mock"
+  };
+}
+
+export async function launchVanillaMock(input: LaunchVanillaInput): Promise<LaunchResult> {
+  await deactivateToVanillaMock();
+
+  return {
+    ok: true,
+    code: "OK",
+    message: "Mock vanilla launch started.",
+    pid: Math.floor(Date.now() % 100000),
+    usedGamePath: input.gamePathOverride ?? "/mock/game/Lethal Company",
+    usedLaunchMode: input.launchMode,
+    diagnosticsPath: "/mock/logs/launch/run-mock"
+  };
+}
+
+export async function listProtonRuntimesMock(): Promise<ProtonRuntime[]> {
+  return [
+    {
+      id: "/mock/steam/Proton-9/proton",
+      displayName: "Proton 9 (Mock)",
+      path: "/mock/steam/Proton-9/proton",
+      source: "steam",
+      isValid: true
+    }
+  ];
+}
+
+export async function setPreferredProtonRuntimeMock(_input: {
+  runtimeId: string;
+}): Promise<void> {}

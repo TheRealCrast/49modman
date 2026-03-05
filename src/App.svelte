@@ -20,6 +20,10 @@
       ? $appState.focusedVersion.versionId
       : undefined;
   $: focusedVersionToken = $appState.focusedVersion?.highlightToken ?? 0;
+  $: activeLaunchMode = $selectedProfile?.launchModeDefault ?? "steam";
+  $: launchModeLabel = activeLaunchMode === "direct" ? "Direct" : "Steam";
+  $: launchingModded = $appState.isLaunching && $appState.launchingVariant === "modded";
+  $: launchingVanilla = $appState.isLaunching && $appState.launchingVariant === "vanilla";
 
   $: modalCopy =
     $appState.modal
@@ -81,15 +85,52 @@
         </label>
 
         <div class="launch-actions">
-          <button class="solid-button icon-button" type="button">
-            <Icon label="Launch modded" name="play" forceWhite={true} />
-            <span>Launch modded</span>
+          <button
+            class="solid-button icon-button"
+            type="button"
+            disabled={$appState.isBootstrapping || $appState.isLaunching || !$selectedProfile}
+            on:click={() => void actions.launchModded()}
+          >
+            <Icon
+              label="Launch modded"
+              name={launchingModded ? "refresh" : "play"}
+              forceWhite={true}
+              spinning={launchingModded}
+            />
+            <span>{launchingModded ? "Launching..." : `Launch modded (${launchModeLabel})`}</span>
           </button>
-          <button class="ghost-button icon-button" type="button">
-            <Icon label="Launch vanilla" name="circle" />
-            <span>Launch vanilla</span>
+          <button
+            class="ghost-button icon-button"
+            type="button"
+            disabled={$appState.isBootstrapping || $appState.isLaunching}
+            on:click={() => void actions.launchVanilla()}
+          >
+            <Icon
+              label="Launch vanilla"
+              name={launchingVanilla ? "refresh" : "circle"}
+              spinning={launchingVanilla}
+            />
+            <span>{launchingVanilla ? "Launching..." : `Launch vanilla (${launchModeLabel})`}</span>
           </button>
         </div>
+
+        {#if $appState.protonRuntimes.length > 0}
+          <label class="profile-select proton-select">
+            <span>Proton runtime</span>
+            <select
+              disabled={$appState.isLaunching || $appState.isLoadingProtonRuntimes}
+              value={$appState.selectedProtonRuntimeId ?? ""}
+              on:change={(event) => void actions.selectProtonRuntime((event.currentTarget as HTMLSelectElement).value)}
+            >
+              <option value="" disabled={true}>Select runtime</option>
+              {#each $appState.protonRuntimes as runtime}
+                <option value={runtime.id} disabled={!runtime.isValid}>
+                  {runtime.displayName}{runtime.isValid ? "" : " (invalid)"}
+                </option>
+              {/each}
+            </select>
+          </label>
+        {/if}
       </div>
     </header>
 
@@ -100,6 +141,51 @@
           <h3>Desktop backend error</h3>
         </div>
         <p>{$appState.desktopError}</p>
+      </section>
+    {/if}
+
+    {#if $appState.launchFeedback}
+      <section class="panel launch-feedback-panel" class:warning={$appState.launchFeedback.tone === "warning"} class:positive={$appState.launchFeedback.tone === "positive"}>
+        <div class="compact-heading compact-heading-left">
+          <Icon
+            label="Launch feedback"
+            name={$appState.launchFeedback.tone === "warning" ? "warning" : "check-confirm"}
+          />
+          <h3>{$appState.launchFeedback.title}</h3>
+        </div>
+        <p>{$appState.launchFeedback.detail}</p>
+        <div class="launch-feedback-actions">
+          {#if $appState.launchFeedback.diagnosticsPath}
+            <button
+              class="ghost-button icon-button"
+              type="button"
+              on:click={() => void actions.openLaunchDiagnostics($appState.launchFeedback?.diagnosticsPath)}
+            >
+              <Icon label="Open diagnostics" name="external-link" />
+              <span>Open diagnostics</span>
+            </button>
+          {/if}
+
+          {#if $appState.launchFeedback.canRepair}
+            <button
+              class="ghost-button icon-button"
+              type="button"
+              disabled={$appState.isLaunching}
+              on:click={() => void actions.repairLaunchActivation()}
+            >
+              <Icon label="Repair activation" name="refresh" spinning={$appState.isLaunching} />
+              <span>{$appState.isLaunching ? "Repairing..." : "Repair activation"}</span>
+            </button>
+          {/if}
+
+          <button
+            class="ghost-button"
+            type="button"
+            on:click={() => actions.dismissLaunchFeedback()}
+          >
+            Dismiss
+          </button>
+        </div>
       </section>
     {/if}
 

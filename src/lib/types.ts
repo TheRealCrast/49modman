@@ -8,6 +8,129 @@ export type EffectiveStatus = "broken" | "verified" | BaseZone;
 export type LaunchMode = "steam" | "direct";
 export type LaunchVariant = "vanilla" | "modded";
 
+export interface SteamScanResult {
+  steamRootPaths: string[];
+  libraryPaths: string[];
+  gamePaths: string[];
+  selectedGamePath: string | null;
+}
+
+export interface ValidateV49InstallInput {
+  gamePathOverride?: string;
+  profileId?: string;
+}
+
+export interface LaunchProfileInput {
+  profileId: string;
+  launchMode: LaunchMode;
+  gamePathOverride?: string;
+  protonRuntimeId?: string;
+}
+
+export interface LaunchVanillaInput {
+  launchMode: LaunchMode;
+  gamePathOverride?: string;
+  protonRuntimeId?: string;
+}
+
+export interface V49ValidationCheck {
+  key: string;
+  ok: boolean;
+  code: string;
+  message: string;
+  detail?: string;
+}
+
+export interface V49ValidationResult {
+  ok: boolean;
+  code: string;
+  message: string;
+  resolvedGamePath: string | null;
+  resolvedFrom: string | null;
+  selectedProfileId: string | null;
+  checks: V49ValidationCheck[];
+  detectedExecutableSha256?: string;
+  hardlinkSupported?: boolean;
+}
+
+export interface LaunchResult {
+  ok: boolean;
+  code: string;
+  message: string;
+  pid?: number;
+  usedGamePath?: string;
+  usedProfileId?: string;
+  usedLaunchMode?: LaunchMode;
+  diagnosticsPath?: string;
+}
+
+export interface ProtonRuntime {
+  id: string;
+  displayName: string;
+  path: string;
+  source: "steam" | "custom";
+  isValid: boolean;
+}
+
+export interface LaunchFeedbackState {
+  tone: "neutral" | "positive" | "warning";
+  title: string;
+  detail: string;
+  diagnosticsPath?: string;
+  canRepair: boolean;
+}
+
+export interface BuildRuntimeStageInput {
+  profileId?: string;
+}
+
+export interface ActivateProfileInput {
+  profileId?: string;
+  gamePathOverride?: string;
+}
+
+export interface RuntimeStageSourceMod {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  installDir: string;
+}
+
+export interface RuntimeStageBuildResult {
+  profileId: string;
+  stagePath: string;
+  mergedModCount: number;
+  copiedFileCount: number;
+  overwrittenFileCount: number;
+  sourceMods: RuntimeStageSourceMod[];
+}
+
+export interface ActivationApplyResult {
+  ok: boolean;
+  code: string;
+  message: string;
+  profileId: string;
+  gamePath: string;
+  stagePath: string;
+  manifestPath: string;
+  cleanedPreviousActivation: boolean;
+  fileCount: number;
+  dirCount: number;
+}
+
+export interface VanillaCleanupResult {
+  ok: boolean;
+  code: string;
+  message: string;
+  manifestPath: string | null;
+  gamePath: string | null;
+  removedFileCount: number;
+  removedDirCount: number;
+  missingEntryCount: number;
+  remainingEntryCount: number;
+}
+
 export interface ModVersion {
   id: string;
   versionNumber: string;
@@ -378,6 +501,12 @@ export interface AppState {
   activeCacheTaskIds: string[];
   busyPackageIds: string[];
   activities: ActivityItem[];
+  protonRuntimes: ProtonRuntime[];
+  selectedProtonRuntimeId: string | null;
+  isLoadingProtonRuntimes: boolean;
+  isLaunching: boolean;
+  launchingVariant: LaunchVariant | null;
+  launchFeedback: LaunchFeedbackState | null;
   warningPrefs: WarningPrefsDto;
   modal: WarningModalState | null;
   uninstallDependantsModal: UninstallDependantsModalState | null;

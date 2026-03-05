@@ -2,6 +2,16 @@ import {
   clearCacheMock,
   createProfileMock,
   deleteProfileMock,
+  activateProfileMock,
+  deactivateToVanillaMock,
+  listProtonRuntimesMock,
+  launchProfileMock,
+  launchVanillaMock,
+  repairActivationMock,
+  setPreferredProtonRuntimeMock,
+  buildRuntimeStageMock,
+  scanSteamInstallationsMock,
+  validateV49InstallMock,
   getVersionDependenciesMock,
   warmDependencyIndexMock,
   getCacheSummaryMock,
@@ -64,6 +74,16 @@ type CommandMap = {
   list_active_downloads: typeof listActiveDownloadsMock;
   get_task: typeof getTaskMock;
   open_external_url: (url: string) => Promise<void>;
+  scan_steam_installations: typeof scanSteamInstallationsMock;
+  validate_v49_install: typeof validateV49InstallMock;
+  build_runtime_stage: typeof buildRuntimeStageMock;
+  activate_profile: typeof activateProfileMock;
+  deactivate_to_vanilla: typeof deactivateToVanillaMock;
+  repair_activation: typeof repairActivationMock;
+  launch_profile: typeof launchProfileMock;
+  launch_vanilla: typeof launchVanillaMock;
+  list_proton_runtimes: typeof listProtonRuntimesMock;
+  set_preferred_proton_runtime: typeof setPreferredProtonRuntimeMock;
 };
 
 const mockCommands: CommandMap = {
@@ -97,6 +117,16 @@ const mockCommands: CommandMap = {
   clear_cache: clearCacheMock,
   list_active_downloads: listActiveDownloadsMock,
   get_task: getTaskMock,
+  scan_steam_installations: scanSteamInstallationsMock,
+  validate_v49_install: validateV49InstallMock,
+  build_runtime_stage: buildRuntimeStageMock,
+  activate_profile: activateProfileMock,
+  deactivate_to_vanilla: deactivateToVanillaMock,
+  repair_activation: repairActivationMock,
+  launch_profile: launchProfileMock,
+  launch_vanilla: launchVanillaMock,
+  list_proton_runtimes: listProtonRuntimesMock,
+  set_preferred_proton_runtime: setPreferredProtonRuntimeMock,
   open_external_url: async () => {}
 };
 

@@ -45,6 +45,54 @@ pub fn seed_defaults(connection: &Connection) -> Result<(), InternalError> {
             now_rfc3339()?
         ],
     )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "launch.default_mode",
+            serde_json::to_string(&"steam")?,
+            now_rfc3339()?
+        ],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "launch.preferred_game_path",
+            serde_json::to_string(&"")?,
+            now_rfc3339()?
+        ],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "launch.preferred_proton_runtime_id",
+            serde_json::to_string(&Option::<String>::None)?,
+            now_rfc3339()?
+        ],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "launch.v49_signature_hashes",
+            serde_json::to_string(&Vec::<String>::new())?,
+            now_rfc3339()?
+        ],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "launch.last_mode",
+            serde_json::to_string(&Option::<String>::None)?,
+            now_rfc3339()?
+        ],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "launch.last_profile_id",
+            serde_json::to_string(&Option::<String>::None)?,
+            now_rfc3339()?
+        ],
+    )?;
 
     connection.execute(
         "INSERT OR IGNORE INTO profiles (
