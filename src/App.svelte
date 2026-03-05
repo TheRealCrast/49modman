@@ -106,6 +106,8 @@
       <OverviewScreen
         activeProfile={$selectedProfile}
         lastCatalogRefreshLabel={$appState.lastCatalogRefreshLabel}
+        onToggleInstalledMod={actions.toggleInstalledMod}
+        onUninstallInstalledMod={actions.uninstallInstalledMod}
       />
     {:else if $appState.view === "browse"}
       <BrowseScreen

@@ -77,19 +77,20 @@ Last completed milestone:
 
 Current planned milestone:
 
-- install-state controls (uninstall + enable/disable) follow-up (not implemented yet)
+- post-install-state polish and follow-up UX/backend hardening
 
 Current locked behavior:
 
 - install scope is now `cache + active profile`
 - Browse detail `Install` now includes the chosen version label
 - Downloads is still `active only`
-- uninstalling is not implemented yet
-- enable/disable is not implemented yet
+- Overview installed rows now support real mod-state controls:
+  - enable/disable toggle (persists `mods[].enabled` in manifest)
+  - uninstall (removes profile mod folder + removes manifest entry)
 
 ## Current Uncommitted Work
 
-Current working tree now includes the profile-install activation and Overview installed-mod UI work (pending commit).
+Current working tree includes the install-state control follow-up and manifest reconciliation fixes (pending commit).
 
 ## Profile Milestone Notes
 
@@ -132,11 +133,12 @@ Current working tree now includes the profile-install activation and Overview in
 - manifest `mods[]` now persists installed Thunderstore versions for each profile
 - installed mod entries include:
   - package/version identity
-  - enabled flag (always `true` in this milestone)
+  - enabled flag (persisted, user-toggleable)
   - source kind (`thunderstore`)
   - install directory under `mods/`
   - installed timestamp
 - manifest read APIs now enrich installed-mod DTOs with optional `iconDataUrl` if `icon.png` exists in that mod folder
+- manifest reads now also reconcile stale entries by pruning `mods[]` rows whose `installDir` no longer exists on disk
 - `reset_all_data` now clears profile folders and then reseeds + re-ensures `default` profile storage
 - per-profile storage size is computed from profile directory bytes and returned in `list_profiles`
 - Settings profile summary is returned via backend command:
@@ -155,7 +157,7 @@ Current working tree now includes the profile-install activation and Overview in
   4. upsert manifest entry for that exact package/version
 - repeated installs of the same exact version currently re-extract into the same target folder and refresh manifest timestamp
 - multiple versions of the same package are currently allowed side-by-side
-- no uninstall or enable/disable behavior yet
+- uninstall and enable/disable are now implemented in Overview installed rows
 - the current local SQLite DB still contains legacy tables from the reverted experiment:
   - `cached_archives`
   - `install_tasks`

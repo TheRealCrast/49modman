@@ -36,8 +36,10 @@ import type {
   SetReferenceStateInput,
   QueueInstallToCacheInput,
   QueueInstallToCacheResult,
+  SetInstalledModEnabledInput,
   SyncCatalogInput,
   SyncCatalogResult,
+  UninstallInstalledModInput,
   UpdateProfileInput,
   UnresolvedDependencySummaryItemDto,
   VersionDependenciesDto,
@@ -827,6 +829,43 @@ export async function getProfileDetailMock(profileId: string): Promise<ProfileDe
         installedMods: []
       }
     : null;
+}
+
+export async function setInstalledModEnabledMock(
+  input: SetInstalledModEnabledInput
+): Promise<ProfileDetailDto> {
+  const profile = await getProfileDetailMock(input.profileId);
+
+  if (!profile) {
+    throw new Error(`Profile ${input.profileId} does not exist.`);
+  }
+
+  profile.installedMods = profile.installedMods.map((entry) =>
+    entry.packageId === input.packageId && entry.versionId === input.versionId
+      ? {
+          ...entry,
+          enabled: input.enabled
+        }
+      : entry
+  );
+
+  return profile;
+}
+
+export async function uninstallInstalledModMock(
+  input: UninstallInstalledModInput
+): Promise<ProfileDetailDto> {
+  const profile = await getProfileDetailMock(input.profileId);
+
+  if (!profile) {
+    throw new Error(`Profile ${input.profileId} does not exist.`);
+  }
+
+  profile.installedMods = profile.installedMods.filter(
+    (entry) => !(entry.packageId === input.packageId && entry.versionId === input.versionId)
+  );
+
+  return profile;
 }
 
 export async function resetAllDataMock(): Promise<void> {

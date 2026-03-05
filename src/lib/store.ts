@@ -13,6 +13,8 @@ import {
   openProfilesFolder as openProfilesFolderApi,
   resetAllData as resetAllDataApi,
   setActiveProfile as setActiveProfileApi,
+  setInstalledModEnabled as setInstalledModEnabledApi,
+  uninstallInstalledMod as uninstallInstalledModApi,
   updateProfile as updateProfileApi
 } from "./api/profiles";
 import { listReferenceRows, setReferenceState as setReferenceStateApi } from "./api/reference";
@@ -436,7 +438,7 @@ async function loadActiveDownloads() {
     } else {
       stopDownloadPolling();
       if (hadActiveTasks) {
-        await Promise.all([loadCacheSummary(), refreshActiveProfileState()]);
+        await Promise.all([loadCacheSummary(), refreshActiveProfileState(), loadProfilesStorageSummary()]);
         appendDownloadActivity(previous.downloads, activeTaskIds);
       }
     }
@@ -984,6 +986,10 @@ export const actions = {
       ...state,
       view
     }));
+
+    if (view === "settings") {
+      void loadProfilesStorageSummary();
+    }
   },
   setBrowseSearchDraft(search: string) {
     appState.update((state) => ({
@@ -1259,11 +1265,101 @@ export const actions = {
   async refreshCatalog() {
     await refreshCatalog(true, { blockingOverlay: true });
   },
-  toggleInstalledMod() {
-    return;
+  async toggleInstalledMod(
+    profileId: string,
+    packageId: string,
+    versionId: string,
+    enabled: boolean
+  ) {
+    const targetMod = get(appState).activeProfile?.installedMods.find(
+      (entry) => entry.packageId === packageId && entry.versionId === versionId
+    );
+    const modLabel = targetMod
+      ? `${targetMod.packageName} ${targetMod.versionNumber}`
+      : `${packageId}:${versionId}`;
+
+    try {
+      const [activeProfile, profiles] = await Promise.all([
+        setInstalledModEnabledApi({
+          profileId,
+          packageId,
+          versionId,
+          enabled
+        }),
+        listProfilesApi()
+      ]);
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...mapActiveProfile(state, activeProfile),
+            profiles,
+            profileError: null,
+            desktopError: null
+          },
+          withActivity(
+            enabled ? "Mod enabled" : "Mod disabled",
+            `${modLabel} is now ${enabled ? "enabled" : "disabled"} in the active profile.`,
+            "neutral"
+          )
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to update mod state.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to update mod state in the desktop backend."
+            : state.desktopError
+      }));
+    }
   },
-  uninstallInstalledMod() {
-    return;
+  async uninstallInstalledMod(profileId: string, packageId: string, versionId: string) {
+    const targetMod = get(appState).activeProfile?.installedMods.find(
+      (entry) => entry.packageId === packageId && entry.versionId === versionId
+    );
+    const modLabel = targetMod
+      ? `${targetMod.packageName} ${targetMod.versionNumber}`
+      : `${packageId}:${versionId}`;
+
+    try {
+      const [activeProfile, profiles, profilesStorageSummary] = await Promise.all([
+        uninstallInstalledModApi({
+          profileId,
+          packageId,
+          versionId
+        }),
+        listProfilesApi(),
+        getProfilesStorageSummaryApi()
+      ]);
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...mapActiveProfile(state, activeProfile),
+            profiles,
+            profilesStorageSummary,
+            profileError: null,
+            desktopError: null
+          },
+          withActivity("Mod uninstalled", `${modLabel} was removed from the active profile.`, "warning")
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to uninstall the mod.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to uninstall the mod in the desktop backend."
+            : state.desktopError
+      }));
+    }
   },
   async createProfile(input: CreateProfileInput) {
     try {

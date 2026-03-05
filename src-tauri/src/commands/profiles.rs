@@ -19,12 +19,15 @@ use crate::{
             list_profiles as list_profiles_service,
             open_active_profile_folder as open_active_profile_folder_service,
             open_profiles_folder as open_profiles_folder_service,
-            read_profile_manifest_mods as read_profile_manifest_mods_service,
             read_profile_installed_mods as read_profile_installed_mods_service,
+            read_profile_manifest_mods as read_profile_manifest_mods_service,
             reset_all_data as reset_all_data_service,
             set_active_profile as set_active_profile_service,
+            set_profile_mod_enabled as set_profile_mod_enabled_service,
+            uninstall_profile_mod as uninstall_profile_mod_service,
             update_profile as update_profile_service, CreateProfileInput, DeleteProfileResult,
-            ProfileDetailDto, ProfileSummaryDto, ProfilesStorageSummaryDto, UpdateProfileInput,
+            ProfileDetailDto, ProfileSummaryDto, ProfilesStorageSummaryDto,
+            SetInstalledModEnabledInput, UninstallInstalledModInput, UpdateProfileInput,
         },
     },
 };
@@ -67,10 +70,9 @@ pub async fn get_active_profile(
 
     async_runtime::spawn_blocking(move || {
         let mut profile = {
-            let connection = state
-                .connection
-                .lock()
-                .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+            let connection = state.connection.lock().map_err(|_| {
+                AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection")
+            })?;
             get_active_profile_service(&connection).map_err(AppError::from)?
         };
 
@@ -94,10 +96,9 @@ pub async fn set_active_profile(
 
     async_runtime::spawn_blocking(move || {
         let mut profile = {
-            let connection = state
-                .connection
-                .lock()
-                .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+            let connection = state.connection.lock().map_err(|_| {
+                AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection")
+            })?;
             set_active_profile_service(&connection, &profile_id).map_err(AppError::from)?
         };
 
@@ -188,10 +189,9 @@ pub async fn get_profile_detail(
 
     async_runtime::spawn_blocking(move || {
         let mut profile = {
-            let connection = state
-                .connection
-                .lock()
-                .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+            let connection = state.connection.lock().map_err(|_| {
+                AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection")
+            })?;
             get_profile_detail_service(&connection, &profile_id).map_err(AppError::from)?
         };
 
@@ -204,6 +204,72 @@ pub async fn get_profile_detail(
     })
     .await
     .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn set_installed_mod_enabled(
+    state: State<'_, AppState>,
+    input: SetInstalledModEnabledInput,
+) -> Result<ProfileDetailDto, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        let profile = {
+            let connection = state.connection.lock().map_err(|_| {
+                AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection")
+            })?;
+
+            get_profile_detail_service(&connection, &input.profile_id)
+                .map_err(AppError::from)?
+                .ok_or_else(|| {
+                    AppError::new(
+                        "PROFILE_NOT_FOUND",
+                        format!("Profile {} does not exist.", input.profile_id.as_str()),
+                    )
+                })?
+        };
+
+        set_profile_mod_enabled_service(
+            &state,
+            &profile,
+            &input.package_id,
+            &input.version_id,
+            input.enabled,
+        )
+        .map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("SET_INSTALLED_MOD_ENABLED_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn uninstall_installed_mod(
+    state: State<'_, AppState>,
+    input: UninstallInstalledModInput,
+) -> Result<ProfileDetailDto, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        let profile = {
+            let connection = state.connection.lock().map_err(|_| {
+                AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection")
+            })?;
+
+            get_profile_detail_service(&connection, &input.profile_id)
+                .map_err(AppError::from)?
+                .ok_or_else(|| {
+                    AppError::new(
+                        "PROFILE_NOT_FOUND",
+                        format!("Profile {} does not exist.", input.profile_id.as_str()),
+                    )
+                })?
+        };
+
+        uninstall_profile_mod_service(&state, &profile, &input.package_id, &input.version_id)
+            .map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("UNINSTALL_INSTALLED_MOD_FAILED", error.to_string()))?
 }
 
 #[tauri::command]

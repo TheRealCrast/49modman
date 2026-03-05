@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    io,
+    fs, io,
     io::Write,
     path::{Path, PathBuf},
     process::Command,
@@ -80,6 +79,23 @@ pub struct UpdateProfileInput {
     pub notes: Option<String>,
     pub game_path: Option<String>,
     pub launch_mode_default: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetInstalledModEnabledInput {
+    pub profile_id: String,
+    pub package_id: String,
+    pub version_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UninstallInstalledModInput {
+    pub profile_id: String,
+    pub package_id: String,
+    pub version_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -529,7 +545,20 @@ pub fn read_profile_manifest_mods(
     }
 
     let manifest_bytes = fs::read(manifest_path)?;
-    let manifest = serde_json::from_slice::<ProfileManifest>(&manifest_bytes)?;
+    let mut manifest = serde_json::from_slice::<ProfileManifest>(&manifest_bytes)?;
+    let original_mod_count = manifest.mods.len();
+
+    manifest.mods.retain(|entry| {
+        profile_install_dir_path(state, profile_id, &entry.install_dir)
+            .map(|install_path| install_path.exists())
+            .unwrap_or(false)
+    });
+
+    if manifest.mods.len() != original_mod_count {
+        manifest.updated_at = now_rfc3339()?;
+        write_profile_manifest_document(state, profile_id, &manifest)?;
+    }
+
     Ok(manifest.mods)
 }
 
@@ -556,6 +585,67 @@ pub fn read_profile_installed_mods(
     }
 
     Ok(mods)
+}
+
+pub fn set_profile_mod_enabled(
+    state: &AppState,
+    profile: &ProfileDetailDto,
+    package_id: &str,
+    version_id: &str,
+    enabled: bool,
+) -> Result<ProfileDetailDto, InternalError> {
+    let mut installed_mods = read_profile_manifest_mods(state, &profile.id)?;
+    let Some(entry) = installed_mods
+        .iter_mut()
+        .find(|entry| entry.package_id == package_id && entry.version_id == version_id)
+    else {
+        return Err(InternalError::app(
+            "PROFILE_MOD_NOT_FOUND",
+            "That mod version is not installed in this profile.",
+        ));
+    };
+
+    entry.enabled = enabled;
+    write_profile_manifest(state, profile, installed_mods)?;
+
+    let mut updated_profile = profile.clone();
+    updated_profile.installed_mods = read_profile_installed_mods(state, &profile.id)?;
+    Ok(updated_profile)
+}
+
+pub fn uninstall_profile_mod(
+    state: &AppState,
+    profile: &ProfileDetailDto,
+    package_id: &str,
+    version_id: &str,
+) -> Result<ProfileDetailDto, InternalError> {
+    let mut installed_mods = read_profile_manifest_mods(state, &profile.id)?;
+    let Some(entry_index) = installed_mods
+        .iter()
+        .position(|entry| entry.package_id == package_id && entry.version_id == version_id)
+    else {
+        return Err(InternalError::app(
+            "PROFILE_MOD_NOT_FOUND",
+            "That mod version is not installed in this profile.",
+        ));
+    };
+
+    let removed_entry = installed_mods.remove(entry_index);
+    if let Some(install_path) =
+        profile_install_dir_path(state, &profile.id, &removed_entry.install_dir)
+    {
+        if install_path.is_dir() {
+            fs::remove_dir_all(install_path)?;
+        } else if install_path.is_file() {
+            fs::remove_file(install_path)?;
+        }
+    }
+
+    write_profile_manifest(state, profile, installed_mods)?;
+
+    let mut updated_profile = profile.clone();
+    updated_profile.installed_mods = read_profile_installed_mods(state, &profile.id)?;
+    Ok(updated_profile)
 }
 
 pub fn install_cached_archive_into_profile(
@@ -597,9 +687,10 @@ pub fn install_cached_archive_into_profile(
     let install_dir_relative = format!("mods/{folder_name}");
     let installed_at = now_rfc3339()?;
 
-    if let Some(entry) = installed_mods.iter_mut().find(|entry| {
-        entry.package_id == package_id && entry.version_id == version_id
-    }) {
+    if let Some(entry) = installed_mods
+        .iter_mut()
+        .find(|entry| entry.package_id == package_id && entry.version_id == version_id)
+    {
         entry.package_name = package_name.to_string();
         entry.version_number = version_number.to_string();
         entry.enabled = true;
@@ -641,7 +732,15 @@ fn write_profile_manifest(
         mods: installed_mods,
     };
 
-    let manifest_path = profile_manifest_path(state, &profile.id);
+    write_profile_manifest_document(state, &profile.id, &manifest)
+}
+
+fn write_profile_manifest_document(
+    state: &AppState,
+    profile_id: &str,
+    manifest: &ProfileManifest,
+) -> Result<(), InternalError> {
+    let manifest_path = profile_manifest_path(state, profile_id);
     let profile_dir = manifest_path.parent().ok_or_else(|| {
         InternalError::app(
             "RESOURCE_LOAD_FAILED",
@@ -655,7 +754,7 @@ fn write_profile_manifest(
         "manifest.json.tmp-{}",
         OffsetDateTime::now_utc().unix_timestamp_nanos()
     ));
-    let manifest_json = serde_json::to_vec_pretty(&manifest)?;
+    let manifest_json = serde_json::to_vec_pretty(manifest)?;
 
     let mut temp_file = fs::File::create(&temp_manifest_path)?;
     temp_file.write_all(&manifest_json)?;
@@ -728,7 +827,11 @@ fn resolve_mod_icon_data_url(
     Ok(Some(format!("data:image/png;base64,{encoded}")))
 }
 
-fn profile_install_dir_path(state: &AppState, profile_id: &str, install_dir: &str) -> Option<PathBuf> {
+fn profile_install_dir_path(
+    state: &AppState,
+    profile_id: &str,
+    install_dir: &str,
+) -> Option<PathBuf> {
     let mut path = profile_dir(state, profile_id);
 
     for segment in install_dir.split('/') {

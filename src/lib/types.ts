@@ -145,6 +145,19 @@ export interface UpdateProfileInput {
   launchModeDefault?: LaunchMode;
 }
 
+export interface SetInstalledModEnabledInput {
+  profileId: string;
+  packageId: string;
+  versionId: string;
+  enabled: boolean;
+}
+
+export interface UninstallInstalledModInput {
+  profileId: string;
+  packageId: string;
+  versionId: string;
+}
+
 export interface DeleteProfileResult {
   deletedId: string;
   nextActiveProfileId: string | null;

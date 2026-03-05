@@ -425,6 +425,10 @@ img {
   flex-wrap: wrap;
 }
 
+.installed-mods-title {
+  margin: 2px 0;
+}
+
 .toolbar-heading {
   margin-bottom: 4px;
 }
@@ -903,11 +907,19 @@ img {
   color: var(--text-faint);
 }
 
+.installed-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
 .installed-card-main {
   display: flex;
   justify-content: flex-start;
-  align-items: stretch;
+  align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .installed-card-copy {
@@ -965,8 +977,10 @@ img {
 .installed-card-actions {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   justify-content: flex-end;
+  justify-self: end;
 }
 
 .profile-list,
@@ -1509,6 +1523,17 @@ img {
 
   .download-card {
     grid-template-columns: 1fr;
+  }
+
+  .installed-card {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .installed-card-actions {
+    justify-self: stretch;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .download-tertiary {

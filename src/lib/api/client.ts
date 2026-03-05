@@ -18,10 +18,12 @@ import {
   openCacheFolderMock,
   openActiveProfileFolderMock,
   openProfilesFolderMock,
+  setInstalledModEnabledMock,
   queueInstallToCacheMock,
   resetAllDataMock,
   searchPackagesMock,
   setActiveProfileMock,
+  uninstallInstalledModMock,
   updateProfileMock,
   setReferenceStateMock,
   setWarningPreferenceMock,
@@ -47,6 +49,8 @@ type CommandMap = {
   open_profiles_folder: typeof openProfilesFolderMock;
   open_active_profile_folder: typeof openActiveProfileFolderMock;
   get_profiles_storage_summary: typeof getProfilesStorageSummaryMock;
+  set_installed_mod_enabled: typeof setInstalledModEnabledMock;
+  uninstall_installed_mod: typeof uninstallInstalledModMock;
   list_reference_rows: typeof listReferenceRowsMock;
   set_reference_state: typeof setReferenceStateMock;
   get_warning_prefs: typeof getWarningPrefsMock;
@@ -78,6 +82,8 @@ const mockCommands: CommandMap = {
   open_profiles_folder: openProfilesFolderMock,
   open_active_profile_folder: openActiveProfileFolderMock,
   get_profiles_storage_summary: getProfilesStorageSummaryMock,
+  set_installed_mod_enabled: setInstalledModEnabledMock,
+  uninstall_installed_mod: uninstallInstalledModMock,
   list_reference_rows: listReferenceRowsMock,
   set_reference_state: setReferenceStateMock,
   get_warning_prefs: getWarningPrefsMock,

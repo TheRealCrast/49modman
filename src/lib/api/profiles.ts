@@ -5,6 +5,8 @@ import type {
   ProfileDetailDto,
   ProfilesStorageSummaryDto,
   ProfileSummaryDto,
+  SetInstalledModEnabledInput,
+  UninstallInstalledModInput,
   UpdateProfileInput
 } from "../types";
 
@@ -50,4 +52,12 @@ export function openActiveProfileFolder(): Promise<void> {
 
 export function getProfilesStorageSummary(): Promise<ProfilesStorageSummaryDto> {
   return invokeCommand("get_profiles_storage_summary");
+}
+
+export function setInstalledModEnabled(input: SetInstalledModEnabledInput): Promise<ProfileDetailDto> {
+  return invokeCommand("set_installed_mod_enabled", { input });
+}
+
+export function uninstallInstalledMod(input: UninstallInstalledModInput): Promise<ProfileDetailDto> {
+  return invokeCommand("uninstall_installed_mod", { input });
 }
