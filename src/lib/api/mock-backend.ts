@@ -472,28 +472,41 @@ function nowIso(): string {
 
 function searchPackagesInternal(input: SearchPackagesInput): PackageCardDto[] {
   const query = input.query.trim().toLowerCase();
+  const sortMode = input.sortMode ?? "mostDownloads";
 
   return currentPackages()
     .map((pkg) => {
       const recommended = pickRecommendedVersion(pkg);
+      const latestPublishedAt = pkg.versions.reduce(
+        (latest, version) => (version.publishedAt > latest ? version.publishedAt : latest),
+        ""
+      );
+      const totalVersionDownloads = pkg.versions.reduce(
+        (sum, version) => sum + Math.max(0, version.downloads ?? 0),
+        0
+      );
 
       return {
-        id: pkg.id,
-        fullName: pkg.fullName,
-        author: pkg.author,
-        summary: pkg.summary,
-        categories: pkg.categories,
-        totalDownloads: pkg.totalDownloads,
-        rating: pkg.rating,
-        versionCount: pkg.versions.length,
-        recommendedVersionId: recommended.id,
-        recommendedVersion: recommended.versionNumber,
-        effectiveStatus: resolveEffectiveStatus(recommended),
-        everyRelevantVersionBroken: everyRelevantVersionBroken(pkg)
+        card: {
+          id: pkg.id,
+          fullName: pkg.fullName,
+          author: pkg.author,
+          summary: pkg.summary,
+          categories: pkg.categories,
+          totalDownloads: totalVersionDownloads,
+          rating: pkg.rating,
+          versionCount: pkg.versions.length,
+          recommendedVersionId: recommended.id,
+          recommendedVersion: recommended.versionNumber,
+          effectiveStatus: resolveEffectiveStatus(recommended),
+          everyRelevantVersionBroken: everyRelevantVersionBroken(pkg)
+        },
+        latestPublishedAt,
+        totalVersionDownloads
       };
     })
-    .filter((card) => input.visibleStatuses.includes(card.effectiveStatus))
-    .filter((card) => {
+    .filter(({ card }) => input.visibleStatuses.includes(card.effectiveStatus))
+    .filter(({ card }) => {
       if (!query) {
         return true;
       }
@@ -504,22 +517,64 @@ function searchPackagesInternal(input: SearchPackagesInput): PackageCardDto[] {
         .includes(query);
     })
     .sort((left, right) => {
-      const priority: Record<EffectiveStatus, number> = {
-        verified: 5,
-        green: 4,
-        yellow: 3,
-        orange: 2,
-        red: 1,
-        broken: 0
-      };
-      const score = priority[right.effectiveStatus] - priority[left.effectiveStatus];
-
-      if (score !== 0) {
-        return score;
+      if (sortMode === "compatibility") {
+        const compatibilityRank: Record<EffectiveStatus, number> = {
+          verified: 5,
+          green: 4,
+          yellow: 3,
+          orange: 2,
+          red: 1,
+          broken: 0
+        };
+        const byCompatibility =
+          compatibilityRank[right.card.effectiveStatus] - compatibilityRank[left.card.effectiveStatus];
+        if (byCompatibility !== 0) {
+          return byCompatibility;
+        }
       }
 
-      return right.totalDownloads - left.totalDownloads;
-    });
+      if (sortMode === "lastUpdated") {
+        const byUpdated = right.latestPublishedAt.localeCompare(left.latestPublishedAt);
+        if (byUpdated !== 0) {
+          return byUpdated;
+        }
+      }
+
+      if (sortMode === "nameAsc") {
+        const byName = left.card.fullName.localeCompare(right.card.fullName, undefined, {
+          sensitivity: "base"
+        });
+        if (byName !== 0) {
+          return byName;
+        }
+      }
+
+      if (sortMode === "nameDesc") {
+        const byName = right.card.fullName.localeCompare(left.card.fullName, undefined, {
+          sensitivity: "base"
+        });
+        if (byName !== 0) {
+          return byName;
+        }
+      }
+
+      if (sortMode === "mostDownloads") {
+        const byVersionDownloads = right.totalVersionDownloads - left.totalVersionDownloads;
+        if (byVersionDownloads !== 0) {
+          return byVersionDownloads;
+        }
+      }
+
+      const byDownloads = right.card.totalDownloads - left.card.totalDownloads;
+      if (byDownloads !== 0) {
+        return byDownloads;
+      }
+
+      return left.card.fullName.localeCompare(right.card.fullName, undefined, {
+        sensitivity: "base"
+      });
+    })
+    .map(({ card }) => card);
 }
 
 function referenceRowsInternal(query: string): ReferenceRow[] {

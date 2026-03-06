@@ -1,6 +1,6 @@
 # Current Stage Notes
 
-Last updated: 2026-03-05
+Last updated: 2026-03-06
 
 This file is the short-term implementation handoff for the current stage of the project.
 The broad product plan remains in [plan-v1.md](./plan-v1.md).
@@ -36,6 +36,21 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - list/card containers now enforce shrink bounds (`min-width: 0`)
   - long card text/chips now wrap instead of forcing horizontal overflow
   - prevents package cards from being cut off on the right after startup or Browse refresh
+- Browse sorting/discovery controls are now expanded:
+  - Browse toolbar now includes a sort dropdown with:
+    - `Most downloads` (default)
+    - `Compatibility`
+    - `Last updated`
+    - `A-Z`
+    - `Z-A`
+  - `Most downloads` now sorts by summed per-version downloads from cached catalog version rows
+  - package cards now show download count inline after author text:
+    - `by {author} • {downloads} downloads`
+- Browse first-page refresh now uses a blocking list loading overlay when cards are already visible:
+  - overlay uses the same lock card + spinner visual pattern as the package detail lock state
+  - card list scroll and interaction are blocked while the overlay is active
+  - overlay is anchored to the visible list viewport (not the scrolled card content)
+- app now disables the built-in right-click context menu globally
 - Browse install controls now reflect manifest-installed state in the active profile:
   - package-card quick action becomes red `Uninstall` with a trash icon when that package is already installed
   - detail-panel main action becomes red `Uninstall` with a trash icon when that package is already installed
@@ -158,7 +173,7 @@ Current locked behavior:
 
 ## Current Uncommitted Work
 
-Launch/settings follow-up polish and selective cache-prune flow are now captured in this checkpoint.
+Browse sorting/discovery and loading-lock polish are now captured in this checkpoint.
 
 ## Profile Milestone Notes
 

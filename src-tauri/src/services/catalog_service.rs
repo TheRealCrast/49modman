@@ -49,8 +49,57 @@ pub struct CatalogSummaryDto {
 pub struct SearchPackagesInput {
     pub query: String,
     pub visible_statuses: Vec<EffectiveStatus>,
+    pub sort_mode: Option<BrowseSortMode>,
     pub cursor: Option<usize>,
     pub page_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum BrowseSortMode {
+    MostDownloads,
+    Compatibility,
+    LastUpdated,
+    NameAsc,
+    NameDesc,
+}
+
+impl BrowseSortMode {
+    fn order_clause_sql(self) -> &'static str {
+        match self {
+            BrowseSortMode::MostDownloads => {
+                "rv.total_version_downloads DESC,
+            p.total_downloads DESC,
+            p.full_name COLLATE NOCASE ASC"
+            }
+            BrowseSortMode::Compatibility => {
+                "CASE rv.effective_status
+                WHEN 'verified' THEN 5
+                WHEN 'green' THEN 4
+                WHEN 'yellow' THEN 3
+                WHEN 'orange' THEN 2
+                WHEN 'red' THEN 1
+                ELSE 0
+            END DESC,
+            rv.total_version_downloads DESC,
+            p.total_downloads DESC,
+            p.full_name COLLATE NOCASE ASC"
+            }
+            BrowseSortMode::LastUpdated => {
+                "rv.latest_published_at DESC,
+            p.total_downloads DESC,
+            p.full_name COLLATE NOCASE ASC"
+            }
+            BrowseSortMode::NameAsc => {
+                "p.full_name COLLATE NOCASE ASC,
+            p.total_downloads DESC"
+            }
+            BrowseSortMode::NameDesc => {
+                "p.full_name COLLATE NOCASE DESC,
+            p.total_downloads DESC"
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -216,6 +265,7 @@ pub fn search_packages(
     input: SearchPackagesInput,
 ) -> Result<SearchPackagesResult, InternalError> {
     let query = input.query.trim().to_lowercase();
+    let sort_mode = input.sort_mode.unwrap_or(BrowseSortMode::MostDownloads);
     let page_size = input.page_size.unwrap_or(40).clamp(1, 100);
     let cursor = input.cursor.unwrap_or(0);
 
@@ -228,13 +278,14 @@ pub fn search_packages(
         });
     }
 
-    let mut statement = connection.prepare(
+    let sql = format!(
         "WITH version_states AS (
             SELECT
                 pv.package_id,
                 pv.id AS version_id,
                 pv.version_number,
                 pv.published_at,
+                pv.downloads,
                 pv.base_zone,
                 CASE
                     WHEN ro.reference_state = 'broken' THEN 'broken'
@@ -266,6 +317,8 @@ pub fn search_packages(
                         published_at DESC
                 ) AS recommended_row,
                 COUNT(*) OVER (PARTITION BY package_id) AS version_count,
+                MAX(published_at) OVER (PARTITION BY package_id) AS latest_published_at,
+                COALESCE(SUM(downloads) OVER (PARTITION BY package_id), 0) AS total_version_downloads,
                 SUM(CASE WHEN base_zone != 'red' THEN 1 ELSE 0 END) OVER (PARTITION BY package_id) AS relevant_version_count,
                 SUM(CASE WHEN base_zone != 'red' AND effective_status = 'broken' THEN 1 ELSE 0 END) OVER (PARTITION BY package_id) AS relevant_broken_count
             FROM version_states
@@ -276,7 +329,7 @@ pub fn search_packages(
             p.author,
             p.summary,
             p.categories_json,
-            p.total_downloads,
+            rv.total_version_downloads,
             p.rating,
             rv.version_count,
             rv.version_id,
@@ -300,18 +353,12 @@ pub fn search_packages(
                 (?7 = 1 AND rv.effective_status = 'broken')
             )
         ORDER BY
-            CASE rv.effective_status
-                WHEN 'verified' THEN 5
-                WHEN 'green' THEN 4
-                WHEN 'yellow' THEN 3
-                WHEN 'orange' THEN 2
-                WHEN 'red' THEN 1
-                ELSE 0
-            END DESC,
-            p.total_downloads DESC,
-            p.full_name ASC
+            {}
         LIMIT ?8 OFFSET ?9",
-    )?;
+        sort_mode.order_clause_sql()
+    );
+
+    let mut statement = connection.prepare(&sql)?;
 
     let status_flags = VisibleStatusFlags::from_slice(&input.visible_statuses);
     let rows = statement.query_map(

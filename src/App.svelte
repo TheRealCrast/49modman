@@ -49,8 +49,17 @@
     actions.toggleVisibleStatus(status);
   }
 
+  function preventContextMenu(event: MouseEvent) {
+    event.preventDefault();
+  }
+
   onMount(() => {
+    window.addEventListener("contextmenu", preventContextMenu);
     void actions.bootstrap();
+
+    return () => {
+      window.removeEventListener("contextmenu", preventContextMenu);
+    };
   });
 </script>
 
@@ -204,7 +213,9 @@
           onViewDependencies={actions.openDependencyModal}
           onSearchDraftChange={actions.setBrowseSearchDraft}
           onSubmitSearch={actions.submitBrowseSearch}
+          onBrowseSortChange={actions.setBrowseSortMode}
           onToggleStatus={toggleStatus}
+          browseSortMode={$appState.browseSortMode}
           refreshLabel={$appState.lastCatalogRefreshLabel}
           searchDraft={$appState.browseSearchDraft}
           busyPackageIds={$appState.busyPackageIds}

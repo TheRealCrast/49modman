@@ -4,6 +4,12 @@ export type RuntimeKind = "tauri" | "browser-mock";
 export type BaseZone = "orange" | "green" | "yellow" | "red";
 export type ReferenceState = "verified" | "broken" | "neutral";
 export type EffectiveStatus = "broken" | "verified" | BaseZone;
+export type BrowseSortMode =
+  | "mostDownloads"
+  | "compatibility"
+  | "lastUpdated"
+  | "nameAsc"
+  | "nameDesc";
 
 export type LaunchMode = "steam" | "direct";
 export type LaunchVariant = "vanilla" | "modded";
@@ -504,6 +510,7 @@ export interface AppState {
   runtimeKind: RuntimeKind;
   browseSearchDraft: string;
   browseSearchSubmitted: string;
+  browseSortMode: BrowseSortMode;
   visibleStatuses: EffectiveStatus[];
   selectedPackageId: string;
   selectedProfileId: string;
@@ -572,6 +579,7 @@ export interface SyncCatalogInput {
 export interface SearchPackagesInput {
   query: string;
   visibleStatuses: EffectiveStatus[];
+  sortMode: BrowseSortMode;
   cursor?: number | null;
   pageSize?: number;
 }

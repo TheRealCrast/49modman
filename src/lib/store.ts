@@ -45,6 +45,7 @@ import type {
   ActivityItem,
   AppState,
   AppView,
+  BrowseSortMode,
   CacheSummaryDto,
   CreateProfileInput,
   DependencySummaryItemDto,
@@ -64,6 +65,7 @@ import type {
 } from "./types";
 
 const defaultVisibleStatuses: EffectiveStatus[] = ["verified", "green", "yellow", "orange"];
+const defaultBrowseSortMode: BrowseSortMode = "mostDownloads";
 const defaultCatalogPageSize = 40;
 const defaultReferencePageSize = 50;
 const downloadPollIntervalMs = 500;
@@ -79,6 +81,7 @@ const initialState: AppState = {
   runtimeKind: getRuntimeKind(),
   browseSearchDraft: "",
   browseSearchSubmitted: "",
+  browseSortMode: defaultBrowseSortMode,
   visibleStatuses: defaultVisibleStatuses,
   selectedPackageId: "bepinex-pack",
   selectedProfileId: "default",
@@ -654,6 +657,7 @@ async function loadCatalogFirstPage(
     const result = await searchPackages({
       query: state.browseSearchSubmitted.trim(),
       visibleStatuses: state.visibleStatuses,
+      sortMode: state.browseSortMode,
       cursor: 0,
       pageSize: state.catalogPageSize
     });
@@ -722,6 +726,7 @@ async function loadCatalogNextPage() {
     const result = await searchPackages({
       query: state.browseSearchSubmitted.trim(),
       visibleStatuses: state.visibleStatuses,
+      sortMode: state.browseSortMode,
       cursor: state.catalogNextCursor,
       pageSize: state.catalogPageSize
     });
@@ -1981,6 +1986,13 @@ export const actions = {
     appState.update((state) => ({
       ...state,
       browseSearchSubmitted: state.browseSearchDraft.trim()
+    }));
+    await loadCatalogFirstPage();
+  },
+  async setBrowseSortMode(sortMode: BrowseSortMode) {
+    appState.update((state) => ({
+      ...state,
+      browseSortMode: sortMode
     }));
     await loadCatalogFirstPage();
   },

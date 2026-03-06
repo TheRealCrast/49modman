@@ -1,5 +1,6 @@
 <script lang="ts">
   import type {
+    BrowseSortMode,
     EffectiveStatus,
     InstallActionOptions,
     InstallRequest,
@@ -26,6 +27,7 @@
   }> = [];
   export let selectedPackage: ModPackage | undefined;
   export let searchDraft = "";
+  export let browseSortMode: BrowseSortMode = "mostDownloads";
   export let visibleStatuses: EffectiveStatus[] = [];
   export let busyPackageIds: string[] = [];
   export let isRefreshingCatalog = false;
@@ -36,6 +38,7 @@
   export let refreshLabel = "";
   export let onSearchDraftChange: (value: string) => void;
   export let onSubmitSearch: () => void;
+  export let onBrowseSortChange: (sortMode: BrowseSortMode) => void;
   export let onRefresh: () => void;
   export let onLoadMore: () => void;
   export let onToggleStatus: (status: EffectiveStatus) => void;
@@ -69,6 +72,7 @@
   let autoloadQueued = false;
   let selectedPackageBusy = false;
   let detailLockMessage = "Searching cached mods...";
+  let isListInteractionLocked = false;
 
   function buildCardInstallRequest(card: (typeof cards)[number]): InstallRequest {
     return {
@@ -126,6 +130,7 @@
 
   $: selectedPackageBusy = selectedPackage ? isPackageBusy(selectedPackage.id) : false;
   $: detailLockMessage = selectedPackageBusy ? "Waiting..." : "Searching cached mods...";
+  $: isListInteractionLocked = isLoadingFirstPage && cards.length > 0;
 </script>
 
 <section class="browse-grid">
@@ -145,6 +150,21 @@
             value={searchDraft}
             on:input={(event) => onSearchDraftChange((event.currentTarget as HTMLInputElement).value)}
           />
+        </label>
+
+        <label class="settings-select browse-sort-select">
+          <span>Sort</span>
+          <select
+            value={browseSortMode}
+            on:change={(event) =>
+              onBrowseSortChange((event.currentTarget as HTMLSelectElement).value as BrowseSortMode)}
+          >
+            <option value="mostDownloads">Most downloads</option>
+            <option value="compatibility">Compatibility</option>
+            <option value="lastUpdated">Last updated</option>
+            <option value="nameAsc">A-Z</option>
+            <option value="nameDesc">Z-A</option>
+          </select>
         </label>
 
         <button class="ghost-button icon-button" type="submit">
@@ -181,126 +201,139 @@
       </div>
     </section>
 
-    <section class="card-list list-scroll" bind:this={listElement} on:scroll={handleListScroll}>
-      {#if isLoadingFirstPage && cards.length === 0}
-        <div class="list-state panel browse-status-padded">
-          <p>Loading mods...</p>
-        </div>
-      {:else if catalogError && cards.length === 0}
-        <div class="list-state panel">
-          <p>{catalogError}</p>
-          <button class="ghost-button icon-button" type="button" on:click={onRefresh}>
-            <Icon label="Refresh" name="refresh" />
-            <span>Retry</span>
-          </button>
-        </div>
-      {:else if cards.length === 0}
-        <div class="list-state panel browse-status-padded">
-          <p>No mods matched this search.</p>
-        </div>
-      {:else}
-        {#if isLoadingFirstPage}
-          <div class="list-state compact-list-state panel">
-            <p>Searching cached mods...</p>
+    <div class="card-list-wrap">
+      <section
+        class="card-list list-scroll"
+        class:list-interaction-locked={isListInteractionLocked}
+        aria-busy={isListInteractionLocked}
+        bind:this={listElement}
+        on:scroll={handleListScroll}
+      >
+        {#if isLoadingFirstPage && cards.length === 0}
+          <div class="list-state panel browse-status-padded">
+            <p>Loading mods...</p>
           </div>
-        {/if}
-
-        {#each cards as card}
-          {@const packageInstalled = isPackageInstalled(card.id)}
-          {@const packageBusy = isPackageBusy(card.id)}
-          <article class="package-card panel">
-            <button class="package-card-select" type="button" on:click={() => onSelectPackage(card.id)}>
-              <div class="package-card-header">
-                <div>
-                  <p class="package-name">{card.fullName}</p>
-                  <p class="package-meta">by {card.author}</p>
-                </div>
-                <StatusPill status={card.effectiveStatus} />
-              </div>
-
-              <p class="package-summary">{card.summary}</p>
-
-              <div class="chip-row">
-                {#each card.categories.slice(0, 3) as category}
-                  <span class="category-chip">{category}</span>
-                {/each}
-              </div>
-            </button>
-
-            <div class="package-card-footer">
-              <div class="package-card-footer-copy">
-                <span>Recommended {card.recommendedVersion}</span>
-                {#if card.everyRelevantVersionBroken}
-                  <span class="warning-copy danger">Broken candidates only</span>
-                {/if}
-              </div>
-
-              <button
-                class={`solid-button icon-button package-install-button package-card-install-button ${packageBusy ? "busy" : packageInstalled ? "uninstall" : card.effectiveStatus}`}
-                type="button"
-                disabled={packageBusy}
-                aria-label={
-                  packageBusy
-                    ? `Working on ${card.fullName}`
-                    : packageInstalled
-                    ? `Uninstall ${card.fullName}`
-                    : `Install ${card.fullName} ${card.recommendedVersion}`
-                }
-                title={
-                  packageBusy
-                    ? "Working..."
-                    : packageInstalled
-                    ? "Uninstall"
-                    : `Install ${card.recommendedVersion}`
-                }
-                on:click={() => handleCardPrimaryAction(card)}
-              >
-                {#if packageBusy}
-                  <div class="loading-spinner" aria-hidden="true"></div>
-                {:else}
-                  <Icon
-                    label={
-                      packageInstalled
-                        ? `Uninstall ${card.fullName}`
-                        : `Install ${card.recommendedVersion}`
-                    }
-                    name={packageInstalled ? "trash" : "download"}
-                    forceWhite={true}
-                  />
-                {/if}
-                {#if !packageBusy}
-                  <span>{packageInstalled ? "Uninstall" : "Install"}</span>
-                {/if}
-              </button>
-            </div>
-          </article>
-        {/each}
-
-        {#if catalogError}
-          <div class="list-state compact-list-state panel">
+        {:else if catalogError && cards.length === 0}
+          <div class="list-state panel">
             <p>{catalogError}</p>
             <button class="ghost-button icon-button" type="button" on:click={onRefresh}>
               <Icon label="Refresh" name="refresh" />
               <span>Retry</span>
             </button>
           </div>
-        {/if}
-
-        {#if isLoadingNextPage}
-          <div class="list-state compact-list-state panel">
-            <p>Loading more mods...</p>
+        {:else if cards.length === 0}
+          <div class="list-state panel browse-status-padded">
+            <p>No mods matched this search.</p>
           </div>
-        {/if}
+        {:else}
+          {#each cards as card}
+            {@const packageInstalled = isPackageInstalled(card.id)}
+            {@const packageBusy = isPackageBusy(card.id)}
+            <article class="package-card panel">
+              <button class="package-card-select" type="button" on:click={() => onSelectPackage(card.id)}>
+                <div class="package-card-header">
+                  <div>
+                    <p class="package-name">{card.fullName}</p>
+                    <p class="package-meta">
+                      by {card.author} • {card.totalDownloads.toLocaleString()} downloads
+                    </p>
+                  </div>
+                  <StatusPill status={card.effectiveStatus} />
+                </div>
 
-        {#if !hasMore && cards.length > 0}
-          <div class="list-state compact-list-state panel">
-            <p>End of cached results.</p>
+                <p class="package-summary">{card.summary}</p>
+
+                <div class="chip-row">
+                  {#each card.categories.slice(0, 3) as category}
+                    <span class="category-chip">{category}</span>
+                  {/each}
+                </div>
+              </button>
+
+              <div class="package-card-footer">
+                <div class="package-card-footer-copy">
+                  <span>Recommended {card.recommendedVersion}</span>
+                  {#if card.everyRelevantVersionBroken}
+                    <span class="warning-copy danger">Broken candidates only</span>
+                  {/if}
+                </div>
+
+                <button
+                  class={`solid-button icon-button package-install-button package-card-install-button ${packageBusy ? "busy" : packageInstalled ? "uninstall" : card.effectiveStatus}`}
+                  type="button"
+                  disabled={packageBusy}
+                  aria-label={
+                    packageBusy
+                      ? `Working on ${card.fullName}`
+                      : packageInstalled
+                      ? `Uninstall ${card.fullName}`
+                      : `Install ${card.fullName} ${card.recommendedVersion}`
+                  }
+                  title={
+                    packageBusy
+                      ? "Working..."
+                      : packageInstalled
+                      ? "Uninstall"
+                      : `Install ${card.recommendedVersion}`
+                  }
+                  on:click={() => handleCardPrimaryAction(card)}
+                >
+                  {#if packageBusy}
+                    <div class="loading-spinner" aria-hidden="true"></div>
+                  {:else}
+                    <Icon
+                      label={
+                        packageInstalled
+                          ? `Uninstall ${card.fullName}`
+                          : `Install ${card.recommendedVersion}`
+                      }
+                      name={packageInstalled ? "trash" : "download"}
+                      forceWhite={true}
+                    />
+                  {/if}
+                  {#if !packageBusy}
+                    <span>{packageInstalled ? "Uninstall" : "Install"}</span>
+                  {/if}
+                </button>
+              </div>
+            </article>
+          {/each}
+
+          {#if catalogError}
+            <div class="list-state compact-list-state panel">
+              <p>{catalogError}</p>
+              <button class="ghost-button icon-button" type="button" on:click={onRefresh}>
+                <Icon label="Refresh" name="refresh" />
+                <span>Retry</span>
+              </button>
+            </div>
+          {/if}
+
+          {#if isLoadingNextPage}
+            <div class="list-state compact-list-state panel">
+              <p>Loading more mods...</p>
+            </div>
+          {/if}
+
+          {#if !hasMore && cards.length > 0}
+            <div class="list-state compact-list-state panel">
+              <p>End of cached results.</p>
+            </div>
+          {/if}
+
+          <div class="list-sentinel"></div>
+        {/if}
+      </section>
+
+      {#if isListInteractionLocked}
+        <div class="detail-lock-overlay browse-list-lock-overlay" aria-live="polite">
+          <div class="detail-lock-card">
+            <div class="loading-spinner" aria-hidden="true"></div>
+            <p>Searching cached mods...</p>
           </div>
-        {/if}
-
-        <div class="list-sentinel"></div>
+        </div>
       {/if}
-    </section>
+    </div>
   </div>
 
   <PackageDetail

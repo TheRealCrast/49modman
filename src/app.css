@@ -321,6 +321,11 @@ img {
   max-width: min(100%, 360px);
 }
 
+.browse-sort-select {
+  min-width: 190px;
+  max-width: min(100%, 220px);
+}
+
 .launch-actions,
 .toolbar-row,
 .filter-row,
@@ -747,6 +752,10 @@ img {
   padding: 16px;
 }
 
+.browse-list-lock-overlay {
+  z-index: 10;
+}
+
 .detail-lock-card {
   display: inline-flex;
   align-items: center;
@@ -1148,6 +1157,25 @@ img {
   overflow: auto;
   padding-right: 4px;
   align-content: start;
+}
+
+.card-list {
+  position: relative;
+}
+
+.card-list-wrap {
+  position: relative;
+  min-height: 0;
+  display: grid;
+}
+
+.card-list.list-interaction-locked {
+  overflow: hidden;
+}
+
+.card-list-wrap > .card-list {
+  min-height: 0;
+  height: 100%;
 }
 
 .list-scroll {
