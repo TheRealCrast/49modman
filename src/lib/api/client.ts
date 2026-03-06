@@ -36,6 +36,7 @@ import {
   openCacheFolderMock,
   openActiveProfileFolderMock,
   openProfilesFolderMock,
+  previewExportProfilePackMock,
   previewClearCacheUnreferencedMock,
   setInstalledModEnabledMock,
   queueInstallToCacheMock,
@@ -68,6 +69,7 @@ type CommandMap = {
   open_profiles_folder: typeof openProfilesFolderMock;
   open_active_profile_folder: typeof openActiveProfileFolderMock;
   get_profiles_storage_summary: typeof getProfilesStorageSummaryMock;
+  preview_export_profile_pack: typeof previewExportProfilePackMock;
   export_profile_pack: typeof exportProfilePackMock;
   preview_import_profile_pack: typeof previewImportProfilePackMock;
   import_profile_pack: typeof importProfilePackMock;
@@ -120,6 +122,7 @@ const mockCommands: CommandMap = {
   open_profiles_folder: openProfilesFolderMock,
   open_active_profile_folder: openActiveProfileFolderMock,
   get_profiles_storage_summary: getProfilesStorageSummaryMock,
+  preview_export_profile_pack: previewExportProfilePackMock,
   export_profile_pack: exportProfilePackMock,
   preview_import_profile_pack: previewImportProfilePackMock,
   import_profile_pack: importProfilePackMock,

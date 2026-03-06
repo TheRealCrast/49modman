@@ -66,6 +66,8 @@ pub struct DownloadJobDto {
 pub struct QueueInstallToCacheInput {
     pub package_id: String,
     pub version_id: String,
+    #[serde(default)]
+    pub profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,10 +94,13 @@ pub fn queue_install_to_cache(
         let connection = state.connection.lock().map_err(|_| {
             InternalError::app("DB_INIT_FAILED", "Failed to lock the SQLite connection.")
         })?;
-        let profile_id = get_active_profile_id(&connection)?;
-        let mut info = load_version_cache_info(&connection, &input.package_id, &input.version_id)?;
-        info.profile_id = profile_id;
-        info
+        let profile_id = resolve_target_profile_id(&connection, input.profile_id.as_deref())?;
+        load_version_cache_info(
+            &connection,
+            &profile_id,
+            &input.package_id,
+            &input.version_id,
+        )?
     };
 
     {
@@ -233,10 +238,11 @@ pub fn get_task(
 
 fn load_version_cache_info(
     connection: &Connection,
+    profile_id: &str,
     package_id: &str,
     version_id: &str,
 ) -> Result<VersionCacheInfo, InternalError> {
-    connection
+    let matched_by_package = connection
         .query_row(
             "SELECT p.id, v.id, p.full_name, v.version_number, v.download_url
              FROM packages p
@@ -246,7 +252,7 @@ fn load_version_cache_info(
             params![package_id, version_id],
             |row| {
                 Ok(VersionCacheInfo {
-                    profile_id: String::new(),
+                    profile_id: profile_id.to_string(),
                     package_id: row.get(0)?,
                     version_id: row.get(1)?,
                     package_name: row.get(2)?,
@@ -255,23 +261,77 @@ fn load_version_cache_info(
                 })
             },
         )
-        .optional()?
-        .ok_or_else(|| {
-            InternalError::app(
-                "PACKAGE_NOT_FOUND",
-                "That package version is not available in the cached Thunderstore catalog.",
+        .optional()?;
+
+    let resolved_info = match matched_by_package {
+        Some(info) => info,
+        None => connection
+            .query_row(
+                "SELECT p.id, v.id, p.full_name, v.version_number, v.download_url
+                 FROM package_versions v
+                 INNER JOIN packages p ON p.id = v.package_id
+                 WHERE v.id = ?1
+                 LIMIT 1",
+                params![version_id],
+                |row| {
+                    Ok(VersionCacheInfo {
+                        profile_id: profile_id.to_string(),
+                        package_id: row.get(0)?,
+                        version_id: row.get(1)?,
+                        package_name: row.get(2)?,
+                        version_number: row.get(3)?,
+                        download_url: row.get(4)?,
+                    })
+                },
             )
-        })
-        .and_then(|info| {
-            if info.download_url.trim().is_empty() {
-                Err(InternalError::app(
+            .optional()?
+            .ok_or_else(|| {
+                InternalError::app(
                     "PACKAGE_NOT_FOUND",
-                    "Version cannot be downloaded from local metadata. Refresh the catalog and try again.",
-                ))
+                    "That package version is not available in the cached Thunderstore catalog.",
+                )
+            })?,
+    };
+
+    if resolved_info.package_id != package_id {
+        eprintln!(
+            "[profile-pack] hydration queue resolved package by version_id requested_package_id={} resolved_package_id={} version_id={}",
+            package_id, resolved_info.package_id, version_id
+        );
+    }
+
+    if resolved_info.download_url.trim().is_empty() {
+        Err(InternalError::app(
+            "PACKAGE_NOT_FOUND",
+            "Version cannot be downloaded from local metadata. Refresh the catalog and try again.",
+        ))
+    } else {
+        Ok(resolved_info)
+    }
+}
+
+fn resolve_target_profile_id(
+    connection: &Connection,
+    requested_profile_id: Option<&str>,
+) -> Result<String, InternalError> {
+    let requested_profile_id = requested_profile_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match requested_profile_id {
+        Some(profile_id) => {
+            let exists = get_profile_detail(connection, profile_id)?.is_some();
+            if exists {
+                Ok(profile_id.to_string())
             } else {
-                Ok(info)
+                Err(InternalError::app(
+                    "PROFILE_NOT_FOUND",
+                    format!("Profile {profile_id} does not exist."),
+                ))
             }
-        })
+        }
+        None => get_active_profile_id(connection),
+    }
 }
 
 fn find_active_task_for_version(

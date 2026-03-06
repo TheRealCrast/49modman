@@ -9,8 +9,15 @@
 
   let doNotShowAgain = false;
 
-  $: modCount = preview.mods.length;
+  $: listedMods = preview.mods ?? [];
+  $: modCount = listedMods.length;
   $: profileName = preview.profileName?.trim() || "Imported profile";
+  $: payloadModeLabel =
+    preview.payloadMode === "full"
+      ? "Full payload pack"
+      : preview.payloadMode === "hybrid"
+        ? "Hybrid payload pack"
+        : "Compact metadata pack";
 </script>
 
 <div class="modal-scrim" role="presentation">
@@ -23,6 +30,12 @@
     <p class="modal-copy">
       <strong>{profileName}</strong> will import {modCount} {modCount === 1 ? "mod" : "mods"}.
     </p>
+    <p class="warning-copy">
+      {payloadModeLabel} ({preview.embeddedModCount}/{preview.referencedModCount} mod payloads embedded).
+    </p>
+    {#if preview.hasLegacyRuntimePluginsPayload}
+      <p class="warning-copy">This pack also includes legacy runtime plugin payload files.</p>
+    {/if}
 
     <div class="modal-note">
       <p class="dependants-title">Mods to install</p>
@@ -30,7 +43,7 @@
         <p class="warning-copy">No mods were listed in this pack.</p>
       {:else}
         <ul class="import-pack-list">
-          {#each preview.mods as mod (`${mod.packageId}:${mod.versionId}`)}
+          {#each listedMods as mod (`${mod.packageId}:${mod.versionId}`)}
             <li>
               <strong>{mod.packageName}</strong>
               <span>{mod.versionNumber}</span>

@@ -352,9 +352,33 @@ export interface ExportProfilePackResult {
   modCount?: number;
 }
 
+export interface ExportProfilePackInput {
+  profileId: string;
+  embedUnavailablePayloads?: boolean;
+}
+
+export interface PreviewExportProfilePackUnavailableModDto {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+  unavailableReason: string;
+}
+
+export interface PreviewExportProfilePackResult {
+  profileId: string;
+  profileName: string;
+  modCount: number;
+  unavailableMods: PreviewExportProfilePackUnavailableModDto[];
+}
+
 export interface ImportProfilePackResult {
   cancelled: boolean;
   sourcePath?: string;
+  payloadMode: "compact" | "hybrid" | "full";
+  embeddedModCount: number;
+  referencedModCount: number;
+  hasLegacyRuntimePluginsPayload: boolean;
   profile?: ProfileDetailDto;
 }
 
@@ -369,6 +393,10 @@ export interface ImportProfilePackPreviewResult {
   cancelled: boolean;
   sourcePath?: string;
   profileName?: string;
+  payloadMode: "compact" | "hybrid" | "full";
+  embeddedModCount: number;
+  referencedModCount: number;
+  hasLegacyRuntimePluginsPayload: boolean;
   mods: ImportProfilePackPreviewModDto[];
 }
 
@@ -434,6 +462,7 @@ export interface DownloadJobDto {
 export interface QueueInstallToCacheInput {
   packageId: string;
   versionId: string;
+  profileId?: string;
 }
 
 export interface QueueInstallToCacheResult {
@@ -576,6 +605,11 @@ export interface ImportProfilePackModalState {
   isImporting: boolean;
 }
 
+export interface ExportProfilePackModalState {
+  preview: PreviewExportProfilePackResult;
+  isExporting: boolean;
+}
+
 export type ResetProgressStep = "deleting" | "restoring" | "browse" | "finalizing";
 
 export interface ResetProgressState {
@@ -599,6 +633,7 @@ export interface AppState {
   downloads: DownloadJobDto[];
   cacheSummary?: CacheSummaryDto;
   clearUnreferencedCacheModal: CachePrunePreviewDto | null;
+  exportProfilePackModal: ExportProfilePackModalState | null;
   importProfilePackModal: ImportProfilePackModalState | null;
   profilesStorageSummary?: ProfilesStorageSummaryDto;
   activeCacheTaskIds: string[];

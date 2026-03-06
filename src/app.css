@@ -1818,6 +1818,35 @@ img {
   margin: 0;
 }
 
+.export-pack-modal {
+  width: min(620px, 100%);
+  max-height: min(82vh, 760px);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.export-pack-modal .modal-copy {
+  margin: 0;
+}
+
+.export-pack-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+  max-height: min(40vh, 320px);
+  overflow: auto;
+}
+
+.export-pack-list li {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
 .import-pack-list {
   margin: 0;
   padding-left: 18px;

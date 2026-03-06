@@ -71,6 +71,7 @@ fn main() {
             commands::profiles::open_profiles_folder,
             commands::profiles::open_active_profile_folder,
             commands::profiles::get_profiles_storage_summary,
+            commands::profiles::preview_export_profile_pack,
             commands::profiles::export_profile_pack,
             commands::profiles::preview_import_profile_pack,
             commands::profiles::import_profile_pack,

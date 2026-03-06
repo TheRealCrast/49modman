@@ -4,6 +4,7 @@
   import ClearUnreferencedCacheModal from "./components/ClearUnreferencedCacheModal.svelte";
   import DependencyModal from "./components/DependencyModal.svelte";
   import DownloadsScreen from "./components/DownloadsScreen.svelte";
+  import ExportProfilePackDecisionModal from "./components/ExportProfilePackDecisionModal.svelte";
   import Icon from "./components/Icon.svelte";
   import ImportProfilePackModal from "./components/ImportProfilePackModal.svelte";
   import InstallWarningModal from "./components/InstallWarningModal.svelte";
@@ -352,6 +353,15 @@
     isImporting={$appState.importProfilePackModal.isImporting}
     onCancel={actions.dismissImportProfilePackModal}
     onConfirm={actions.confirmImportProfilePackModal}
+  />
+{/if}
+
+{#if $appState.exportProfilePackModal}
+  <ExportProfilePackDecisionModal
+    preview={$appState.exportProfilePackModal.preview}
+    isExporting={$appState.exportProfilePackModal.isExporting}
+    onCancel={actions.dismissExportProfilePackModal}
+    onConfirm={actions.confirmExportProfilePackModal}
   />
 {/if}
 

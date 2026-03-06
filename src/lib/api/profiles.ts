@@ -2,10 +2,12 @@ import { invokeCommand } from "./client";
 import type {
   CreateProfileInput,
   DeleteProfileResult,
+  ExportProfilePackInput,
   ExportProfilePackResult,
   GetUninstallDependantsInput,
   ImportProfilePackPreviewResult,
   ImportProfilePackResult,
+  PreviewExportProfilePackResult,
   ProfileDetailDto,
   ProfilesStorageSummaryDto,
   ProfileSummaryDto,
@@ -59,8 +61,12 @@ export function getProfilesStorageSummary(): Promise<ProfilesStorageSummaryDto> 
   return invokeCommand("get_profiles_storage_summary");
 }
 
-export function exportProfilePack(profileId: string): Promise<ExportProfilePackResult> {
-  return invokeCommand("export_profile_pack", { profileId });
+export function exportProfilePack(input: ExportProfilePackInput): Promise<ExportProfilePackResult> {
+  return invokeCommand("export_profile_pack", { input });
+}
+
+export function previewExportProfilePack(profileId: string): Promise<PreviewExportProfilePackResult> {
+  return invokeCommand("preview_export_profile_pack", { profileId });
 }
 
 export function previewImportProfilePack(): Promise<ImportProfilePackPreviewResult> {

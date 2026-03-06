@@ -32,6 +32,7 @@ import {
   listProfiles as listProfilesApi,
   openActiveProfileFolder as openActiveProfileFolderApi,
   openProfilesFolder as openProfilesFolderApi,
+  previewExportProfilePack as previewExportProfilePackApi,
   resetAllData as resetAllDataApi,
   setActiveProfile as setActiveProfileApi,
   setInstalledModEnabled as setInstalledModEnabledApi,
@@ -60,6 +61,7 @@ import type {
   EffectiveStatus,
   InstallActionOptions,
   FocusedVersionState,
+  ImportProfilePackPreviewModDto,
   ImportProfilePackPreviewResult,
   InstallRequest,
   LaunchMode,
@@ -110,6 +112,7 @@ const initialState: AppState = {
   downloads: [],
   cacheSummary: undefined,
   clearUnreferencedCacheModal: null,
+  exportProfilePackModal: null,
   profilesStorageSummary: undefined,
   activeCacheTaskIds: [],
   busyPackageIds: [],
@@ -2034,6 +2037,157 @@ function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla"
   };
 }
 
+type PostImportHydrationOutcome = {
+  referencedUniqueCount: number;
+  importedImmediateCount: number;
+  queuedCount: number;
+  failedQueueCount: number;
+  skippedCount: number;
+  failedQueueDetails: string[];
+};
+
+function packVersionKey(packageId: string, versionId: string) {
+  return `${packageId}::${versionId}`;
+}
+
+function derivePostImportHydrationMods(
+  previewMods: ImportProfilePackPreviewModDto[],
+  installedMods: ProfileInstalledModDto[]
+) {
+  const installedKeys = new Set(
+    installedMods
+      .map((entry) => packVersionKey(entry.packageId.trim(), entry.versionId.trim()))
+      .filter((key) => key !== "::")
+  );
+  const seenReferencedKeys = new Set<string>();
+  const hydrationMods: ImportProfilePackPreviewModDto[] = [];
+  let invalidEntryCount = 0;
+  let duplicateEntryCount = 0;
+
+  for (const mod of previewMods) {
+    const packageId = mod.packageId.trim();
+    const versionId = mod.versionId.trim();
+    if (!packageId || !versionId) {
+      invalidEntryCount += 1;
+      continue;
+    }
+
+    const key = packVersionKey(packageId, versionId);
+    if (seenReferencedKeys.has(key)) {
+      duplicateEntryCount += 1;
+      continue;
+    }
+
+    seenReferencedKeys.add(key);
+    if (installedKeys.has(key)) {
+      continue;
+    }
+
+    hydrationMods.push({
+      ...mod,
+      packageId,
+      versionId
+    });
+  }
+
+  return {
+    hydrationMods,
+    referencedUniqueCount: seenReferencedKeys.size,
+    importedImmediateCount: seenReferencedKeys.size - hydrationMods.length,
+    skippedCount: invalidEntryCount + duplicateEntryCount
+  };
+}
+
+async function queuePostImportHydration(
+  preview: ImportProfilePackPreviewResult,
+  importedProfile: ProfileDetailDto
+): Promise<PostImportHydrationOutcome> {
+  const hydrationPlan = derivePostImportHydrationMods(
+    preview.mods ?? [],
+    importedProfile.installedMods
+  );
+  let queuedCount = 0;
+  const failedQueueDetails: string[] = [];
+
+  for (const mod of hydrationPlan.hydrationMods) {
+    try {
+      await queueInstallToCache({
+        packageId: mod.packageId,
+        versionId: mod.versionId,
+        profileId: importedProfile.id
+      });
+      queuedCount += 1;
+    } catch (error) {
+      const queueError = describeUnknownError(
+        error,
+        `Failed to queue hydration for ${mod.packageName} ${mod.versionNumber}.`
+      );
+      failedQueueDetails.push(`${mod.packageName} ${mod.versionNumber}: ${queueError}`);
+      console.error("Failed to queue post-import hydration install", {
+        profileId: importedProfile.id,
+        packageId: mod.packageId,
+        versionId: mod.versionId,
+        error
+      });
+    }
+  }
+
+  if (queuedCount > 0) {
+    await Promise.all([loadActiveDownloads(), loadCacheSummary()]);
+  }
+
+  const outcome = {
+    referencedUniqueCount: hydrationPlan.referencedUniqueCount,
+    importedImmediateCount: hydrationPlan.importedImmediateCount,
+    queuedCount,
+    failedQueueCount: failedQueueDetails.length,
+    skippedCount: hydrationPlan.skippedCount,
+    failedQueueDetails
+  };
+
+  console.info("[profile-pack] hydration queue outcomes", {
+    profileId: importedProfile.id,
+    sourcePath: preview.sourcePath,
+    payloadMode: preview.payloadMode,
+    referencedUniqueCount: outcome.referencedUniqueCount,
+    importedImmediateCount: outcome.importedImmediateCount,
+    queuedCount: outcome.queuedCount,
+    failedQueueCount: outcome.failedQueueCount,
+    skippedCount: outcome.skippedCount
+  });
+  if (outcome.failedQueueCount > 0) {
+    console.warn("[profile-pack] hydration queue failures", {
+      profileId: importedProfile.id,
+      failures: outcome.failedQueueDetails
+    });
+  }
+
+  return outcome;
+}
+
+function buildImportHydrationActivityDetail(
+  profileName: string,
+  outcome: PostImportHydrationOutcome
+) {
+  const failedOrSkippedCount = outcome.failedQueueCount + outcome.skippedCount;
+  let detail = `${profileName} was imported from .49pack.`;
+  detail += ` Imported immediately from pack payload: ${outcome.importedImmediateCount}.`;
+  detail += ` Queued for hydration: ${outcome.queuedCount}.`;
+  detail += ` Failed/skipped: ${failedOrSkippedCount}.`;
+
+  if (outcome.failedQueueCount > 0) {
+    const previewLimit = 2;
+    const previewDetails = outcome.failedQueueDetails.slice(0, previewLimit).join("; ");
+    const remaining = outcome.failedQueueCount - previewLimit;
+    detail += ` Queue failures: ${previewDetails}${remaining > 0 ? `; +${remaining} more` : ""}.`;
+  }
+
+  return {
+    detail,
+    tone: failedOrSkippedCount > 0 ? ("warning" as const) : ("positive" as const)
+  };
+}
+
 async function importProfilePackUsingPreview(preview: ImportProfilePackPreviewResult) {
   const sourcePath = preview.sourcePath?.trim();
   if (!sourcePath) {
@@ -2045,13 +2199,53 @@ async function importProfilePackUsingPreview(preview: ImportProfilePackPreviewRe
     return null;
   }
 
-  const profiles = await listProfilesApi();
-  const profilesStorageSummary = await getProfilesStorageSummaryApi();
+  const hydrationOutcome = await queuePostImportHydration(preview, result.profile);
+  const [profiles, profilesStorageSummary] = await Promise.all([
+    listProfilesApi(),
+    getProfilesStorageSummaryApi()
+  ]);
   return {
     importedProfile: result.profile,
     profiles,
-    profilesStorageSummary
+    profilesStorageSummary,
+    hydrationOutcome
   };
+}
+
+async function exportProfilePackWithActivity(options: {
+  profileId: string;
+  fallbackProfileName: string;
+  fallbackModCount: number;
+  embedUnavailablePayloads: boolean;
+}) {
+  const result = await exportProfilePackApi({
+    profileId: options.profileId,
+    embedUnavailablePayloads: options.embedUnavailablePayloads
+  });
+  if (result.cancelled) {
+    return { cancelled: true as const };
+  }
+
+  const exportedName = result.profileName ?? options.fallbackProfileName;
+  const exportedModCount = result.modCount ?? options.fallbackModCount;
+  const exportedPath = result.path ?? "";
+
+  appState.update((state) =>
+    appendActivity(
+      {
+        ...state,
+        profileError: null,
+        desktopError: null
+      },
+      withActivity(
+        "Profile exported",
+        `${exportedName} was exported as .49pack (${exportedModCount} ${exportedModCount === 1 ? "mod" : "mods"}).${exportedPath ? ` ${exportedPath}` : ""}`,
+        "positive"
+      )
+    )
+  );
+
+  return { cancelled: false as const };
 }
 
 export const actions = {
@@ -3117,32 +3311,86 @@ export const actions = {
     }
 
     try {
-      const result = await exportProfilePackApi(selectedProfile.id);
-      if (result.cancelled) {
+      const preview = await previewExportProfilePackApi(selectedProfile.id);
+      const unavailableMods = preview.unavailableMods ?? [];
+      if (unavailableMods.length > 0) {
+        appState.update((state) => ({
+          ...state,
+          exportProfilePackModal: {
+            preview: {
+              ...preview,
+              unavailableMods
+            },
+            isExporting: false
+          },
+          profileError: null,
+          desktopError: null
+        }));
         return;
       }
 
-      const exportedName = result.profileName ?? selectedProfile.name;
-      const exportedModCount = result.modCount ?? selectedProfile.installedMods.length;
-      const exportedPath = result.path ?? "";
-
-      appState.update((state) =>
-        appendActivity(
-          {
-            ...state,
-            profileError: null,
-            desktopError: null
-          },
-          withActivity(
-            "Profile exported",
-            `${exportedName} was exported as .49pack (${exportedModCount} ${exportedModCount === 1 ? "mod" : "mods"}).${exportedPath ? ` ${exportedPath}` : ""}`,
-            "positive"
-          )
-        )
-      );
+      await exportProfilePackWithActivity({
+        profileId: selectedProfile.id,
+        fallbackProfileName: preview.profileName,
+        fallbackModCount: preview.modCount,
+        embedUnavailablePayloads: false
+      });
     } catch (error) {
       appState.update((state) => ({
         ...state,
+        profileError: error instanceof Error ? error.message : "Failed to export the profile.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to export the desktop profile pack."
+            : state.desktopError
+      }));
+    }
+  },
+  dismissExportProfilePackModal() {
+    appState.update((state) =>
+      state.exportProfilePackModal?.isExporting
+        ? state
+        : {
+            ...state,
+            exportProfilePackModal: null
+          }
+    );
+  },
+  async confirmExportProfilePackModal(embedUnavailablePayloads: boolean) {
+    const modalState = get(appState).exportProfilePackModal;
+    if (!modalState || modalState.isExporting) {
+      return;
+    }
+
+    appState.update((state) => ({
+      ...state,
+      exportProfilePackModal: state.exportProfilePackModal
+        ? {
+            ...state.exportProfilePackModal,
+            isExporting: true
+          }
+        : null,
+      profileError: null,
+      desktopError: null
+    }));
+
+    try {
+      await exportProfilePackWithActivity({
+        profileId: modalState.preview.profileId,
+        fallbackProfileName: modalState.preview.profileName,
+        fallbackModCount: modalState.preview.modCount,
+        embedUnavailablePayloads
+      });
+      appState.update((state) => ({
+        ...state,
+        exportProfilePackModal: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        exportProfilePackModal: null,
         profileError: error instanceof Error ? error.message : "Failed to export the profile.",
         desktopError:
           state.runtimeKind === "tauri"
@@ -3167,7 +3415,10 @@ export const actions = {
         }
 
         const importedProfile = imported.importedProfile;
-        const importedModCount = importedProfile.installedMods.length;
+        const importActivity = buildImportHydrationActivityDetail(
+          importedProfile.name,
+          imported.hydrationOutcome
+        );
 
         appState.update((state) =>
           appendActivity(
@@ -3181,8 +3432,8 @@ export const actions = {
             },
             withActivity(
               "Profile imported",
-              `${importedProfile.name} was imported from .49pack (${importedModCount} ${importedModCount === 1 ? "mod" : "mods"}).`,
-              "positive"
+              importActivity.detail,
+              importActivity.tone
             )
           )
         );
@@ -3261,7 +3512,10 @@ export const actions = {
       }
 
       const importedProfile = imported.importedProfile;
-      const importedModCount = importedProfile.installedMods.length;
+      const importActivity = buildImportHydrationActivityDetail(
+        importedProfile.name,
+        imported.hydrationOutcome
+      );
 
       appState.update((state) =>
         appendActivity(
@@ -3275,8 +3529,8 @@ export const actions = {
           },
           withActivity(
             "Profile imported",
-            `${importedProfile.name} was imported from .49pack (${importedModCount} ${importedModCount === 1 ? "mod" : "mods"}).`,
-            "positive"
+            importActivity.detail,
+            importActivity.tone
           )
         )
       );
@@ -3440,6 +3694,7 @@ export const actions = {
         uninstallDependantsModal: null,
         memoryDiagnosticsModal: null,
         clearUnreferencedCacheModal: null,
+        exportProfilePackModal: null,
         importProfilePackModal: null,
         dependencyModal: null,
         focusedVersion: null,

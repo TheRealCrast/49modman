@@ -21,14 +21,16 @@ import type {
   LaunchResult,
   LaunchVanillaInput,
   ProtonRuntime,
+  PreviewExportProfilePackResult,
   RuntimeStageBuildResult,
   DependencySummaryItemDto,
   CreateProfileInput,
   DependencyNodeDto,
-  DeleteProfileResult,
-  DownloadJobDto,
-  EffectiveStatus,
-  ExportProfilePackResult,
+    DeleteProfileResult,
+    DownloadJobDto,
+    EffectiveStatus,
+    ExportProfilePackInput,
+    ExportProfilePackResult,
   GetUninstallDependantsInput,
   ImportProfilePackPreviewResult,
   GetVersionDependenciesInput,
@@ -993,16 +995,36 @@ export async function getProfilesStorageSummaryMock(): Promise<ProfilesStorageSu
 }
 
 export async function exportProfilePackMock(
-  _profileId: string
+  _input: ExportProfilePackInput
 ): Promise<ExportProfilePackResult> {
   return {
     cancelled: true
   };
 }
 
+export async function previewExportProfilePackMock(
+  profileId: string
+): Promise<PreviewExportProfilePackResult> {
+  const profile = currentProfiles().find((entry) => entry.id === profileId);
+  if (!profile) {
+    throw new Error(`Profile ${profileId} does not exist.`);
+  }
+
+  return {
+    profileId: profile.id,
+    profileName: profile.name,
+    modCount: 0,
+    unavailableMods: []
+  };
+}
+
 export async function previewImportProfilePackMock(): Promise<ImportProfilePackPreviewResult> {
   return {
     cancelled: true,
+    payloadMode: "compact",
+    embeddedModCount: 0,
+    referencedModCount: 0,
+    hasLegacyRuntimePluginsPayload: false,
     mods: []
   };
 }
@@ -1011,7 +1033,11 @@ export async function importProfilePackMock(
   _sourcePath: string
 ): Promise<ImportProfilePackResult> {
   return {
-    cancelled: true
+    cancelled: true,
+    payloadMode: "compact",
+    embeddedModCount: 0,
+    referencedModCount: 0,
+    hasLegacyRuntimePluginsPayload: false
   };
 }
 

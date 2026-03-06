@@ -149,12 +149,44 @@ pub struct ExportProfilePackResult {
     pub mod_count: Option<usize>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportProfilePackInput {
+    pub profile_id: String,
+    #[serde(default)]
+    pub embed_unavailable_payloads: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewExportProfilePackUnavailableModDto {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+    pub unavailable_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewExportProfilePackResult {
+    pub profile_id: String,
+    pub profile_name: String,
+    pub mod_count: usize,
+    #[serde(default)]
+    pub unavailable_mods: Vec<PreviewExportProfilePackUnavailableModDto>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportProfilePackResult {
     pub cancelled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
+    pub payload_mode: String,
+    pub embedded_mod_count: usize,
+    pub referenced_mod_count: usize,
+    pub has_legacy_runtime_plugins_payload: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<ProfileDetailDto>,
 }
@@ -176,7 +208,11 @@ pub struct ImportProfilePackPreviewResult {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub payload_mode: String,
+    pub embedded_mod_count: usize,
+    pub referenced_mod_count: usize,
+    pub has_legacy_runtime_plugins_payload: bool,
+    #[serde(default)]
     pub mods: Vec<ImportProfilePackPreviewModDto>,
 }
 
@@ -648,10 +684,104 @@ pub fn get_profile_storage_size_bytes(
     Ok(bytes.min(i64::MAX as u64) as i64)
 }
 
+fn collect_unavailable_profile_pack_mods(
+    connection: &Connection,
+    installed_mods: &[ProfileManifestModEntry],
+) -> Result<Vec<PreviewExportProfilePackUnavailableModDto>, InternalError> {
+    let mut availability_statement = connection.prepare(
+        "SELECT download_url
+         FROM package_versions
+         WHERE package_id = ?1
+           AND id = ?2
+         LIMIT 1",
+    )?;
+
+    let mut unavailable_mods = Vec::new();
+    for entry in installed_mods {
+        let download_url = availability_statement
+            .query_row(params![entry.package_id, entry.version_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?;
+
+        let unavailable_reason = match download_url {
+            None => Some("missingVersion"),
+            Some(url) if url.trim().is_empty() => Some("missingDownloadUrl"),
+            _ => None,
+        };
+
+        if let Some(unavailable_reason) = unavailable_reason {
+            unavailable_mods.push(PreviewExportProfilePackUnavailableModDto {
+                package_id: entry.package_id.clone(),
+                package_name: entry.package_name.clone(),
+                version_id: entry.version_id.clone(),
+                version_number: entry.version_number.clone(),
+                unavailable_reason: unavailable_reason.to_string(),
+            });
+        }
+    }
+
+    unavailable_mods.sort_by(|left, right| {
+        left.package_name
+            .to_lowercase()
+            .cmp(&right.package_name.to_lowercase())
+            .then_with(|| left.version_number.cmp(&right.version_number))
+    });
+
+    let missing_version_count = unavailable_mods
+        .iter()
+        .filter(|entry| entry.unavailable_reason == "missingVersion")
+        .count();
+    let missing_download_url_count = unavailable_mods
+        .iter()
+        .filter(|entry| entry.unavailable_reason == "missingDownloadUrl")
+        .count();
+    eprintln!(
+        "[profile-pack] unavailable detection checked_mods={} unavailable_mods={} missing_version={} missing_download_url={}",
+        installed_mods.len(),
+        unavailable_mods.len(),
+        missing_version_count,
+        missing_download_url_count
+    );
+
+    Ok(unavailable_mods)
+}
+
+pub fn preview_export_profile_pack(
+    state: &AppState,
+    connection: &Connection,
+    profile_id: &str,
+) -> Result<PreviewExportProfilePackResult, InternalError> {
+    let profile = get_profile_detail(connection, profile_id)?.ok_or_else(|| {
+        InternalError::app(
+            "PROFILE_NOT_FOUND",
+            format!("Profile {profile_id} does not exist."),
+        )
+    })?;
+
+    ensure_profile_storage(state, connection, profile_id)?;
+    let installed_mods = read_profile_manifest_mods(state, profile_id)?;
+    let unavailable_mods = collect_unavailable_profile_pack_mods(connection, &installed_mods)?;
+    eprintln!(
+        "[profile-pack] export preview profile_id={} installed_mods={} unavailable_mods={}",
+        profile.id,
+        installed_mods.len(),
+        unavailable_mods.len()
+    );
+
+    Ok(PreviewExportProfilePackResult {
+        profile_id: profile.id,
+        profile_name: profile.name,
+        mod_count: installed_mods.len(),
+        unavailable_mods,
+    })
+}
+
 pub fn export_profile_pack(
     state: &AppState,
     connection: &Connection,
     profile_id: &str,
+    embed_unavailable_payloads: bool,
 ) -> Result<ExportProfilePackResult, InternalError> {
     let profile = get_profile_detail(connection, profile_id)?.ok_or_else(|| {
         InternalError::app(
@@ -662,6 +792,15 @@ pub fn export_profile_pack(
 
     ensure_profile_storage(state, connection, profile_id)?;
     let installed_mods = read_profile_manifest_mods(state, profile_id)?;
+    let unavailable_mod_keys = if embed_unavailable_payloads {
+        collect_unavailable_profile_pack_mods(connection, &installed_mods)?
+            .into_iter()
+            .map(|entry| installed_node_key(&entry.package_id, &entry.version_id))
+            .collect::<HashSet<_>>()
+    } else {
+        HashSet::new()
+    };
+    let unavailable_mod_count = unavailable_mod_keys.len();
 
     let default_file_name = format!("{}.49pack", sanitize_path_segment(&profile.name));
     let Some(mut output_path) = FileDialog::new()
@@ -670,6 +809,12 @@ pub fn export_profile_pack(
         .set_file_name(&default_file_name)
         .save_file()
     else {
+        eprintln!(
+            "[profile-pack] export cancelled profile_id={} embed_unavailable_payloads={} unavailable_mods={}",
+            profile.id,
+            embed_unavailable_payloads,
+            unavailable_mod_count
+        );
         return Ok(ExportProfilePackResult {
             cancelled: true,
             path: None,
@@ -678,6 +823,13 @@ pub fn export_profile_pack(
             mod_count: None,
         });
     };
+    eprintln!(
+        "[profile-pack] export started profile_id={} installed_mods={} embed_unavailable_payloads={} unavailable_mods={}",
+        profile.id,
+        installed_mods.len(),
+        embed_unavailable_payloads,
+        unavailable_mod_count
+    );
 
     if output_path
         .extension()
@@ -733,15 +885,34 @@ pub fn export_profile_pack(
         write_zip_text_entry(&mut writer, "notes.txt", &notes, options)?;
     }
 
-    for entry in &installed_mods {
-        let Some(source_path) = profile_install_dir_path(state, profile_id, &entry.install_dir) else {
-            continue;
-        };
-        if !source_path.exists() {
-            continue;
-        }
+    let mut embedded_mod_payload_count = 0_usize;
+    let mut missing_embedded_payload_count = 0_usize;
+    if embed_unavailable_payloads {
+        for entry in &installed_mods {
+            if !unavailable_mod_keys
+                .contains(&installed_node_key(&entry.package_id, &entry.version_id))
+            {
+                continue;
+            }
 
-        copy_path_into_zip(&mut writer, &source_path, Path::new(&entry.install_dir), options)?;
+            let Some(source_path) = profile_install_dir_path(state, profile_id, &entry.install_dir)
+            else {
+                missing_embedded_payload_count += 1;
+                continue;
+            };
+            if !source_path.exists() {
+                missing_embedded_payload_count += 1;
+                continue;
+            }
+
+            copy_path_into_zip(
+                &mut writer,
+                &source_path,
+                Path::new(&entry.install_dir),
+                options,
+            )?;
+            embedded_mod_payload_count += 1;
+        }
     }
 
     let runtime_config_dir = profile_dir(state, profile_id).join("runtime/BepInEx/config");
@@ -754,17 +925,20 @@ pub fn export_profile_pack(
         )?;
     }
 
-    let runtime_plugins_dir = profile_dir(state, profile_id).join("runtime/BepInEx/plugins");
-    if runtime_plugins_dir.exists() {
-        copy_directory_children_into_zip(
-            &mut writer,
-            &runtime_plugins_dir,
-            Path::new("config/BepInEx/plugins"),
-            options,
-        )?;
-    }
-
     writer.finish()?;
+    let export_payload_mode = if embedded_mod_payload_count > 0 {
+        "hybrid"
+    } else {
+        "compact"
+    };
+    eprintln!(
+        "[profile-pack] export completed profile_id={} payload_mode={} embedded_mod_payloads={} missing_embedded_payloads={} output_path={}",
+        profile.id,
+        export_payload_mode,
+        embedded_mod_payload_count,
+        missing_embedded_payload_count,
+        output_path.display()
+    );
 
     Ok(ExportProfilePackResult {
         cancelled: false,
@@ -785,12 +959,17 @@ pub fn preview_import_profile_pack() -> Result<ImportProfilePackPreviewResult, I
             cancelled: true,
             source_path: None,
             profile_name: None,
+            payload_mode: "compact".to_string(),
+            embedded_mod_count: 0,
+            referenced_mod_count: 0,
+            has_legacy_runtime_plugins_payload: false,
             mods: Vec::new(),
         });
     };
 
-    let (profile_document, mods_lock_document) = read_pack_documents_from_path(&source_path)?;
-    let mut mods = mods_lock_document
+    let read_result = read_pack_documents_from_path(&source_path)?;
+    let mut mods = read_result
+        .mods_lock_document
         .mods
         .into_iter()
         .filter(|entry| !entry.package_id.trim().is_empty() && !entry.version_id.trim().is_empty())
@@ -811,7 +990,13 @@ pub fn preview_import_profile_pack() -> Result<ImportProfilePackPreviewResult, I
     Ok(ImportProfilePackPreviewResult {
         cancelled: false,
         source_path: Some(source_path.display().to_string()),
-        profile_name: Some(profile_document.name),
+        profile_name: Some(read_result.profile_document.name),
+        payload_mode: read_result.payload_summary.payload_mode,
+        embedded_mod_count: read_result.payload_summary.embedded_mod_count,
+        referenced_mod_count: read_result.payload_summary.referenced_mod_count,
+        has_legacy_runtime_plugins_payload: read_result
+            .payload_summary
+            .has_legacy_runtime_plugins_payload,
         mods,
     })
 }
@@ -829,11 +1014,11 @@ pub fn import_profile_pack(
         ));
     }
 
-    let (profile_document, mods_lock_document) = read_pack_documents_from_path(source_path)?;
+    let read_result = read_pack_documents_from_path(source_path)?;
     let archive_file = fs::File::open(source_path)?;
     let mut archive = ZipArchive::new(archive_file)?;
 
-    let desired_name = profile_document.name.trim();
+    let desired_name = read_result.profile_document.name.trim();
     if desired_name.is_empty() {
         return Err(InternalError::app(
             "PROFILE_IMPORT_INVALID",
@@ -842,7 +1027,7 @@ pub fn import_profile_pack(
     }
 
     let import_profile_name = resolve_import_profile_name(connection, desired_name)?;
-    let launch_mode_default = match profile_document.launch_mode_default.as_str() {
+    let launch_mode_default = match read_result.profile_document.launch_mode_default.as_str() {
         "direct" => Some("direct".to_string()),
         _ => Some("steam".to_string()),
     };
@@ -851,8 +1036,8 @@ pub fn import_profile_pack(
         connection,
         CreateProfileInput {
             name: import_profile_name,
-            notes: Some(profile_document.notes),
-            game_path: Some(profile_document.game_path),
+            notes: Some(read_result.profile_document.notes),
+            game_path: Some(read_result.profile_document.game_path),
             launch_mode_default,
         },
     )?;
@@ -873,7 +1058,8 @@ pub fn import_profile_pack(
     )?;
 
     let fallback_installed_at = now_rfc3339()?;
-    let imported_mods = mods_lock_document
+    let imported_mods = read_result
+        .mods_lock_document
         .mods
         .into_iter()
         .filter(|entry| !entry.package_id.trim().is_empty() && !entry.version_id.trim().is_empty())
@@ -897,6 +1083,12 @@ pub fn import_profile_pack(
     Ok(ImportProfilePackResult {
         cancelled: false,
         source_path: Some(source_path.display().to_string()),
+        payload_mode: read_result.payload_summary.payload_mode,
+        embedded_mod_count: read_result.payload_summary.embedded_mod_count,
+        referenced_mod_count: read_result.payload_summary.referenced_mod_count,
+        has_legacy_runtime_plugins_payload: read_result
+            .payload_summary
+            .has_legacy_runtime_plugins_payload,
         profile: Some(profile),
     })
 }
@@ -1598,9 +1790,115 @@ fn copy_directory_children_into_zip(
     Ok(())
 }
 
+struct ProfilePackPayloadSummary {
+    payload_mode: String,
+    embedded_mod_count: usize,
+    referenced_mod_count: usize,
+    has_legacy_runtime_plugins_payload: bool,
+}
+
+struct ProfilePackReadDocuments {
+    profile_document: ProfilePackProfileDocument,
+    mods_lock_document: ProfilePackModsLockDocument,
+    payload_summary: ProfilePackPayloadSummary,
+}
+
+fn parse_archive_relative_segments(path: &str) -> Option<Vec<String>> {
+    let mut segments = Vec::new();
+    for segment in normalize_archive_path_str(path).split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return None;
+        }
+        segments.push(segment.to_string());
+    }
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    Some(segments)
+}
+
+fn path_has_prefix(path: &[String], prefix: &[String]) -> bool {
+    if path.len() < prefix.len() {
+        return false;
+    }
+    prefix
+        .iter()
+        .enumerate()
+        .all(|(index, segment)| path[index] == *segment)
+}
+
+fn summarize_profile_pack_payload(
+    archive: &mut ZipArchive<fs::File>,
+    mods_lock_document: &ProfilePackModsLockDocument,
+) -> Result<ProfilePackPayloadSummary, InternalError> {
+    let mut archive_paths = Vec::<Vec<String>>::new();
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        let Some(enclosed_path) = entry.enclosed_name().map(|value| value.to_path_buf()) else {
+            continue;
+        };
+        let segments = enclosed_path
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !segments.is_empty() {
+            archive_paths.push(segments);
+        }
+    }
+
+    let referenced_mods = mods_lock_document
+        .mods
+        .iter()
+        .filter(|entry| !entry.package_id.trim().is_empty() && !entry.version_id.trim().is_empty())
+        .collect::<Vec<_>>();
+    let referenced_mod_count = referenced_mods.len();
+
+    let mut embedded_mod_count = 0_usize;
+    for entry in referenced_mods {
+        let Some(install_dir_segments) = parse_archive_relative_segments(&entry.install_dir) else {
+            continue;
+        };
+        if archive_paths
+            .iter()
+            .any(|path_segments| path_has_prefix(path_segments, &install_dir_segments))
+        {
+            embedded_mod_count += 1;
+        }
+    }
+
+    let legacy_plugins_prefix = vec![
+        "config".to_string(),
+        "BepInEx".to_string(),
+        "plugins".to_string(),
+    ];
+    let has_legacy_runtime_plugins_payload = archive_paths
+        .iter()
+        .any(|path_segments| path_has_prefix(path_segments, &legacy_plugins_prefix));
+
+    let payload_mode = if referenced_mod_count == 0 || embedded_mod_count == 0 {
+        "compact".to_string()
+    } else if embedded_mod_count >= referenced_mod_count {
+        "full".to_string()
+    } else {
+        "hybrid".to_string()
+    };
+
+    Ok(ProfilePackPayloadSummary {
+        payload_mode,
+        embedded_mod_count,
+        referenced_mod_count,
+        has_legacy_runtime_plugins_payload,
+    })
+}
+
 fn read_pack_documents_from_path(
     source_path: &Path,
-) -> Result<(ProfilePackProfileDocument, ProfilePackModsLockDocument), InternalError> {
+) -> Result<ProfilePackReadDocuments, InternalError> {
     let archive_file = fs::File::open(source_path)?;
     let mut archive = ZipArchive::new(archive_file)?;
     let profile_document = read_zip_json_entry::<ProfilePackProfileDocument>(
@@ -1613,7 +1911,12 @@ fn read_pack_documents_from_path(
         "mods.lock.json",
         "That .49pack is missing a valid mods.lock.json.",
     )?;
-    Ok((profile_document, mods_lock_document))
+    let payload_summary = summarize_profile_pack_payload(&mut archive, &mods_lock_document)?;
+    Ok(ProfilePackReadDocuments {
+        profile_document,
+        mods_lock_document,
+        payload_summary,
+    })
 }
 
 fn read_zip_json_entry<T: DeserializeOwned>(
@@ -1621,13 +1924,17 @@ fn read_zip_json_entry<T: DeserializeOwned>(
     entry_path: &str,
     invalid_message: &'static str,
 ) -> Result<T, InternalError> {
-    let mut entry = archive.by_name(entry_path).map_err(|_| {
-        InternalError::app("PROFILE_PACK_INVALID", invalid_message.to_string())
-    })?;
+    let mut entry = archive
+        .by_name(entry_path)
+        .map_err(|_| InternalError::app("PROFILE_PACK_INVALID", invalid_message.to_string()))?;
     let mut bytes = Vec::new();
     entry.read_to_end(&mut bytes)?;
     serde_json::from_slice::<T>(&bytes).map_err(|error| {
-        InternalError::with_detail("PROFILE_PACK_INVALID", invalid_message.to_string(), error.to_string())
+        InternalError::with_detail(
+            "PROFILE_PACK_INVALID",
+            invalid_message.to_string(),
+            error.to_string(),
+        )
     })
 }
 
@@ -1668,7 +1975,9 @@ fn extract_zip_tree_into_directory(
 
         let output_path = relative_segments
             .iter()
-            .fold(destination_root.to_path_buf(), |path, segment| path.join(segment));
+            .fold(destination_root.to_path_buf(), |path, segment| {
+                path.join(segment)
+            });
         if entry.is_dir() {
             fs::create_dir_all(&output_path)?;
             continue;
