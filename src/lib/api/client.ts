@@ -27,6 +27,7 @@ import {
   getCatalogSummaryMock,
   getTaskMock,
   getPackageDetailMock,
+  getPackageReadmeMock,
   getProfileDetailMock,
   getProfilesStorageSummaryMock,
   getUninstallDependantsMock,
@@ -57,6 +58,7 @@ type CommandMap = {
   get_catalog_summary: typeof getCatalogSummaryMock;
   search_packages: typeof searchPackagesMock;
   get_package_detail: typeof getPackageDetailMock;
+  get_package_readme: typeof getPackageReadmeMock;
   get_version_dependencies: typeof getVersionDependenciesMock;
   warm_dependency_index: typeof warmDependencyIndexMock;
   list_profiles: typeof listProfilesMock;
@@ -111,6 +113,7 @@ const mockCommands: CommandMap = {
   get_catalog_summary: getCatalogSummaryMock,
   search_packages: searchPackagesMock,
   get_package_detail: getPackageDetailMock,
+  get_package_readme: getPackageReadmeMock,
   get_version_dependencies: getVersionDependenciesMock,
   warm_dependency_index: warmDependencyIndexMock,
   list_profiles: listProfilesMock,

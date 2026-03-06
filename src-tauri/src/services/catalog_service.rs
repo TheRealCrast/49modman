@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap};
 
+use reqwest::{blocking::Client, StatusCode};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use semver::{BuildMetadata, Prerelease, Version};
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,13 @@ pub struct SearchPackagesInput {
     pub sort_mode: Option<BrowseSortMode>,
     pub cursor: Option<usize>,
     pub page_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetPackageReadmeInput {
+    pub package_full_name: String,
+    pub package_author: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -446,6 +454,33 @@ pub fn get_package_detail(
     Ok(package.map(package_record_to_detail))
 }
 
+pub fn get_package_readme_markdown(
+    state: &AppState,
+    input: GetPackageReadmeInput,
+) -> Result<Option<String>, InternalError> {
+    let website_url = match fetch_latest_website_url_for_package(&state.http_client, &input) {
+        Ok(url) => url,
+        Err(_) => fetch_latest_website_url_from_lethal_company_list(
+            &state.http_client,
+            &input.package_full_name,
+        )
+        .unwrap_or(None),
+    };
+
+    let Some(website_url) = website_url else {
+        return Ok(None);
+    };
+
+    let Some((owner, repository)) = parse_github_repository_url(&website_url) else {
+        return Ok(None);
+    };
+
+    match fetch_github_readme_html(&state.http_client, &owner, &repository) {
+        Ok(html) => Ok(html),
+        Err(_) => Ok(None),
+    }
+}
+
 fn package_record_to_detail(package: PackageRecord) -> PackageDetailDto {
     PackageDetailDto {
         id: package.id,
@@ -715,6 +750,140 @@ fn parse_dependency_entries(value: &str) -> Vec<String> {
     }
 }
 
+fn fetch_latest_website_url_for_package(
+    client: &Client,
+    input: &GetPackageReadmeInput,
+) -> Result<Option<String>, InternalError> {
+    let Some((namespace, package_name)) =
+        split_namespace_and_package_name(&input.package_full_name, &input.package_author)
+    else {
+        return Ok(None);
+    };
+
+    let endpoint =
+        format!("https://thunderstore.io/api/experimental/package/{namespace}/{package_name}/");
+    let response = client.get(endpoint).send()?;
+
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+
+    let payload = response
+        .error_for_status()?
+        .json::<ThunderstoreExperimentalPackageResponse>()?;
+    Ok(normalize_optional_url(
+        payload.latest.and_then(|latest| latest.website_url),
+    ))
+}
+
+fn fetch_latest_website_url_from_lethal_company_list(
+    client: &Client,
+    package_full_name: &str,
+) -> Result<Option<String>, InternalError> {
+    let packages = fetch_lethal_company_packages(client)?;
+    let package = packages
+        .into_iter()
+        .find(|entry| entry.full_name.eq_ignore_ascii_case(package_full_name));
+
+    Ok(package
+        .and_then(|entry| {
+            entry
+                .versions
+                .into_iter()
+                .max_by(|left, right| left.date_created.cmp(&right.date_created))
+        })
+        .and_then(|latest| normalize_optional_url(latest.website_url)))
+}
+
+fn split_namespace_and_package_name(
+    package_full_name: &str,
+    package_author: &str,
+) -> Option<(String, String)> {
+    let author = package_author.trim();
+    let full_name = package_full_name.trim();
+
+    if author.is_empty() || full_name.is_empty() {
+        return None;
+    }
+
+    let expected_prefix = format!("{author}-");
+    if let Some(package_name) = full_name.strip_prefix(&expected_prefix) {
+        let trimmed = package_name.trim();
+        if !trimmed.is_empty() {
+            return Some((author.to_string(), trimmed.to_string()));
+        }
+    }
+
+    full_name
+        .split_once('-')
+        .and_then(|(namespace, package_name)| {
+            let namespace = namespace.trim();
+            let package_name = package_name.trim();
+            if namespace.is_empty() || package_name.is_empty() {
+                None
+            } else {
+                Some((namespace.to_string(), package_name.to_string()))
+            }
+        })
+}
+
+fn normalize_optional_url(raw: Option<String>) -> Option<String> {
+    raw.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn parse_github_repository_url(raw_url: &str) -> Option<(String, String)> {
+    let parsed = reqwest::Url::parse(raw_url).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+
+    if host != "github.com" && host != "www.github.com" {
+        return None;
+    }
+
+    let mut segments = parsed
+        .path_segments()?
+        .filter(|segment| !segment.is_empty());
+    let owner = segments.next()?.trim();
+    let repository = segments.next()?.trim().trim_end_matches(".git");
+
+    if owner.is_empty() || repository.is_empty() {
+        return None;
+    }
+
+    Some((owner.to_string(), repository.to_string()))
+}
+
+fn fetch_github_readme_html(
+    client: &Client,
+    owner: &str,
+    repository: &str,
+) -> Result<Option<String>, InternalError> {
+    let endpoint = format!("https://api.github.com/repos/{owner}/{repository}/readme");
+    let response = client
+        .get(endpoint)
+        .header("Accept", "application/vnd.github.html+json")
+        .send()?;
+
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+
+    let html = response.error_for_status()?.text()?;
+    let trimmed = html.trim();
+
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(trimmed.to_string()))
+}
+
 fn compare_version_number_strings(left: &str, right: &str) -> Ordering {
     match (parse_semverish(left), parse_semverish(right)) {
         (Some(left), Some(right)) => left.cmp(&right),
@@ -899,6 +1068,17 @@ fn parse_effective_status(value: &str) -> Result<EffectiveStatus, InternalError>
             format!("Unknown effective status value returned from SQLite: {value}"),
         )),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct ThunderstoreExperimentalPackageResponse {
+    latest: Option<ThunderstoreExperimentalLatestVersion>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThunderstoreExperimentalLatestVersion {
+    #[serde(default)]
+    website_url: Option<String>,
 }
 
 struct VisibleStatusFlags {

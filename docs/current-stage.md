@@ -167,6 +167,21 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - validation applies only to enabled mods with `sourceKind: "thunderstore"`
   - enabled local `.zip` imports are ignored for dependency-state validation
 - Settings main content now has a dedicated scroll container so long Settings pages are fully reachable in smaller windows
+- Browse detail panel content below category chips is now split into tabs:
+  - `Details`: README content when available
+  - `Versions`: existing versions/downloads/actions content
+- Browse detail README source now uses latest Thunderstore-version metadata:
+  - backend resolves latest `website_url` for the selected package from Thunderstore API data
+  - when `website_url` is a GitHub repo, README is requested from GitHub `/readme`
+  - README fetch now uses GitHub-rendered HTML (`application/vnd.github.html+json`) to preserve:
+    - raw inline HTML blocks (for example `<p align="center"><img ...>`)
+    - table rendering
+    - standard GitHub-flavored markdown formatting
+  - if any check/fetch fails, `Details` is hidden and `Versions` stays focused
+- Browse detail tab UX was polished to avoid late tab switching:
+  - selecting a mod now enters a short resolving state before showing tab content
+  - this prevents showing `Versions` first and then jumping to `Details`
+  - the `Loading package details...` card is centered in the same content area used by `Details`/`Versions`
 
 ## Next Milestone
 

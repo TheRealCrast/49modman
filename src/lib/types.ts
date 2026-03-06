@@ -230,6 +230,11 @@ export interface SearchPackagesResult {
   pageSize: number;
 }
 
+export interface GetPackageReadmeInput {
+  packageFullName: string;
+  packageAuthor: string;
+}
+
 export interface ListReferenceRowsInput {
   query: string;
   cursor?: number | null;

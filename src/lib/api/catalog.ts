@@ -1,6 +1,7 @@
 import { invokeCommand } from "./client";
 import type {
   CatalogSummaryDto,
+  GetPackageReadmeInput,
   PackageDetailDto,
   SearchPackagesInput,
   SearchPackagesResult,
@@ -22,4 +23,8 @@ export function searchPackages(input: SearchPackagesInput): Promise<SearchPackag
 
 export function getPackageDetail(packageId: string): Promise<PackageDetailDto | null> {
   return invokeCommand("get_package_detail", { packageId });
+}
+
+export function getPackageReadme(input: GetPackageReadmeInput): Promise<string | null> {
+  return invokeCommand("get_package_readme", { input });
 }

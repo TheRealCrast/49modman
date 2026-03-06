@@ -40,6 +40,7 @@ fn main() {
             commands::catalog::get_catalog_summary,
             commands::catalog::search_packages,
             commands::catalog::get_package_detail,
+            commands::catalog::get_package_readme,
             commands::dependencies::get_version_dependencies,
             commands::dependencies::warm_dependency_index,
             commands::downloads::list_active_downloads,

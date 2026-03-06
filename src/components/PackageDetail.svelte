@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
+  import { getPackageReadme } from "../lib/api/catalog";
   import { openExternalUrl } from "../lib/api/system";
   import { currentReferenceNote, pickRecommendedVersion, resolveEffectiveStatus } from "../lib/status";
   import type { IconName } from "../lib/icons";
@@ -44,6 +45,7 @@
 
   const filters = ["verified", "green", "yellow", "orange", "red", "broken"] as const;
   const versionRowElements = new Map<string, HTMLElement>();
+  type DetailPanelTab = "details" | "versions";
   export let installedMods: ProfileInstalledModDto[] = [];
 
   let installedPackageMods: ProfileInstalledModDto[] = [];
@@ -69,6 +71,12 @@
       }
     | null = null;
   let lastFocusedKey = "";
+  let detailTab: DetailPanelTab = "versions";
+  let readmeHtml = "";
+  let isResolvingDetailsTab = false;
+  let hasDetailsTab = false;
+  let readmePackageKey = "";
+  let readmeRequestToken = 0;
 
   function openMenuForVersion(
     version: ModVersion,
@@ -321,6 +329,86 @@
     }
   }
 
+  function selectDetailTab(tab: DetailPanelTab) {
+    if (tab === "details" && !hasDetailsTab) {
+      return;
+    }
+
+    detailTab = tab;
+  }
+
+  function sanitizeReadmeHtml(rawHtml: string): string {
+    const parser = new DOMParser();
+    const document = parser.parseFromString(rawHtml, "text/html");
+
+    for (const element of Array.from(document.querySelectorAll("script, style, iframe, object, embed"))) {
+      element.remove();
+    }
+
+    for (const element of Array.from(document.querySelectorAll("*"))) {
+      for (const attribute of Array.from(element.attributes)) {
+        const name = attribute.name.toLowerCase();
+        const value = attribute.value.trim();
+
+        if (name.startsWith("on")) {
+          element.removeAttribute(attribute.name);
+          continue;
+        }
+
+        if ((name === "href" || name === "src") && /^javascript:/i.test(value)) {
+          element.removeAttribute(attribute.name);
+        }
+      }
+    }
+
+    return document.body.innerHTML.trim();
+  }
+
+  async function loadReadmeForPackage(targetPackage: ModPackage, token: number) {
+    try {
+      const readme = await getPackageReadme({
+        packageFullName: targetPackage.fullName,
+        packageAuthor: targetPackage.author
+      });
+
+      if (token !== readmeRequestToken) {
+        return;
+      }
+
+      const markdown = readme?.trim() ?? "";
+      if (!markdown) {
+        readmeHtml = "";
+        hasDetailsTab = false;
+        detailTab = "versions";
+        return;
+      }
+
+      const sanitizedReadmeHtml = sanitizeReadmeHtml(markdown);
+      if (!sanitizedReadmeHtml) {
+        readmeHtml = "";
+        hasDetailsTab = false;
+        detailTab = "versions";
+        return;
+      }
+
+      readmeHtml = sanitizedReadmeHtml;
+      hasDetailsTab = true;
+      detailTab = "details";
+    } catch {
+      if (token !== readmeRequestToken) {
+        return;
+      }
+
+      readmeHtml = "";
+      hasDetailsTab = false;
+      detailTab = "versions";
+    } finally {
+      if (token === readmeRequestToken) {
+        isResolvingDetailsTab = false;
+      }
+    }
+  }
+
   onDestroy(() => {
     window.removeEventListener("pointerdown", handleWindowPointerDown);
     window.removeEventListener("keydown", handleWindowKeydown);
@@ -352,6 +440,23 @@
     installStatusClass = "green";
     installLabel = "Install";
     installIcon = "download";
+  }
+
+  $: {
+    const packageKey = pkg ? `${pkg.id}:${pkg.author}:${pkg.fullName}` : "";
+    if (packageKey !== readmePackageKey) {
+      readmePackageKey = packageKey;
+      readmeHtml = "";
+      hasDetailsTab = false;
+      detailTab = "versions";
+      isResolvingDetailsTab = false;
+
+      if (pkg) {
+        isResolvingDetailsTab = true;
+        readmeRequestToken += 1;
+        void loadReadmeForPackage(pkg, readmeRequestToken);
+      }
+    }
   }
 
   $: if (isLocked && (menu || installModeMenu)) {
@@ -440,106 +545,150 @@
       {/each}
     </div>
 
-    <div class="filter-row">
-      {#each filters as filter}
-        <button
-          class:active={visibleStatuses.includes(filter)}
-          class={`toggle-chip ${filter}`}
-          type="button"
-          on:click={() => onToggleStatus(filter)}
-        >
-          {filter}
-        </button>
-      {/each}
-    </div>
-
-      <div class="versions-list list-scroll">
-        {#each [...pkg.versions].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt)) as version}
-          {#if visibleStatuses.includes(version.effectiveStatus ?? resolveEffectiveStatus(version))}
-          {@const versionInstalled = installedVersionIds.has(version.id)}
-          {@const versionActionLabel = versionInstalled
-            ? "Uninstall version"
-            : packageHasInstalledVersion
-              ? "Switch version"
-              : "Install version"}
-          <article
-            use:registerVersionRow={version.id}
-            class:focused-version={focusedVersionId === version.id}
-            class="version-row"
-            on:contextmenu={(event) => openContextMenu(event, version)}
+    {#if isResolvingDetailsTab}
+      <div class="detail-resolution-slot">
+        <div class="detail-resolution-state panel">
+          <div class="loading-spinner" aria-hidden="true"></div>
+          <p>Loading package details...</p>
+        </div>
+      </div>
+    {:else}
+      <div class="detail-tab-row" role="tablist" aria-label="Package detail tabs">
+        {#if hasDetailsTab}
+          <button
+            class:active={detailTab === "details"}
+            class="ghost-button detail-tab-button"
+            role="tab"
+            type="button"
+            aria-selected={detailTab === "details"}
+            on:click={() => selectDetailTab("details")}
           >
-            <div class="version-main">
-              <div class="version-title">
-                <strong>{version.versionNumber}</strong>
-                <StatusPill status={version.effectiveStatus ?? resolveEffectiveStatus(version)} />
-              </div>
-              <p>
-                Published {version.publishedAt} · {version.downloads.toLocaleString()} downloads
-              </p>
-
-              {#if version.overrideReferenceState === "verified" || version.overrideReferenceState === "broken"}
-                <p class="reference-note">
-                  Local override: {version.overrideReferenceNote}
-                </p>
-              {:else if version.bundledReferenceState}
-                <p class="reference-note">
-                  Bundled reference: {version.bundledReferenceNote}
-                </p>
-              {/if}
-            </div>
-
-            <div class="version-actions">
-              <div class={`install-action-group ${!versionInstalled && versionHasDependencies(version) ? "merged" : ""}`}>
-                <button
-                  class={`icon-button version-install-button ${versionInstalled ? "danger-button package-install-button uninstall" : "solid-button"}`}
-                  type="button"
-                  disabled={isLocked}
-                  on:click={() => {
-                    if (isLocked || !pkg) {
-                      return;
-                    }
-
-                    if (versionInstalled) {
-                      onUninstallVersion(pkg.id, version.id, pkg.fullName, version.versionNumber);
-                      return;
-                    }
-
-                    runInstallAction(version);
-                  }}
-                >
-                  <Icon
-                    label={versionActionLabel}
-                    name={versionInstalled ? "trash" : "download"}
-                    forceWhite={true}
-                  />
-                  <span>{versionActionLabel}</span>
-                </button>
-                {#if !versionInstalled && versionHasDependencies(version)}
-                  <button
-                    aria-expanded={installModeMenu?.versionId === version.id}
-                    class="icon-button install-mode-trigger split-dropdown-button solid-button"
-                    type="button"
-                    disabled={isLocked}
-                    on:click={(event) => openInstallModeMenuFromButton(event, version)}
-                  >
-                    <Icon label="Install options" name="down-arrow-small" size={18} forceWhite={true} />
-                  </button>
-                {/if}
-              </div>
-              <button
-                aria-expanded={menu?.versionId === version.id}
-                class="ghost-button icon-button version-menu-trigger"
-                type="button"
-                disabled={isLocked}
-                on:click={(event) => openOverflowMenu(event, version)}
-              >
-                <Icon label="Version actions" name="three-dots-vertical" />
-              </button>
-            </div>
-          </article>
+            Details
+          </button>
         {/if}
-      {/each}
-    </div>
+        <button
+          class:active={detailTab === "versions"}
+          class="ghost-button detail-tab-button"
+          role="tab"
+          type="button"
+          aria-selected={detailTab === "versions"}
+          on:click={() => selectDetailTab("versions")}
+        >
+          Versions
+        </button>
+      </div>
+
+      {#if detailTab === "details" && hasDetailsTab}
+        <div class="detail-tab-content details-tab-content list-scroll">
+          <article class="readme-markdown">
+            {@html readmeHtml}
+          </article>
+        </div>
+      {:else}
+        <div class="detail-tab-content versions-tab-content">
+          <div class="filter-row">
+            {#each filters as filter}
+              <button
+                class:active={visibleStatuses.includes(filter)}
+                class={`toggle-chip ${filter}`}
+                type="button"
+                on:click={() => onToggleStatus(filter)}
+              >
+                {filter}
+              </button>
+            {/each}
+          </div>
+
+          <div class="versions-list list-scroll">
+            {#each [...pkg.versions].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt)) as version}
+              {#if visibleStatuses.includes(version.effectiveStatus ?? resolveEffectiveStatus(version))}
+                {@const versionInstalled = installedVersionIds.has(version.id)}
+                {@const versionActionLabel = versionInstalled
+                  ? "Uninstall version"
+                  : packageHasInstalledVersion
+                    ? "Switch version"
+                    : "Install version"}
+                <article
+                  use:registerVersionRow={version.id}
+                  class:focused-version={focusedVersionId === version.id}
+                  class="version-row"
+                  on:contextmenu={(event) => openContextMenu(event, version)}
+                >
+                  <div class="version-main">
+                    <div class="version-title">
+                      <strong>{version.versionNumber}</strong>
+                      <StatusPill status={version.effectiveStatus ?? resolveEffectiveStatus(version)} />
+                    </div>
+                    <p>
+                      Published {version.publishedAt} · {version.downloads.toLocaleString()} downloads
+                    </p>
+
+                    {#if version.overrideReferenceState === "verified" || version.overrideReferenceState === "broken"}
+                      <p class="reference-note">
+                        Local override: {version.overrideReferenceNote}
+                      </p>
+                    {:else if version.bundledReferenceState}
+                      <p class="reference-note">
+                        Bundled reference: {version.bundledReferenceNote}
+                      </p>
+                    {/if}
+                  </div>
+
+                  <div class="version-actions">
+                    <div class={`install-action-group ${!versionInstalled && versionHasDependencies(version) ? "merged" : ""}`}>
+                      <button
+                        class={`icon-button version-install-button ${versionInstalled ? "danger-button package-install-button uninstall" : "solid-button"}`}
+                        type="button"
+                        disabled={isLocked}
+                        on:click={() => {
+                          if (isLocked || !pkg) {
+                            return;
+                          }
+
+                          if (versionInstalled) {
+                            onUninstallVersion(pkg.id, version.id, pkg.fullName, version.versionNumber);
+                            return;
+                          }
+
+                          runInstallAction(version);
+                        }}
+                      >
+                        <Icon
+                          label={versionActionLabel}
+                          name={versionInstalled ? "trash" : "download"}
+                          forceWhite={true}
+                        />
+                        <span>{versionActionLabel}</span>
+                      </button>
+                      {#if !versionInstalled && versionHasDependencies(version)}
+                        <button
+                          aria-expanded={installModeMenu?.versionId === version.id}
+                          class="icon-button install-mode-trigger split-dropdown-button solid-button"
+                          type="button"
+                          disabled={isLocked}
+                          on:click={(event) => openInstallModeMenuFromButton(event, version)}
+                        >
+                          <Icon label="Install options" name="down-arrow-small" size={18} forceWhite={true} />
+                        </button>
+                      {/if}
+                    </div>
+                    <button
+                      aria-expanded={menu?.versionId === version.id}
+                      class="ghost-button icon-button version-menu-trigger"
+                      type="button"
+                      disabled={isLocked}
+                      on:click={(event) => openOverflowMenu(event, version)}
+                    >
+                      <Icon label="Version actions" name="three-dots-vertical" />
+                    </button>
+                  </div>
+                </article>
+              {/if}
+            {/each}
+          </div>
+        </div>
+      {/if}
+    {/if}
 
     {#if menu}
       <div class="version-menu panel" style={`left:${menu.x}px;top:${menu.y}px;`}>

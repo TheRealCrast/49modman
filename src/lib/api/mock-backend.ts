@@ -12,6 +12,7 @@ import type {
   CachePrunePreviewDto,
   CacheSummaryDto,
   CatalogSummaryDto,
+  GetPackageReadmeInput,
   ActivateProfileInput,
   ActivationApplyResult,
   BuildRuntimeStageInput,
@@ -692,6 +693,10 @@ export async function searchPackagesMock(input: SearchPackagesInput): Promise<Se
 
 export async function getPackageDetailMock(packageId: string): Promise<PackageDetailDto | null> {
   return currentPackages().find((pkg) => pkg.id === packageId) ?? null;
+}
+
+export async function getPackageReadmeMock(_: GetPackageReadmeInput): Promise<string | null> {
+  return null;
 }
 
 export async function getVersionDependenciesMock(

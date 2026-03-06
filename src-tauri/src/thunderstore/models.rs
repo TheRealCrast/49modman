@@ -27,4 +27,6 @@ pub struct ThunderstoreVersion {
     pub dependencies: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub website_url: Option<String>,
 }

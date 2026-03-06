@@ -6,9 +6,10 @@ use crate::{
     services::catalog_service::{
         get_catalog_summary as get_catalog_summary_service,
         get_package_detail as get_package_detail_service,
+        get_package_readme_markdown as get_package_readme_markdown_service,
         search_packages as search_packages_service, sync_catalog as sync_catalog_service,
-        CatalogSummaryDto, PackageDetailDto, SearchPackagesInput, SearchPackagesResult,
-        SyncCatalogInput, SyncCatalogResult,
+        CatalogSummaryDto, GetPackageReadmeInput, PackageDetailDto, SearchPackagesInput,
+        SearchPackagesResult, SyncCatalogInput, SyncCatalogResult,
     },
 };
 
@@ -78,4 +79,18 @@ pub async fn get_package_detail(
     })
     .await
     .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn get_package_readme(
+    state: State<'_, AppState>,
+    input: GetPackageReadmeInput,
+) -> Result<Option<String>, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        get_package_readme_markdown_service(&state, input).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("CATALOG_SYNC_FAILED", error.to_string()))?
 }
