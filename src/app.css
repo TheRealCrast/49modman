@@ -958,6 +958,33 @@ img {
   min-width: 0;
 }
 
+.package-card-header-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.package-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: #fff;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.package-card-icon-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef1f6;
+  color: var(--text-soft);
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
 .package-meta,
 .warning-copy,
 .category-chip {

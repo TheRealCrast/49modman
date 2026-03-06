@@ -19,6 +19,7 @@ import {
   validateV49InstallMock,
   getVersionDependenciesMock,
   importProfilePackMock,
+  importProfileModZipMock,
   previewImportProfilePackMock,
   warmDependencyIndexMock,
   getCacheSummaryMock,
@@ -73,6 +74,7 @@ type CommandMap = {
   export_profile_pack: typeof exportProfilePackMock;
   preview_import_profile_pack: typeof previewImportProfilePackMock;
   import_profile_pack: typeof importProfilePackMock;
+  import_profile_mod_zip: typeof importProfileModZipMock;
   set_installed_mod_enabled: typeof setInstalledModEnabledMock;
   uninstall_installed_mod: typeof uninstallInstalledModMock;
   get_uninstall_dependants: typeof getUninstallDependantsMock;
@@ -126,6 +128,7 @@ const mockCommands: CommandMap = {
   export_profile_pack: exportProfilePackMock,
   preview_import_profile_pack: previewImportProfilePackMock,
   import_profile_pack: importProfilePackMock,
+  import_profile_mod_zip: importProfileModZipMock,
   set_installed_mod_enabled: setInstalledModEnabledMock,
   uninstall_installed_mod: uninstallInstalledModMock,
   get_uninstall_dependants: getUninstallDependantsMock,

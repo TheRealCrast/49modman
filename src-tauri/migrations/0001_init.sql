@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS package_versions (
   bundled_reference_note TEXT NULL,
   download_url TEXT NOT NULL,
   file_size INTEGER NULL,
+  icon_url TEXT NULL,
   dependencies_json TEXT NOT NULL,
   sha256 TEXT NULL
 );

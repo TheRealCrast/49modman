@@ -26,6 +26,7 @@ import {
   exportProfilePack as exportProfilePackApi,
   getActiveProfile as getActiveProfileApi,
   getUninstallDependants as getUninstallDependantsApi,
+  importProfileModZip as importProfileModZipApi,
   importProfilePackFromPath as importProfilePackFromPathApi,
   previewImportProfilePack as previewImportProfilePackApi,
   getProfilesStorageSummary as getProfilesStorageSummaryApi,
@@ -63,6 +64,7 @@ import type {
   FocusedVersionState,
   ImportProfilePackPreviewModDto,
   ImportProfilePackPreviewResult,
+  ImportProfileModZipResult,
   InstallRequest,
   LaunchMode,
   LaunchResult,
@@ -2010,6 +2012,13 @@ function launchVariantLabel(variant: "modded" | "vanilla") {
   return variant === "modded" ? "Modded" : "Vanilla";
 }
 
+function isDependencyPrecheckFailure(result: LaunchResult) {
+  return (
+    result.code === "PRECHECK_FAILED" &&
+    result.message.startsWith("PROFILE_DEPENDENCY_STATE_INVALID:")
+  );
+}
+
 function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla") {
   if (result.ok) {
     const modeLabel = result.usedLaunchMode === "direct" ? "Direct" : "Steam";
@@ -2021,7 +2030,20 @@ function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla"
           ? `${modeLabel} launch started (pid ${result.pid}).`
           : `${modeLabel} launch command started.`,
       diagnosticsPath: result.diagnosticsPath,
-      canRepair: false
+      canRepair: false,
+      canRunAnyway: false
+    };
+  }
+
+  if (variant === "modded" && isDependencyPrecheckFailure(result)) {
+    return {
+      tone: "warning" as const,
+      title: "Dependency check warning",
+      detail:
+        "Some enabled mods appear to have dependency issues in the local catalog. If you trust this profile, you can choose Run anyway.",
+      diagnosticsPath: result.diagnosticsPath,
+      canRepair: false,
+      canRunAnyway: true
     };
   }
 
@@ -2033,7 +2055,8 @@ function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla"
         ? result.message
         : `${result.code}: ${result.message}`,
     diagnosticsPath: result.diagnosticsPath,
-    canRepair: shouldOfferRepairForCode(result.code)
+    canRepair: shouldOfferRepairForCode(result.code),
+    canRunAnyway: false
   };
 }
 
@@ -2210,6 +2233,15 @@ async function importProfilePackUsingPreview(preview: ImportProfilePackPreviewRe
     profilesStorageSummary,
     hydrationOutcome
   };
+}
+
+function buildImportProfileModZipActivityDetail(result: ImportProfileModZipResult): string {
+  const importedMod = result.importedMod;
+  if (!importedMod) {
+    return "Imported mod archive into the active profile.";
+  }
+
+  return `${importedMod.packageName} ${importedMod.versionNumber} was imported from .zip${result.addedToCache ? " and added to the shared cache." : "."}`;
 }
 
 async function exportProfilePackWithActivity(options: {
@@ -2467,6 +2499,80 @@ export const actions = {
               title: "Modded launch failed",
               detail: message,
               canRepair: false
+            },
+            desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+          },
+          withActivity("Modded launch failed", message, "warning")
+        )
+      );
+    }
+  },
+  async launchModdedRunAnyway() {
+    const snapshot = get(appState);
+    if (snapshot.isBootstrapping || snapshot.isLaunching) {
+      return;
+    }
+
+    if (!snapshot.activeProfile) {
+      appState.update((state) => ({
+        ...state,
+        profileError: "No active profile is available for modded launch."
+      }));
+      return;
+    }
+
+    const launchMode = resolveLaunchMode(snapshot.activeProfile);
+    appState.update((state) => ({
+      ...state,
+      isLaunching: true,
+      launchingVariant: "modded",
+      launchFeedback: {
+        tone: "neutral",
+        title: "Launching modded profile",
+        detail: `Running ${launchMode} launch while skipping dependency precheck...`,
+        canRepair: false,
+        canRunAnyway: false
+      },
+      desktopError: null
+    }));
+
+    try {
+      const result = await launchProfileApi({
+        profileId: snapshot.activeProfile.id,
+        launchMode,
+        protonRuntimeId: snapshot.selectedProtonRuntimeId ?? undefined,
+        skipDependencyValidation: true
+      });
+      const feedback = buildLaunchFeedback(result, "modded");
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            isLaunching: false,
+            launchingVariant: null,
+            launchFeedback: feedback
+          },
+          withActivity(feedback.title, feedback.detail, feedback.tone)
+        )
+      );
+      void loadLaunchRuntimeStatus();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Launch request failed before the backend could return a result.";
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            isLaunching: false,
+            launchingVariant: null,
+            launchFeedback: {
+              tone: "warning",
+              title: "Modded launch failed",
+              detail: message,
+              canRepair: false,
+              canRunAnyway: false
             },
             desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
           },
@@ -3397,6 +3503,71 @@ export const actions = {
             ? error instanceof Error
               ? error.message
               : "Failed to export the desktop profile pack."
+            : state.desktopError
+      }));
+    }
+  },
+  async importModZipToActiveProfile() {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Import mod");
+      return;
+    }
+
+    const selectedProfile = get(appState).activeProfile;
+    if (!selectedProfile) {
+      appState.update((state) => ({
+        ...state,
+        profileError: "No active profile is selected for mod import."
+      }));
+      return;
+    }
+
+    const addToCache = window.confirm(
+      "Also add this .zip archive to the shared cache?\n\nSelect OK to import and cache it.\nSelect Cancel to import without caching."
+    );
+
+    try {
+      const result = await importProfileModZipApi({
+        profileId: selectedProfile.id,
+        addToCache
+      });
+      if (result.cancelled || !result.profile) {
+        return;
+      }
+
+      const [profiles, profilesStorageSummary, cacheSummary] = await Promise.all([
+        listProfilesApi(),
+        getProfilesStorageSummaryApi(),
+        result.addedToCache ? getCacheSummary() : Promise.resolve(get(appState).cacheSummary)
+      ]);
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...mapActiveProfile(state, result.profile),
+            profiles,
+            profilesStorageSummary,
+            cacheSummary,
+            profileError: null,
+            cacheError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Mod imported",
+            buildImportProfileModZipActivityDetail(result),
+            "positive"
+          )
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to import the mod archive.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to import the desktop mod archive."
             : state.desktopError
       }));
     }

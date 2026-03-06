@@ -13,6 +13,7 @@ pub fn migrate(connection: &Connection) -> Result<(), InternalError> {
     connection.execute_batch(MIGRATION_0002)?;
     connection.execute_batch(MIGRATION_0003)?;
     connection.execute_batch(MIGRATION_0004)?;
+    repair_catalog_schema(connection)?;
     repair_profiles_schema(connection)?;
     repair_cache_schema(connection)?;
     Ok(())
@@ -261,6 +262,23 @@ fn repair_cache_schema(connection: &Connection) -> Result<(), InternalError> {
          ON download_jobs(task_id)",
         [],
     )?;
+
+    Ok(())
+}
+
+fn repair_catalog_schema(connection: &Connection) -> Result<(), InternalError> {
+    let mut statement = connection.prepare("PRAGMA table_info(package_versions)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if columns.is_empty() {
+        return Ok(());
+    }
+
+    if !columns.iter().any(|column| column == "icon_url") {
+        connection.execute("ALTER TABLE package_versions ADD COLUMN icon_url TEXT NULL", [])?;
+    }
 
     Ok(())
 }

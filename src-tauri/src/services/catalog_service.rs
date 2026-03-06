@@ -124,6 +124,7 @@ pub struct PackageCardDto {
     pub version_count: usize,
     pub recommended_version_id: String,
     pub recommended_version: String,
+    pub icon_url: Option<String>,
     pub effective_status: EffectiveStatus,
     pub every_relevant_version_broken: bool,
 }
@@ -134,6 +135,7 @@ pub struct PackageVersionDto {
     pub id: String,
     pub version_number: String,
     pub published_at: String,
+    pub icon_url: Option<String>,
     pub downloads: i64,
     pub dependencies: Vec<String>,
     pub base_zone: BaseZone,
@@ -184,6 +186,7 @@ struct RawPackageCardRow {
     version_count: usize,
     recommended_version_id: String,
     recommended_version: String,
+    icon_url: Option<String>,
     effective_status: String,
     every_relevant_version_broken: bool,
 }
@@ -284,6 +287,7 @@ pub fn search_packages(
                 pv.package_id,
                 pv.id AS version_id,
                 pv.version_number,
+                pv.icon_url,
                 pv.published_at,
                 pv.downloads,
                 pv.base_zone,
@@ -334,6 +338,7 @@ pub fn search_packages(
             rv.version_count,
             rv.version_id,
             rv.version_number,
+            rv.icon_url,
             rv.effective_status,
             CASE
                 WHEN rv.relevant_version_count > 0 AND rv.relevant_version_count = rv.relevant_broken_count THEN 1
@@ -386,8 +391,9 @@ pub fn search_packages(
                 version_count: row.get::<_, i64>(7)? as usize,
                 recommended_version_id: row.get(8)?,
                 recommended_version: row.get(9)?,
-                effective_status: row.get(10)?,
-                every_relevant_version_broken: row.get::<_, i64>(11)? == 1,
+                icon_url: row.get(10)?,
+                effective_status: row.get(11)?,
+                every_relevant_version_broken: row.get::<_, i64>(12)? == 1,
             })
         },
     )?;
@@ -406,6 +412,7 @@ pub fn search_packages(
             version_count: raw.version_count,
             recommended_version_id: raw.recommended_version_id,
             recommended_version: raw.recommended_version,
+            icon_url: raw.icon_url,
             effective_status: parse_effective_status(&raw.effective_status)?,
             every_relevant_version_broken: raw.every_relevant_version_broken,
         });
@@ -497,6 +504,7 @@ fn load_versions_for_package(
         "SELECT pv.id,
                 pv.version_number,
                 pv.published_at,
+                pv.icon_url,
                 pv.downloads,
                 pv.dependencies_json,
                 pv.base_zone,
@@ -512,20 +520,20 @@ fn load_versions_for_package(
     )?;
 
     let rows = statement.query_map(params![package_id], |row| {
-        let base_zone = parse_base_zone(&row.get::<_, String>(5)?);
+        let base_zone = parse_base_zone(&row.get::<_, String>(6)?);
         let bundled_reference_state = row
-            .get::<_, Option<String>>(6)?
+            .get::<_, Option<String>>(7)?
             .as_deref()
             .and_then(parse_reference_state);
         let override_reference_state = row
-            .get::<_, Option<String>>(8)?
+            .get::<_, Option<String>>(9)?
             .as_deref()
             .and_then(parse_reference_state);
         let effective_status =
             resolve_effective_status(base_zone, bundled_reference_state, override_reference_state);
-        let reference_source = if row.get::<_, Option<String>>(8)?.is_some() {
+        let reference_source = if row.get::<_, Option<String>>(9)?.is_some() {
             Some("override".to_string())
-        } else if row.get::<_, Option<String>>(6)?.is_some() {
+        } else if row.get::<_, Option<String>>(7)?.is_some() {
             Some("bundled".to_string())
         } else {
             None
@@ -535,13 +543,14 @@ fn load_versions_for_package(
             id: row.get(0)?,
             version_number: row.get(1)?,
             published_at: row.get(2)?,
-            downloads: row.get(3)?,
-            dependencies: parse_dependency_entries(&row.get::<_, String>(4)?),
+            icon_url: row.get(3)?,
+            downloads: row.get(4)?,
+            dependencies: parse_dependency_entries(&row.get::<_, String>(5)?),
             base_zone,
             bundled_reference_state,
-            bundled_reference_note: row.get(7)?,
+            bundled_reference_note: row.get(8)?,
             override_reference_state,
-            override_reference_note: row.get(9)?,
+            override_reference_note: row.get(10)?,
             effective_status,
             reference_source,
         })
@@ -573,6 +582,7 @@ fn apply_recommended_versions(
 
         item.recommended_version = recommended.version_number.clone();
         item.recommended_version_id = recommended.id.clone();
+        item.icon_url = recommended.icon_url.clone();
         item.effective_status = recommended.effective_status;
     }
 
@@ -596,6 +606,7 @@ fn load_versions_for_packages(
                 pv.id,
                 pv.version_number,
                 pv.published_at,
+                pv.icon_url,
                 pv.downloads,
                 pv.dependencies_json,
                 pv.base_zone,
@@ -612,20 +623,20 @@ fn load_versions_for_packages(
     let mut statement = connection.prepare(&query)?;
     let rows = statement.query_map(rusqlite::params_from_iter(package_ids.iter()), |row| {
         let package_id: String = row.get(0)?;
-        let base_zone = parse_base_zone(&row.get::<_, String>(6)?);
+        let base_zone = parse_base_zone(&row.get::<_, String>(7)?);
         let bundled_reference_state = row
-            .get::<_, Option<String>>(7)?
+            .get::<_, Option<String>>(8)?
             .as_deref()
             .and_then(parse_reference_state);
         let override_reference_state = row
-            .get::<_, Option<String>>(9)?
+            .get::<_, Option<String>>(10)?
             .as_deref()
             .and_then(parse_reference_state);
         let effective_status =
             resolve_effective_status(base_zone, bundled_reference_state, override_reference_state);
-        let reference_source = if row.get::<_, Option<String>>(9)?.is_some() {
+        let reference_source = if row.get::<_, Option<String>>(10)?.is_some() {
             Some("override".to_string())
-        } else if row.get::<_, Option<String>>(7)?.is_some() {
+        } else if row.get::<_, Option<String>>(8)?.is_some() {
             Some("bundled".to_string())
         } else {
             None
@@ -637,13 +648,14 @@ fn load_versions_for_packages(
                 id: row.get(1)?,
                 version_number: row.get(2)?,
                 published_at: row.get(3)?,
-                downloads: row.get(4)?,
-                dependencies: parse_dependency_entries(&row.get::<_, String>(5)?),
+                icon_url: row.get(4)?,
+                downloads: row.get(5)?,
+                dependencies: parse_dependency_entries(&row.get::<_, String>(6)?),
                 base_zone,
                 bundled_reference_state,
-                bundled_reference_note: row.get(8)?,
+                bundled_reference_note: row.get(9)?,
                 override_reference_state,
-                override_reference_note: row.get(10)?,
+                override_reference_note: row.get(11)?,
                 effective_status,
                 reference_source,
             },
@@ -799,8 +811,8 @@ fn persist_catalog(
             transaction.execute(
                 "INSERT INTO package_versions (
                     id, package_id, version_number, published_at, downloads, base_zone,
-                    bundled_reference_state, bundled_reference_note, download_url, file_size, dependencies_json, sha256
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    bundled_reference_state, bundled_reference_note, download_url, file_size, icon_url, dependencies_json, sha256
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT(id) DO UPDATE SET
                     package_id = excluded.package_id,
                     version_number = excluded.version_number,
@@ -811,6 +823,7 @@ fn persist_catalog(
                     bundled_reference_note = excluded.bundled_reference_note,
                     download_url = excluded.download_url,
                     file_size = excluded.file_size,
+                    icon_url = excluded.icon_url,
                     dependencies_json = excluded.dependencies_json,
                     sha256 = excluded.sha256",
                 params![
@@ -824,6 +837,7 @@ fn persist_catalog(
                     bundled_reference.and_then(|entry| entry.note.clone()),
                     version.download_url,
                     version.file_size,
+                    version.icon.clone(),
                     serde_json::to_string(&version.dependencies)?,
                     Option::<String>::None,
                 ],

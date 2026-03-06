@@ -7,6 +7,8 @@ import type {
   GetUninstallDependantsInput,
   ImportProfilePackPreviewResult,
   ImportProfilePackResult,
+  ImportProfileModZipInput,
+  ImportProfileModZipResult,
   PreviewExportProfilePackResult,
   ProfileDetailDto,
   ProfilesStorageSummaryDto,
@@ -75,6 +77,10 @@ export function previewImportProfilePack(): Promise<ImportProfilePackPreviewResu
 
 export function importProfilePackFromPath(sourcePath: string): Promise<ImportProfilePackResult> {
   return invokeCommand("import_profile_pack", { sourcePath });
+}
+
+export function importProfileModZip(input: ImportProfileModZipInput): Promise<ImportProfileModZipResult> {
+  return invokeCommand("import_profile_mod_zip", { input });
 }
 
 export function setInstalledModEnabled(input: SetInstalledModEnabledInput): Promise<ProfileDetailDto> {

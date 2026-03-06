@@ -1,6 +1,6 @@
 # Launch System Phase Plan
 
-Last updated: 2026-03-05
+Last updated: 2026-03-06
 
 This document expands Phase 4 of `docs/plan-v1.md` into an implementation-ready launch plan for `49modman`.
 
@@ -53,6 +53,10 @@ This phase starts from current state (`cache + profile install + profile manifes
   - warning/success heading spacing and icon mapping were corrected
 - Topbar launch labels now append mode suffix only for direct mode (`(Direct)`), not Steam mode.
 - Proton runtime selection is now grouped under Settings -> `Launch (Linux)`.
+- Dependency-state precheck now validates only enabled Thunderstore-installed entries (`sourceKind: "thunderstore"`), so enabled local `.zip` imports are excluded from catalog dependency enforcement.
+- Launch now supports an explicit dependency validation bypass (`skip_dependency_validation`) for retry flows:
+  - when enabled, precheck records `PROFILE_DEPENDENCY_STATE_SKIPPED` and continues launch
+  - this is intended for the specific `PROFILE_DEPENDENCY_STATE_INVALID` recovery path
 
 ## Required End State For This Phase
 
@@ -185,6 +189,7 @@ Add backend commands:
 - `launchMode: LaunchMode`
 - `gamePathOverride?: string`
 - `protonRuntimeId?: string` (Linux direct only)
+- `skipDependencyValidation?: boolean`
 
 `LaunchVanillaInput`:
 
@@ -387,7 +392,7 @@ Block launch on:
 
 - invalid or missing game path
 - non-v49 install
-- dependency-state mismatch in enabled mods
+- dependency-state mismatch in enabled Thunderstore mods (unless `skip_dependency_validation` is set)
 - missing/corrupt required mod files
 - activation failure
 - missing Proton runtime for Linux direct launch

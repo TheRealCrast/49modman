@@ -185,6 +185,18 @@
                 </button>
               {/if}
 
+              {#if $appState.launchFeedback.canRunAnyway}
+                <button
+                  class="ghost-button icon-button"
+                  type="button"
+                  disabled={$appState.isLaunching}
+                  on:click={() => void actions.launchModdedRunAnyway()}
+                >
+                  <Icon label="Run anyway" name={$appState.isLaunching ? "refresh" : "play"} spinning={$appState.isLaunching} />
+                  <span>{$appState.isLaunching ? "Launching..." : "Run anyway"}</span>
+                </button>
+              {/if}
+
               <button
                 class="ghost-button"
                 type="button"
@@ -201,6 +213,7 @@
         <OverviewScreen
           activeProfile={$selectedProfile}
           lastCatalogRefreshLabel={$appState.lastCatalogRefreshLabel}
+          onImportModZip={actions.importModZipToActiveProfile}
           onJumpToInstalledModDetails={actions.jumpToInstalledModDetails}
           onToggleInstalledMod={actions.toggleInstalledMod}
           onUninstallInstalledMod={actions.uninstallInstalledMod}

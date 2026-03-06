@@ -22,6 +22,7 @@
     versionCount: number;
     recommendedVersionId: string;
     recommendedVersion: string;
+    iconUrl?: string;
     effectiveStatus: EffectiveStatus;
     everyRelevantVersionBroken: boolean;
   }> = [];
@@ -265,11 +266,20 @@
                 on:click={() => onSelectPackage(card.id)}
               >
                 <div class="package-card-header">
-                  <div>
-                    <p class="package-name">{card.fullName}</p>
-                    <p class="package-meta">
-                      by {card.author} • {card.totalDownloads.toLocaleString()} downloads
-                    </p>
+                  <div class="package-card-header-main">
+                    {#if card.iconUrl}
+                      <img alt={`${card.fullName} icon`} class="package-card-icon" src={card.iconUrl} loading="lazy" />
+                    {:else}
+                      <div aria-hidden="true" class="package-card-icon package-card-icon-fallback">
+                        <span>{card.fullName.slice(0, 1).toUpperCase()}</span>
+                      </div>
+                    {/if}
+                    <div>
+                      <p class="package-name">{card.fullName}</p>
+                      <p class="package-meta">
+                        by {card.author} • {card.totalDownloads.toLocaleString()} downloads
+                      </p>
+                    </div>
                   </div>
                   <StatusPill status={card.effectiveStatus} />
                 </div>

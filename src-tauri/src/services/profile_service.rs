@@ -3,7 +3,7 @@ use std::{
     fs,
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use base64::Engine;
@@ -11,6 +11,7 @@ use rfd::FileDialog;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -18,6 +19,7 @@ use crate::{
     app_state::AppState,
     db::{get_setting, now_rfc3339, reset_user_data, upsert_setting},
     error::InternalError,
+    services::cache_service::{cached_archive_path, upsert_local_cached_archive},
 };
 
 const PROFILE_MANIFEST_SCHEMA_VERSION: u32 = 1;
@@ -216,6 +218,36 @@ pub struct ImportProfilePackPreviewResult {
     pub mods: Vec<ImportProfilePackPreviewModDto>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProfileModZipInput {
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub add_to_cache: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProfileModZipModDto {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProfileModZipResult {
+    pub cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    pub added_to_cache: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported_mod: Option<ImportProfileModZipModDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileDetailDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProfileManifest {
@@ -294,6 +326,23 @@ struct ProfilePackModLockEntry {
     pub source_kind: String,
     pub install_dir: String,
     pub installed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalZipManifest {
+    pub name: Option<String>,
+    pub version_number: Option<String>,
+    pub full_name: Option<String>,
+    pub author_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedImportedModIdentity {
+    package_id: String,
+    package_name: String,
+    version_id: String,
+    version_number: String,
 }
 
 pub fn list_profiles(connection: &Connection) -> Result<Vec<ProfileSummaryDto>, InternalError> {
@@ -1093,6 +1142,112 @@ pub fn import_profile_pack(
     })
 }
 
+pub fn import_profile_mod_zip(
+    state: &AppState,
+    connection: &Connection,
+    input: ImportProfileModZipInput,
+) -> Result<ImportProfileModZipResult, InternalError> {
+    let target_profile_id = match input.profile_id.as_deref() {
+        Some(profile_id) => profile_id.to_string(),
+        None => get_active_profile_id(connection)?,
+    };
+    let mut profile = get_profile_detail(connection, &target_profile_id)?.ok_or_else(|| {
+        InternalError::app(
+            "PROFILE_NOT_FOUND",
+            format!("Profile {target_profile_id} does not exist."),
+        )
+    })?;
+    ensure_profile_storage(state, connection, &profile.id)?;
+
+    let Some(source_path) = FileDialog::new()
+        .set_title("Import mod .zip")
+        .add_filter("ZIP archive", &["zip"])
+        .pick_file()
+    else {
+        return Ok(ImportProfileModZipResult {
+            cancelled: true,
+            source_path: None,
+            added_to_cache: false,
+            imported_mod: None,
+            profile: None,
+        });
+    };
+    if !source_path.is_file() {
+        return Err(InternalError::app(
+            "MOD_ARCHIVE_NOT_FOUND",
+            "The selected mod archive no longer exists.",
+        ));
+    }
+
+    let resolved_identity = resolve_imported_mod_identity(connection, &source_path)?;
+    let profile_root = profile_dir(state, &profile.id);
+    let mods_dir = profile_root.join("mods");
+    let folder_name = format!(
+        "{}-{}",
+        sanitize_path_segment(&resolved_identity.package_name),
+        sanitize_path_segment(&resolved_identity.version_number)
+    );
+    let install_dir = mods_dir.join(&folder_name);
+    fs::create_dir_all(&mods_dir)?;
+
+    if install_dir.exists() {
+        fs::remove_dir_all(&install_dir)?;
+    }
+    fs::create_dir_all(&install_dir)?;
+    extract_zip_archive(&source_path, &install_dir)?;
+
+    let mut installed_mods = read_profile_manifest_mods(state, &profile.id)?;
+    let install_dir_relative = format!("mods/{folder_name}");
+    let installed_at = now_rfc3339()?;
+
+    if let Some(entry) = installed_mods.iter_mut().find(|entry| {
+        entry.package_id == resolved_identity.package_id
+            && entry.version_id == resolved_identity.version_id
+    }) {
+        entry.package_name = resolved_identity.package_name.clone();
+        entry.version_number = resolved_identity.version_number.clone();
+        entry.enabled = true;
+        entry.source_kind = "local_zip".to_string();
+        entry.install_dir = install_dir_relative.clone();
+        entry.installed_at = installed_at.clone();
+    } else {
+        installed_mods.push(ProfileManifestModEntry {
+            package_id: resolved_identity.package_id.clone(),
+            package_name: resolved_identity.package_name.clone(),
+            version_id: resolved_identity.version_id.clone(),
+            version_number: resolved_identity.version_number.clone(),
+            enabled: true,
+            source_kind: "local_zip".to_string(),
+            install_dir: install_dir_relative,
+            installed_at,
+        });
+    }
+
+    write_profile_manifest(state, &profile, installed_mods)?;
+
+    let added_to_cache = if input.add_to_cache.unwrap_or(false) {
+        add_local_mod_archive_to_cache(state, connection, &source_path)?;
+        true
+    } else {
+        false
+    };
+
+    profile.installed_mods = read_profile_installed_mods(state, &profile.id)?;
+
+    Ok(ImportProfileModZipResult {
+        cancelled: false,
+        source_path: Some(source_path.display().to_string()),
+        added_to_cache,
+        imported_mod: Some(ImportProfileModZipModDto {
+            package_id: resolved_identity.package_id,
+            package_name: resolved_identity.package_name,
+            version_id: resolved_identity.version_id,
+            version_number: resolved_identity.version_number,
+        }),
+        profile: Some(profile),
+    })
+}
+
 pub fn read_profile_manifest_mods(
     state: &AppState,
     profile_id: &str,
@@ -1581,6 +1736,267 @@ fn profile_install_dir_path(
     Some(path)
 }
 
+fn resolve_imported_mod_identity(
+    connection: &Connection,
+    archive_path: &Path,
+) -> Result<ResolvedImportedModIdentity, InternalError> {
+    let file_stem = archive_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("imported-mod")
+        .to_string();
+    let (file_name_hint, file_version_hint) = split_file_stem_name_and_version(&file_stem);
+
+    let manifest = read_local_zip_manifest(archive_path)?;
+    let mut package_name_candidates = Vec::new();
+    let mut version_number = file_version_hint
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "local".to_string());
+
+    if let Some(manifest) = manifest {
+        if let Some(value) = manifest.full_name {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                package_name_candidates.push(trimmed.to_string());
+            }
+        }
+        if let Some(name) = manifest.name {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() {
+                if let Some(author_name) = manifest.author_name {
+                    let author_name = author_name.trim();
+                    if !author_name.is_empty() {
+                        package_name_candidates.push(format!("{author_name}-{trimmed}"));
+                    }
+                }
+                package_name_candidates.push(trimmed.to_string());
+            }
+        }
+        if let Some(manifest_version) = manifest.version_number {
+            let trimmed = manifest_version.trim();
+            if !trimmed.is_empty() {
+                version_number = trimmed.to_string();
+            }
+        }
+    }
+
+    if !file_name_hint.trim().is_empty() {
+        package_name_candidates.push(file_name_hint);
+    }
+    package_name_candidates.push(file_stem);
+
+    let package_name_candidates = dedupe_non_empty_strings(package_name_candidates);
+
+    for package_name in &package_name_candidates {
+        if let Some((package_id, resolved_package_name, version_id)) = find_catalog_version_identity(
+            connection,
+            package_name,
+            &version_number,
+        )? {
+            return Ok(ResolvedImportedModIdentity {
+                package_id,
+                package_name: resolved_package_name,
+                version_id,
+                version_number: version_number.clone(),
+            });
+        }
+    }
+
+    let package_name = package_name_candidates
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "Imported mod".to_string());
+    let package_id = normalize_loose_identifier(&package_name);
+    let version_id = format!(
+        "local-{}-{}",
+        package_id,
+        normalize_loose_identifier(&version_number)
+    );
+
+    Ok(ResolvedImportedModIdentity {
+        package_id,
+        package_name,
+        version_id,
+        version_number,
+    })
+}
+
+fn read_local_zip_manifest(archive_path: &Path) -> Result<Option<LocalZipManifest>, InternalError> {
+    let archive_file = fs::File::open(archive_path)?;
+    let mut archive = ZipArchive::new(archive_file)?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let Some(entry_path) = entry.enclosed_name() else {
+            continue;
+        };
+
+        if entry_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case("manifest.json"))
+            .unwrap_or(false)
+        {
+            let mut json = String::new();
+            entry.read_to_string(&mut json)?;
+            if json.trim().is_empty() {
+                return Ok(None);
+            }
+
+            if let Ok(manifest) = serde_json::from_str::<LocalZipManifest>(&json) {
+                return Ok(Some(manifest));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn split_file_stem_name_and_version(value: &str) -> (String, Option<String>) {
+    let trimmed = value.trim();
+    let Some((left, right)) = trimmed.rsplit_once('-') else {
+        return (trimmed.to_string(), None);
+    };
+    let version = right.trim();
+    if version.is_empty() {
+        return (trimmed.to_string(), None);
+    }
+
+    let has_digit = version.chars().any(|character| character.is_ascii_digit());
+    if !has_digit {
+        return (trimmed.to_string(), None);
+    }
+
+    let name = left.trim();
+    if name.is_empty() {
+        return (trimmed.to_string(), None);
+    }
+
+    (name.to_string(), Some(version.to_string()))
+}
+
+fn dedupe_non_empty_strings(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let key = trimmed.to_lowercase();
+        if seen.insert(key) {
+            deduped.push(trimmed.to_string());
+        }
+    }
+    deduped
+}
+
+fn find_catalog_version_identity(
+    connection: &Connection,
+    package_name: &str,
+    version_number: &str,
+) -> Result<Option<(String, String, String)>, InternalError> {
+    connection
+        .query_row(
+            "SELECT p.id, p.full_name, pv.id
+             FROM packages p
+             INNER JOIN package_versions pv ON pv.package_id = p.id
+             WHERE lower(p.full_name) = lower(?1)
+               AND pv.version_number = ?2
+             LIMIT 1",
+            params![package_name, version_number],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(InternalError::from)
+}
+
+fn normalize_loose_identifier(value: &str) -> String {
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+
+    let collapsed = normalized
+        .split('-')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+
+    if collapsed.is_empty() {
+        "mod".to_string()
+    } else {
+        collapsed
+    }
+}
+
+fn add_local_mod_archive_to_cache(
+    state: &AppState,
+    connection: &Connection,
+    source_path: &Path,
+) -> Result<(), InternalError> {
+    let archive_name = source_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("imported-mod.zip");
+    let archive_name = sanitize_path_segment(archive_name);
+    let (sha256, file_size) = compute_sha256_and_size(source_path)?;
+    let cache_key = format!("local-{sha256}");
+    let relative_path = format!("local/{}-{archive_name}", &sha256[..12.min(sha256.len())]);
+    let archive_path = cached_archive_path(state, &relative_path);
+
+    if let Some(parent) = archive_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if archive_path != source_path {
+        fs::copy(source_path, &archive_path)?;
+    }
+
+    upsert_local_cached_archive(
+        connection,
+        &cache_key,
+        &sha256,
+        &archive_name,
+        &relative_path,
+        file_size,
+    )
+}
+
+fn compute_sha256_and_size(path: &Path) -> Result<(String, i64), InternalError> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut bytes = [0_u8; 8192];
+    let mut total_bytes = 0_i64;
+
+    loop {
+        let read = file.read(&mut bytes)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&bytes[..read]);
+        total_bytes = total_bytes.saturating_add(read as i64);
+    }
+
+    Ok((format!("{:x}", hasher.finalize()), total_bytes))
+}
+
 fn sanitize_path_segment(value: &str) -> String {
     let sanitized: String = value
         .chars()
@@ -1999,19 +2415,34 @@ fn open_folder_path(
     code: &'static str,
     message: &'static str,
 ) -> Result<(), InternalError> {
-    let status = if cfg!(target_os = "windows") {
-        Command::new("explorer").arg(folder_path).status()?
+    let mut command = if cfg!(target_os = "windows") {
+        let mut command = Command::new("explorer");
+        command.arg(folder_path);
+        command
     } else if cfg!(target_os = "macos") {
-        Command::new("open").arg(folder_path).status()?
+        let mut command = Command::new("open");
+        command.arg(folder_path);
+        command
     } else {
-        Command::new("xdg-open").arg(folder_path).status()?
+        let mut command = Command::new("xdg-open");
+        command.arg(folder_path);
+        command
     };
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err(InternalError::app(code, message))
-    }
+    // Launch the system opener without waiting for the file explorer to close.
+    // Reap in a detached thread to avoid leaving a zombie process.
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| InternalError::app(code, message))?;
+
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+
+    Ok(())
 }
 
 fn clear_directory_contents(path: &Path) -> Result<(), InternalError> {

@@ -24,6 +24,7 @@ export interface SteamScanResult {
 export interface ValidateV49InstallInput {
   gamePathOverride?: string;
   profileId?: string;
+  skipDependencyValidation?: boolean;
 }
 
 export interface LaunchProfileInput {
@@ -31,6 +32,7 @@ export interface LaunchProfileInput {
   launchMode: LaunchMode;
   gamePathOverride?: string;
   protonRuntimeId?: string;
+  skipDependencyValidation?: boolean;
 }
 
 export interface LaunchVanillaInput {
@@ -122,6 +124,7 @@ export interface LaunchFeedbackState {
   detail: string;
   diagnosticsPath?: string;
   canRepair: boolean;
+  canRunAnyway?: boolean;
 }
 
 export interface BuildRuntimeStageInput {
@@ -131,6 +134,7 @@ export interface BuildRuntimeStageInput {
 export interface ActivateProfileInput {
   profileId?: string;
   gamePathOverride?: string;
+  skipDependencyValidation?: boolean;
 }
 
 export interface RuntimeStageSourceMod {
@@ -179,6 +183,7 @@ export interface ModVersion {
   id: string;
   versionNumber: string;
   publishedAt: string;
+  iconUrl?: string;
   downloads: number;
   baseZone: BaseZone;
   dependencies?: string[];
@@ -213,6 +218,7 @@ export interface PackageCardDto {
   versionCount: number;
   recommendedVersionId: string;
   recommendedVersion: string;
+  iconUrl?: string;
   effectiveStatus: EffectiveStatus;
   everyRelevantVersionBroken: boolean;
 }
@@ -379,6 +385,26 @@ export interface ImportProfilePackResult {
   embeddedModCount: number;
   referencedModCount: number;
   hasLegacyRuntimePluginsPayload: boolean;
+  profile?: ProfileDetailDto;
+}
+
+export interface ImportProfileModZipInput {
+  profileId?: string;
+  addToCache?: boolean;
+}
+
+export interface ImportProfileModZipModDto {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+}
+
+export interface ImportProfileModZipResult {
+  cancelled: boolean;
+  sourcePath?: string;
+  addedToCache: boolean;
+  importedMod?: ImportProfileModZipModDto;
   profile?: ProfileDetailDto;
 }
 

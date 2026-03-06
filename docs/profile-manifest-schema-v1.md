@@ -56,7 +56,9 @@ This documents the `manifest.json` shape used at:
 - `versionId`: exact version identifier.
 - `versionNumber`: display version.
 - `enabled`: active toggle state in Overview.
-- `sourceKind`: current value is `"thunderstore"`.
+- `sourceKind`: install source kind.
+  - `"thunderstore"`: installed from Browse/Thunderstore metadata.
+  - `"local_zip"`: imported from a local `.zip` archive via Overview.
 - `installDir`: profile-relative install directory (usually under `mods/`).
 - `installedAt`: RFC 3339 timestamp for when this entry was installed/refreshed.
 

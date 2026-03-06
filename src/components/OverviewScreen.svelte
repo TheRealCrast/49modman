@@ -19,6 +19,7 @@
     packageId: string,
     versionId: string
   ) => void | Promise<void>;
+  export let onImportModZip: () => void | Promise<void>;
 
   function formatInstalledAt(value: string) {
     const parsed = Date.parse(value);
@@ -64,8 +65,16 @@
 
   <section class="panel list-panel">
     <div class="compact-heading compact-heading-left">
-      <Icon label={installedModsHeading} name="details" />
-      <h3 class="installed-mods-title">{installedModsHeading}</h3>
+      <div class="section-title-row">
+        <Icon label={installedModsHeading} name="details" />
+        <h3 class="installed-mods-title">{installedModsHeading}</h3>
+      </div>
+      <div class="section-actions">
+        <button class="ghost-button icon-button" type="button" disabled={!activeProfile} on:click={() => void onImportModZip()}>
+          <Icon label="Import mod zip" name="upload" />
+          <span>Import mod (.zip)</span>
+        </button>
+      </div>
     </div>
 
     <div class="installed-list list-scroll">

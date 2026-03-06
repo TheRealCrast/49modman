@@ -144,6 +144,28 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - preview modal supports `Do not show this again`
   - warn preference is persisted as `Warn on profile import` in Settings -> `Warn options`
   - profile import creates a new profile (name conflict-safe), imports payloads, and restores manifest mod entries
+- local folder-open actions no longer block the app event loop while the file explorer window is open:
+  - `Open profiles folder`
+  - `Open active profile folder`
+  - `Open cache folder`
+  - opener commands now launch via detached child process (`spawn`) and are reaped in a background thread
+- Overview now includes an `Import mod` button (upload icon) near the installed-mod section header:
+  - opens a `.zip` file picker
+  - extracts selected archive into active profile `mods/`
+  - upserts installed mod entry into profile `manifest.json`
+  - imported entries use `sourceKind: "local_zip"`
+  - optional post-import cache copy path is supported
+- Thunderstore version icons are now surfaced in Browse:
+  - backend now parses version-level `icon` from `/packages/` payloads
+  - `package_versions` now persists `icon_url` and repairs legacy DBs by adding the column at runtime when missing
+  - Browse package cards now use the version icon URL when available, with existing fallback behavior
+- launch precheck dependency UX is now more forgiving for catalog mismatch cases:
+  - `PROFILE_DEPENDENCY_STATE_INVALID` now renders a casual-user explanation
+  - feedback panel exposes `Run anyway` only for that specific error
+  - `Run anyway` retries modded launch with dependency validation explicitly skipped
+- dependency precheck now excludes local imports:
+  - validation applies only to enabled mods with `sourceKind: "thunderstore"`
+  - enabled local `.zip` imports are ignored for dependency-state validation
 - Settings main content now has a dedicated scroll container so long Settings pages are fully reachable in smaller windows
 
 ## Next Milestone
@@ -206,7 +228,7 @@ Current locked behavior:
 
 ## Current Uncommitted Work
 
-Resource-saver/runtime-memory diagnostics and launch-runtime guard follow-up are captured in this checkpoint.
+This checkpoint captures local `.zip` import, Browse version icons, launch dependency precheck/run-anyway follow-ups, and non-blocking folder opener fixes.
 
 ## Profile Milestone Notes
 
@@ -232,7 +254,7 @@ Resource-saver/runtime-memory diagnostics and launch-runtime guard follow-up are
   3. refresh Browse data from Thunderstore
   4. finalize and return to normal UI
 - Browse installs are now real and modify active profile state
-- local mod import flows are still not implemented
+- local mod import from `.zip` is now implemented from Overview and writes manifest entries as `sourceKind: "local_zip"`
 - `.49pack` profile export/import is now implemented for profile metadata + manifest/payload import/export
 
 ## Profile Storage And Manifest Notes (Post Install Activation)
@@ -251,11 +273,12 @@ Resource-saver/runtime-memory diagnostics and launch-runtime guard follow-up are
 - installed mod entries include:
   - package/version identity
   - enabled flag (persisted, user-toggleable)
-  - source kind (`thunderstore`)
+  - source kind (`thunderstore` for Browse installs, `local_zip` for Overview `.zip` imports)
   - install directory under `mods/`
   - installed timestamp
 - manifest read APIs now enrich installed-mod DTOs with optional `iconDataUrl` if `icon.png` exists in that mod folder
 - manifest reads now also reconcile stale entries by pruning `mods[]` rows whose `installDir` no longer exists on disk
+- Overview `.zip` import can optionally copy the selected archive into shared cache storage and upsert a `cached_archives` row with source kind `local_zip`
 - `reset_all_data` now clears profile folders and then reseeds + re-ensures `default` profile storage
 - per-profile storage size is computed from profile directory bytes and returned in `list_profiles`
 - Settings profile summary is returned via backend command:

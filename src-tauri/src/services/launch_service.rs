@@ -48,6 +48,8 @@ pub struct ValidateV49InstallInput {
     pub game_path_override: Option<String>,
     #[serde(default)]
     pub profile_id: Option<String>,
+    #[serde(default)]
+    pub skip_dependency_validation: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -64,6 +66,8 @@ pub struct ActivateProfileInput {
     pub profile_id: Option<String>,
     #[serde(default, alias = "gamePath")]
     pub game_path_override: Option<String>,
+    #[serde(default)]
+    pub skip_dependency_validation: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +79,8 @@ pub struct LaunchProfileInput {
     pub game_path_override: Option<String>,
     #[serde(default)]
     pub proton_runtime_id: Option<String>,
+    #[serde(default)]
+    pub skip_dependency_validation: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -579,6 +585,7 @@ pub fn activate_profile(
         ValidateV49InstallInput {
             game_path_override: input.game_path_override.clone(),
             profile_id: Some(profile_id.clone()),
+            skip_dependency_validation: input.skip_dependency_validation,
         },
     )?;
     if !preflight.ok {
@@ -924,6 +931,7 @@ pub fn launch_profile(
         ValidateV49InstallInput {
             game_path_override: input.game_path_override.clone(),
             profile_id: Some(profile_id.clone()),
+            skip_dependency_validation: input.skip_dependency_validation,
         },
     )?;
     if !preflight.ok {
@@ -991,6 +999,7 @@ pub fn launch_profile(
         ActivateProfileInput {
             profile_id: Some(profile_id.clone()),
             game_path_override: input.game_path_override.clone(),
+            skip_dependency_validation: input.skip_dependency_validation,
         },
     ) {
         Ok(result) => result,
@@ -1211,6 +1220,7 @@ pub fn launch_vanilla(
                 .clone()
                 .or_else(|| cleanup_result.game_path.clone()),
             profile_id: None,
+            skip_dependency_validation: None,
         },
     )?;
     if !preflight.ok {
@@ -1605,41 +1615,55 @@ pub fn validate_v49_install(
         });
     }
 
+    let skip_dependency_validation = input.skip_dependency_validation.unwrap_or(false);
     if let Some(profile_id) = selected_profile_id.as_deref() {
-        match validate_enabled_dependency_state(state, connection, profile_id)? {
-            DependencyValidationOutcome::Valid => {
-                checks.push(V49ValidationCheck {
-                    key: "enabledDependencies".to_string(),
-                    ok: true,
-                    code: "PROFILE_DEPENDENCY_STATE_VALID".to_string(),
-                    message: "Enabled installed mods have satisfied dependency state.".to_string(),
-                    detail: None,
-                });
-            }
-            DependencyValidationOutcome::Invalid { detail } => {
-                checks.push(V49ValidationCheck {
-                    key: "enabledDependencies".to_string(),
-                    ok: false,
-                    code: "PROFILE_DEPENDENCY_STATE_INVALID".to_string(),
-                    message:
-                        "Enabled installed mods have missing or disabled required dependencies."
-                            .to_string(),
-                    detail: Some(detail),
-                });
+        if skip_dependency_validation {
+            checks.push(V49ValidationCheck {
+                key: "enabledDependencies".to_string(),
+                ok: true,
+                code: "PROFILE_DEPENDENCY_STATE_SKIPPED".to_string(),
+                message: "Dependency validation was skipped and launch will continue.".to_string(),
+                detail: Some(
+                    "Run anyway was selected. Missing or disabled dependencies may still cause runtime issues."
+                        .to_string(),
+                ),
+            });
+        } else {
+            match validate_enabled_dependency_state(state, connection, profile_id)? {
+                DependencyValidationOutcome::Valid => {
+                    checks.push(V49ValidationCheck {
+                        key: "enabledDependencies".to_string(),
+                        ok: true,
+                        code: "PROFILE_DEPENDENCY_STATE_VALID".to_string(),
+                        message: "Enabled installed mods have satisfied dependency state.".to_string(),
+                        detail: None,
+                    });
+                }
+                DependencyValidationOutcome::Invalid { detail } => {
+                    checks.push(V49ValidationCheck {
+                        key: "enabledDependencies".to_string(),
+                        ok: false,
+                        code: "PROFILE_DEPENDENCY_STATE_INVALID".to_string(),
+                        message:
+                            "Enabled installed mods have missing or disabled required dependencies."
+                                .to_string(),
+                        detail: Some(detail),
+                    });
 
-                return Ok(V49ValidationResult {
-                    ok: false,
-                    code: "PROFILE_DEPENDENCY_STATE_INVALID".to_string(),
-                    message:
-                        "Validation failed because enabled installed mods have dependency issues."
-                            .to_string(),
-                    resolved_game_path: Some(path_to_string(&resolved.path)),
-                    resolved_from: Some(resolved.source.to_string()),
-                    selected_profile_id,
-                    checks,
-                    detected_executable_sha256: Some(executable_sha256),
-                    hardlink_supported: Some(hardlink_supported),
-                });
+                    return Ok(V49ValidationResult {
+                        ok: false,
+                        code: "PROFILE_DEPENDENCY_STATE_INVALID".to_string(),
+                        message:
+                            "Validation failed because enabled installed mods have dependency issues."
+                                .to_string(),
+                        resolved_game_path: Some(path_to_string(&resolved.path)),
+                        resolved_from: Some(resolved.source.to_string()),
+                        selected_profile_id,
+                        checks,
+                        detected_executable_sha256: Some(executable_sha256),
+                        hardlink_supported: Some(hardlink_supported),
+                    });
+                }
             }
         }
     }
@@ -1939,7 +1963,7 @@ fn validate_enabled_dependency_state(
 
     let enabled_mods = installed_mods
         .iter()
-        .filter(|entry| entry.enabled)
+        .filter(|entry| entry.enabled && entry.source_kind == "thunderstore")
         .collect::<Vec<_>>();
 
     if enabled_mods.is_empty() {

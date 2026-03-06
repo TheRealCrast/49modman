@@ -16,6 +16,8 @@ pub struct ThunderstoreVersion {
     pub version_number: String,
     pub date_created: String,
     #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
     pub downloads: Option<i64>,
     #[serde(default)]
     pub download_url: String,

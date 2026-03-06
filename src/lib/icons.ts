@@ -16,6 +16,7 @@ import search from "./icons/search.svg";
 import settings from "./icons/settings.svg";
 import threeDotsVertical from "./icons/three-dots-vertical.svg";
 import trash from "./icons/trash.svg";
+import upload from "./icons/upload.svg";
 import verified from "./icons/verified.svg";
 import warning from "./icons/alert.svg";
 import xClose from "./icons/x-close.svg";
@@ -39,6 +40,7 @@ export type IconName =
   | "settings"
   | "three-dots-vertical"
   | "trash"
+  | "upload"
   | "verified"
   | "warning"
   | "x-close";
@@ -62,6 +64,7 @@ export const iconMap: Record<IconName, string> = {
   settings,
   "three-dots-vertical": threeDotsVertical,
   trash,
+  upload,
   verified,
   warning,
   "x-close": xClose

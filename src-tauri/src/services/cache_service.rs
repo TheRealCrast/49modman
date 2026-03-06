@@ -2,7 +2,7 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -121,6 +121,54 @@ pub fn upsert_cached_archive(
     file_size: i64,
     source_url: &str,
 ) -> Result<(), InternalError> {
+    upsert_cached_archive_entry(
+        connection,
+        version_id,
+        "thunderstore",
+        Some(package_id),
+        Some(version_id),
+        sha256,
+        archive_name,
+        relative_path,
+        file_size,
+        Some(source_url),
+    )
+}
+
+pub fn upsert_local_cached_archive(
+    connection: &Connection,
+    cache_key: &str,
+    sha256: &str,
+    archive_name: &str,
+    relative_path: &str,
+    file_size: i64,
+) -> Result<(), InternalError> {
+    upsert_cached_archive_entry(
+        connection,
+        cache_key,
+        "local_zip",
+        None,
+        None,
+        sha256,
+        archive_name,
+        relative_path,
+        file_size,
+        None,
+    )
+}
+
+fn upsert_cached_archive_entry(
+    connection: &Connection,
+    cache_key: &str,
+    source_kind: &str,
+    package_id: Option<&str>,
+    version_id: Option<&str>,
+    sha256: &str,
+    archive_name: &str,
+    relative_path: &str,
+    file_size: i64,
+    source_url: Option<&str>,
+) -> Result<(), InternalError> {
     let now = now_rfc3339()?;
 
     connection.execute(
@@ -136,8 +184,9 @@ pub fn upsert_cached_archive(
             source_url,
             first_cached_at,
             last_used_at
-         ) VALUES (?1, 'thunderstore', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
          ON CONFLICT(cache_key) DO UPDATE SET
+            source_kind = excluded.source_kind,
             package_id = excluded.package_id,
             version_id = excluded.version_id,
             sha256 = excluded.sha256,
@@ -147,7 +196,8 @@ pub fn upsert_cached_archive(
             source_url = excluded.source_url,
             last_used_at = excluded.last_used_at",
         params![
-            version_id,
+            cache_key,
+            source_kind,
             package_id,
             version_id,
             sha256,
@@ -196,22 +246,39 @@ pub fn get_cache_summary(
 pub fn open_cache_folder(state: &AppState) -> Result<(), InternalError> {
     fs::create_dir_all(&state.cache_dir)?;
 
-    let status = if cfg!(target_os = "windows") {
-        Command::new("explorer").arg(&state.cache_dir).status()?
+    let mut command = if cfg!(target_os = "windows") {
+        let mut command = Command::new("explorer");
+        command.arg(&state.cache_dir);
+        command
     } else if cfg!(target_os = "macos") {
-        Command::new("open").arg(&state.cache_dir).status()?
+        let mut command = Command::new("open");
+        command.arg(&state.cache_dir);
+        command
     } else {
-        Command::new("xdg-open").arg(&state.cache_dir).status()?
+        let mut command = Command::new("xdg-open");
+        command.arg(&state.cache_dir);
+        command
     };
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err(InternalError::app(
-            "OPEN_CACHE_FOLDER_FAILED",
-            "Failed to open the cache folder in the system file explorer.",
-        ))
-    }
+    // Launch the system opener without waiting for the file explorer to close.
+    // Reap in a detached thread to avoid leaving a zombie process.
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| {
+            InternalError::app(
+                "OPEN_CACHE_FOLDER_FAILED",
+                "Failed to open the cache folder in the system file explorer.",
+            )
+        })?;
+
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+
+    Ok(())
 }
 
 pub fn clear_cache(
