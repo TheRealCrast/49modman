@@ -13,6 +13,7 @@ pub struct WarningPrefsDto {
     pub broken: bool,
     pub install_without_dependencies: bool,
     pub uninstall_with_dependants: bool,
+    pub import_profile_pack: bool,
     pub conserve_while_game_running: bool,
 }
 
@@ -30,6 +31,7 @@ pub fn get_warning_prefs(connection: &Connection) -> Result<WarningPrefsDto, Int
             "warning.uninstall_with_dependants",
             true,
         )?,
+        import_profile_pack: get_bool_setting(connection, "warning.import_profile_pack", true)?,
         conserve_while_game_running: get_bool_setting(
             connection,
             "launch.conserve_while_game_running",
@@ -49,6 +51,7 @@ pub fn set_warning_preference(
             | "broken"
             | "installWithoutDependencies"
             | "uninstallWithDependants"
+            | "importProfilePack"
             | "conserveWhileGameRunning"
     ) {
         return Err(InternalError::app(
@@ -62,6 +65,7 @@ pub fn set_warning_preference(
         "broken" => "warning.broken",
         "installWithoutDependencies" => "warning.install_without_dependencies",
         "uninstallWithDependants" => "warning.uninstall_with_dependants",
+        "importProfilePack" => "warning.import_profile_pack",
         "conserveWhileGameRunning" => "launch.conserve_while_game_running",
         _ => unreachable!("validated above"),
     };

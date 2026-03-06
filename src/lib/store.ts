@@ -23,8 +23,11 @@ import {
 import {
   createProfile as createProfileApi,
   deleteProfile as deleteProfileApi,
+  exportProfilePack as exportProfilePackApi,
   getActiveProfile as getActiveProfileApi,
   getUninstallDependants as getUninstallDependantsApi,
+  importProfilePackFromPath as importProfilePackFromPathApi,
+  previewImportProfilePack as previewImportProfilePackApi,
   getProfilesStorageSummary as getProfilesStorageSummaryApi,
   listProfiles as listProfilesApi,
   openActiveProfileFolder as openActiveProfileFolderApi,
@@ -57,6 +60,7 @@ import type {
   EffectiveStatus,
   InstallActionOptions,
   FocusedVersionState,
+  ImportProfilePackPreviewResult,
   InstallRequest,
   LaunchMode,
   LaunchResult,
@@ -121,6 +125,7 @@ const initialState: AppState = {
     broken: true,
     installWithoutDependencies: true,
     uninstallWithDependants: true,
+    importProfilePack: true,
     conserveWhileGameRunning: false
   },
   isGameRunning: false,
@@ -128,6 +133,7 @@ const initialState: AppState = {
   resourceSaverLastView: null,
   modal: null,
   uninstallDependantsModal: null,
+  importProfilePackModal: null,
   memoryDiagnosticsModal: null,
   resetProgress: null,
   dependencyModal: null,
@@ -2028,6 +2034,26 @@ function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla"
   };
 }
 
+async function importProfilePackUsingPreview(preview: ImportProfilePackPreviewResult) {
+  const sourcePath = preview.sourcePath?.trim();
+  if (!sourcePath) {
+    throw new Error("Selected .49pack source path is missing.");
+  }
+
+  const result = await importProfilePackFromPathApi(sourcePath);
+  if (result.cancelled || !result.profile) {
+    return null;
+  }
+
+  const profiles = await listProfilesApi();
+  const profilesStorageSummary = await getProfilesStorageSummaryApi();
+  return {
+    importedProfile: result.profile,
+    profiles,
+    profilesStorageSummary
+  };
+}
+
 export const actions = {
   async bootstrap() {
     const runtimeKind = getRuntimeKind();
@@ -2798,6 +2824,7 @@ export const actions = {
             state.modal.status === "broken" && doNotShowAgain ? false : state.warningPrefs.broken,
           installWithoutDependencies: state.warningPrefs.installWithoutDependencies,
           uninstallWithDependants: state.warningPrefs.uninstallWithDependants,
+          importProfilePack: state.warningPrefs.importProfilePack,
           conserveWhileGameRunning: state.warningPrefs.conserveWhileGameRunning
         }
       };
@@ -2846,6 +2873,7 @@ export const actions = {
       | "broken"
       | "installWithoutDependencies"
       | "uninstallWithDependants"
+      | "importProfilePack"
       | "conserveWhileGameRunning",
     enabled: boolean
   ) {
@@ -3078,6 +3106,194 @@ export const actions = {
       }));
     }
   },
+  async exportActiveProfilePack() {
+    const selectedProfile = get(appState).activeProfile;
+    if (!selectedProfile) {
+      appState.update((state) => ({
+        ...state,
+        profileError: "No active profile is selected for export."
+      }));
+      return;
+    }
+
+    try {
+      const result = await exportProfilePackApi(selectedProfile.id);
+      if (result.cancelled) {
+        return;
+      }
+
+      const exportedName = result.profileName ?? selectedProfile.name;
+      const exportedModCount = result.modCount ?? selectedProfile.installedMods.length;
+      const exportedPath = result.path ?? "";
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            profileError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Profile exported",
+            `${exportedName} was exported as .49pack (${exportedModCount} ${exportedModCount === 1 ? "mod" : "mods"}).${exportedPath ? ` ${exportedPath}` : ""}`,
+            "positive"
+          )
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to export the profile.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to export the desktop profile pack."
+            : state.desktopError
+      }));
+    }
+  },
+  async importProfilePack() {
+    try {
+      const preview = await previewImportProfilePackApi();
+      if (preview.cancelled) {
+        return;
+      }
+
+      if (!get(appState).warningPrefs.importProfilePack) {
+        const imported = await importProfilePackUsingPreview(preview);
+        if (!imported) {
+          return;
+        }
+
+        const importedProfile = imported.importedProfile;
+        const importedModCount = importedProfile.installedMods.length;
+
+        appState.update((state) =>
+          appendActivity(
+            {
+              ...mapActiveProfile(state, importedProfile),
+              profiles: imported.profiles,
+              profilesStorageSummary: imported.profilesStorageSummary,
+              importProfilePackModal: null,
+              profileError: null,
+              desktopError: null
+            },
+            withActivity(
+              "Profile imported",
+              `${importedProfile.name} was imported from .49pack (${importedModCount} ${importedModCount === 1 ? "mod" : "mods"}).`,
+              "positive"
+            )
+          )
+        );
+        return;
+      }
+
+      appState.update((state) => ({
+        ...state,
+        importProfilePackModal: {
+          preview,
+          isImporting: false
+        },
+        profileError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        profileError: error instanceof Error ? error.message : "Failed to prepare profile import.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to prepare profile import in the desktop backend."
+            : state.desktopError
+      }));
+    }
+  },
+  dismissImportProfilePackModal() {
+    appState.update((state) =>
+      state.importProfilePackModal?.isImporting
+        ? state
+        : {
+            ...state,
+            importProfilePackModal: null
+          }
+    );
+  },
+  async confirmImportProfilePackModal(doNotShowAgain: boolean) {
+    const modalState = get(appState).importProfilePackModal;
+    if (!modalState || modalState.isImporting) {
+      return;
+    }
+
+    appState.update((state) => ({
+      ...state,
+      importProfilePackModal: state.importProfilePackModal
+        ? {
+            ...state.importProfilePackModal,
+            isImporting: true
+          }
+        : null,
+      warningPrefs: {
+        ...state.warningPrefs,
+        importProfilePack: doNotShowAgain ? false : state.warningPrefs.importProfilePack
+      }
+    }));
+
+    if (doNotShowAgain) {
+      void setWarningPreferenceApi("importProfilePack", false).then((prefs) => {
+        appState.update((state) => ({
+          ...state,
+          warningPrefs: prefs
+        }));
+      });
+    }
+
+    try {
+      const imported = await importProfilePackUsingPreview(modalState.preview);
+      if (!imported) {
+        appState.update((state) => ({
+          ...state,
+          importProfilePackModal: null
+        }));
+        return;
+      }
+
+      const importedProfile = imported.importedProfile;
+      const importedModCount = importedProfile.installedMods.length;
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...mapActiveProfile(state, importedProfile),
+            profiles: imported.profiles,
+            profilesStorageSummary: imported.profilesStorageSummary,
+            importProfilePackModal: null,
+            profileError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Profile imported",
+            `${importedProfile.name} was imported from .49pack (${importedModCount} ${importedModCount === 1 ? "mod" : "mods"}).`,
+            "positive"
+          )
+        )
+      );
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        importProfilePackModal: null,
+        profileError: error instanceof Error ? error.message : "Failed to import the profile.",
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : "Failed to import the desktop profile pack."
+            : state.desktopError
+      }));
+    }
+  },
   async openCacheFolder() {
     try {
       await openCacheFolder();
@@ -3224,6 +3440,7 @@ export const actions = {
         uninstallDependantsModal: null,
         memoryDiagnosticsModal: null,
         clearUnreferencedCacheModal: null,
+        importProfilePackModal: null,
         dependencyModal: null,
         focusedVersion: null,
         catalogCards: [],

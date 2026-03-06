@@ -8,6 +8,8 @@
   export let onSelectProfile: (profileId: string) => void | Promise<void>;
   export let onCreateProfile: (input: CreateProfileInput) => void | Promise<void>;
   export let onDeleteSelectedProfile: () => void | Promise<void>;
+  export let onExportSelectedProfilePack: () => void | Promise<void>;
+  export let onImportProfilePack: () => void | Promise<void>;
   export let onUpdateProfile: (input: {
     profileId: string;
     name: string;
@@ -161,6 +163,17 @@
           on:click={confirmDelete}
         >
           Delete
+        </button>
+        <button
+          class="ghost-button"
+          disabled={!selectedProfile}
+          type="button"
+          on:click={() => void onExportSelectedProfilePack()}
+        >
+          Export .49pack
+        </button>
+        <button class="ghost-button" type="button" on:click={() => void onImportProfilePack()}>
+          Import .49pack
         </button>
       </div>
     </div>

@@ -28,8 +28,11 @@ import type {
   DeleteProfileResult,
   DownloadJobDto,
   EffectiveStatus,
+  ExportProfilePackResult,
   GetUninstallDependantsInput,
+  ImportProfilePackPreviewResult,
   GetVersionDependenciesInput,
+  ImportProfilePackResult,
   DependencyResolutionKind,
   InstallTaskDto,
   ListReferenceRowsInput,
@@ -104,6 +107,7 @@ const defaultDb: MockDb = {
     broken: true,
     installWithoutDependencies: true,
     uninstallWithDependants: true,
+    importProfilePack: true,
     conserveWhileGameRunning: false
   },
   lastSyncAt: null,
@@ -165,6 +169,7 @@ function normalizeDb(db: MockDb): MockDb {
       broken: db.warningPrefs?.broken ?? true,
       installWithoutDependencies: db.warningPrefs?.installWithoutDependencies ?? true,
       uninstallWithDependants: db.warningPrefs?.uninstallWithDependants ?? true,
+      importProfilePack: db.warningPrefs?.importProfilePack ?? true,
       conserveWhileGameRunning: db.warningPrefs?.conserveWhileGameRunning ?? false
     },
     profiles,
@@ -987,6 +992,29 @@ export async function getProfilesStorageSummaryMock(): Promise<ProfilesStorageSu
   };
 }
 
+export async function exportProfilePackMock(
+  _profileId: string
+): Promise<ExportProfilePackResult> {
+  return {
+    cancelled: true
+  };
+}
+
+export async function previewImportProfilePackMock(): Promise<ImportProfilePackPreviewResult> {
+  return {
+    cancelled: true,
+    mods: []
+  };
+}
+
+export async function importProfilePackMock(
+  _sourcePath: string
+): Promise<ImportProfilePackResult> {
+  return {
+    cancelled: true
+  };
+}
+
 function taskForVersion(db: MockDb, versionId: string): InstallTaskDto | undefined {
   return db.tasks.find(
     (task) => task.kind === "cache_version" && task.detail === versionId && (task.status === "queued" || task.status === "running")
@@ -1254,6 +1282,7 @@ export async function setWarningPreferenceMock(
       | "broken"
       | "installWithoutDependencies"
       | "uninstallWithDependants"
+      | "importProfilePack"
       | "conserveWhileGameRunning";
     enabled: boolean;
   }

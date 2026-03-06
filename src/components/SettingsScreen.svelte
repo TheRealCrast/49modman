@@ -7,6 +7,7 @@
     broken: boolean;
     installWithoutDependencies: boolean;
     uninstallWithDependants: boolean;
+    importProfilePack: boolean;
     conserveWhileGameRunning: boolean;
   };
   export let cacheSummary: CacheSummaryDto | undefined;
@@ -22,6 +23,7 @@
       | "broken"
       | "installWithoutDependencies"
       | "uninstallWithDependants"
+      | "importProfilePack"
       | "conserveWhileGameRunning",
     enabled: boolean
   ) => void | Promise<void>;
@@ -79,7 +81,7 @@
   }
 </script>
 
-<section class="screen-stack">
+<section class="screen-stack settings-screen">
   <section class="panel compact-panel">
     <div class="compact-heading compact-heading-left">
       <Icon label="Settings" name="settings" />
@@ -167,6 +169,29 @@
               name={warningPrefs.uninstallWithDependants ? "check" : "circle"}
             />
             <span>{warningPrefs.uninstallWithDependants ? "On" : "Off"}</span>
+          </button>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>Warn on profile import</strong>
+            <p>Show a confirmation preview with mod list before importing a .49pack file.</p>
+          </div>
+          <button
+            aria-pressed={warningPrefs.importProfilePack}
+            class="ghost-button icon-button toggle-icon-button"
+            type="button"
+            on:click={() =>
+              onWarningPrefChange(
+                "importProfilePack",
+                !warningPrefs.importProfilePack
+              )}
+          >
+            <Icon
+              label={warningPrefs.importProfilePack ? "Enabled" : "Disabled"}
+              name={warningPrefs.importProfilePack ? "check" : "circle"}
+            />
+            <span>{warningPrefs.importProfilePack ? "On" : "Off"}</span>
           </button>
         </div>
       </div>

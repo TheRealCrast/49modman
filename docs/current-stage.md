@@ -129,6 +129,22 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - preview includes package/version rows and per-version size
   - cleanup preserves versions installed in any profile, including disabled installed mods
   - cleanup removes only unreferenced cache entries (and their cache-task rows), not the entire cache
+- `.49pack` profile-pack flows are now implemented from Profiles:
+  - `Export .49pack` is available on Profiles tab and writes a ZIP pack containing:
+    - `manifest.json`
+    - `profile.json`
+    - `mods.lock.json`
+    - optional `notes.txt`
+    - installed profile mod payload directories (`mods/...`)
+    - profile runtime config/plugins payload (`config/BepInEx/...`) when present
+  - `Import .49pack` is now a 2-step flow:
+    1. pick file + preview
+    2. confirm import
+  - preview modal lists all mods that will be imported
+  - preview modal supports `Do not show this again`
+  - warn preference is persisted as `Warn on profile import` in Settings -> `Warn options`
+  - profile import creates a new profile (name conflict-safe), imports payloads, and restores manifest mod entries
+- Settings main content now has a dedicated scroll container so long Settings pages are fully reachable in smaller windows
 
 ## Next Milestone
 
@@ -216,7 +232,8 @@ Resource-saver/runtime-memory diagnostics and launch-runtime guard follow-up are
   3. refresh Browse data from Thunderstore
   4. finalize and return to normal UI
 - Browse installs are now real and modify active profile state
-- modpack flows are still not implemented
+- local mod import flows are still not implemented
+- `.49pack` profile export/import is now implemented for profile metadata + manifest/payload import/export
 
 ## Profile Storage And Manifest Notes (Post Install Activation)
 

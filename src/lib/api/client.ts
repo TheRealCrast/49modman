@@ -3,6 +3,7 @@ import {
   clearCacheMock,
   createProfileMock,
   deleteProfileMock,
+  exportProfilePackMock,
   activateProfileMock,
   deactivateToVanillaMock,
   getLaunchRuntimeStatusMock,
@@ -17,6 +18,8 @@ import {
   scanSteamInstallationsMock,
   validateV49InstallMock,
   getVersionDependenciesMock,
+  importProfilePackMock,
+  previewImportProfilePackMock,
   warmDependencyIndexMock,
   getCacheSummaryMock,
   getActiveProfileMock,
@@ -65,6 +68,9 @@ type CommandMap = {
   open_profiles_folder: typeof openProfilesFolderMock;
   open_active_profile_folder: typeof openActiveProfileFolderMock;
   get_profiles_storage_summary: typeof getProfilesStorageSummaryMock;
+  export_profile_pack: typeof exportProfilePackMock;
+  preview_import_profile_pack: typeof previewImportProfilePackMock;
+  import_profile_pack: typeof importProfilePackMock;
   set_installed_mod_enabled: typeof setInstalledModEnabledMock;
   uninstall_installed_mod: typeof uninstallInstalledModMock;
   get_uninstall_dependants: typeof getUninstallDependantsMock;
@@ -114,6 +120,9 @@ const mockCommands: CommandMap = {
   open_profiles_folder: openProfilesFolderMock,
   open_active_profile_folder: openActiveProfileFolderMock,
   get_profiles_storage_summary: getProfilesStorageSummaryMock,
+  export_profile_pack: exportProfilePackMock,
+  preview_import_profile_pack: previewImportProfilePackMock,
+  import_profile_pack: importProfilePackMock,
   set_installed_mod_enabled: setInstalledModEnabledMock,
   uninstall_installed_mod: uninstallInstalledModMock,
   get_uninstall_dependants: getUninstallDependantsMock,
@@ -189,6 +198,10 @@ export async function invokeCommand<T>(
 
   if (args && "profileId" in args) {
     return handler(args.profileId);
+  }
+
+  if (args && "sourcePath" in args) {
+    return handler(args.sourcePath);
   }
 
   if (args && "url" in args) {

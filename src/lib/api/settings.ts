@@ -11,6 +11,7 @@ export function setWarningPreference(
     | "broken"
     | "installWithoutDependencies"
     | "uninstallWithDependants"
+    | "importProfilePack"
     | "conserveWhileGameRunning",
   enabled: boolean
 ): Promise<WarningPrefsDto> {

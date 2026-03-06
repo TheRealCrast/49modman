@@ -12,11 +12,14 @@ use crate::{
             delete_profile_storage as delete_profile_storage_service,
             ensure_all_profile_storage as ensure_all_profile_storage_service,
             ensure_profile_storage as ensure_profile_storage_service,
+            export_profile_pack as export_profile_pack_service,
             get_active_profile as get_active_profile_service,
             get_profile_detail as get_profile_detail_service,
             get_profile_storage_size_bytes as get_profile_storage_size_bytes_service,
             get_profiles_storage_summary as get_profiles_storage_summary_service,
             get_uninstall_dependants as get_uninstall_dependants_service,
+            import_profile_pack as import_profile_pack_service,
+            preview_import_profile_pack as preview_import_profile_pack_service,
             list_profiles as list_profiles_service,
             open_active_profile_folder as open_active_profile_folder_service,
             open_profiles_folder as open_profiles_folder_service,
@@ -27,9 +30,11 @@ use crate::{
             set_profile_mod_enabled as set_profile_mod_enabled_service,
             uninstall_profile_mod as uninstall_profile_mod_service,
             update_profile as update_profile_service, CreateProfileInput, DeleteProfileResult,
+            ExportProfilePackResult,
             GetUninstallDependantsInput, ProfileDetailDto, ProfileSummaryDto,
-            ProfilesStorageSummaryDto, SetInstalledModEnabledInput, UninstallDependantDto,
-            UninstallInstalledModInput, UpdateProfileInput,
+            ImportProfilePackPreviewResult, ImportProfilePackResult, ProfilesStorageSummaryDto,
+            SetInstalledModEnabledInput, UninstallDependantDto, UninstallInstalledModInput,
+            UpdateProfileInput,
         },
     },
 };
@@ -359,4 +364,51 @@ pub async fn get_profiles_storage_summary(
     })
     .await
     .map_err(|error| AppError::new("GET_PROFILES_STORAGE_SUMMARY_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn export_profile_pack(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<ExportProfilePackResult, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+
+        export_profile_pack_service(&state, &connection, &profile_id).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("EXPORT_PROFILE_PACK_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn preview_import_profile_pack(
+    _state: State<'_, AppState>,
+) -> Result<ImportProfilePackPreviewResult, AppError> {
+    async_runtime::spawn_blocking(move || preview_import_profile_pack_service().map_err(AppError::from))
+        .await
+        .map_err(|error| AppError::new("PREVIEW_IMPORT_PROFILE_PACK_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn import_profile_pack(
+    state: State<'_, AppState>,
+    source_path: String,
+) -> Result<ImportProfilePackResult, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+
+        import_profile_pack_service(&state, &connection, &source_path).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("IMPORT_PROFILE_PACK_FAILED", error.to_string()))?
 }

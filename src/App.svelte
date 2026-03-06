@@ -5,6 +5,7 @@
   import DependencyModal from "./components/DependencyModal.svelte";
   import DownloadsScreen from "./components/DownloadsScreen.svelte";
   import Icon from "./components/Icon.svelte";
+  import ImportProfilePackModal from "./components/ImportProfilePackModal.svelte";
   import InstallWarningModal from "./components/InstallWarningModal.svelte";
   import MemoryDiagnosticsModal from "./components/MemoryDiagnosticsModal.svelte";
   import NavRail from "./components/NavRail.svelte";
@@ -239,6 +240,8 @@
         <ProfilesScreen
           onCreateProfile={actions.createProfile}
           onDeleteSelectedProfile={actions.deleteSelectedProfile}
+          onExportSelectedProfilePack={actions.exportActiveProfilePack}
+          onImportProfilePack={actions.importProfilePack}
           onSelectProfile={actions.selectProfile}
           onUpdateProfile={actions.updateProfile}
           profileError={$appState.profileError}
@@ -340,6 +343,15 @@
     preview={$appState.clearUnreferencedCacheModal}
     onCancel={actions.dismissClearUnreferencedCacheModal}
     onConfirm={actions.confirmClearUnreferencedCacheModal}
+  />
+{/if}
+
+{#if $appState.importProfilePackModal}
+  <ImportProfilePackModal
+    preview={$appState.importProfilePackModal.preview}
+    isImporting={$appState.importProfilePackModal.isImporting}
+    onCancel={actions.dismissImportProfilePackModal}
+    onConfirm={actions.confirmImportProfilePackModal}
   />
 {/if}
 

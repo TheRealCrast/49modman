@@ -1,16 +1,18 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs, io,
-    io::Write,
+    fs,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::Command,
 };
 
 use base64::Engine;
+use rfd::FileDialog;
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use zip::ZipArchive;
+use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
     app_state::AppState,
@@ -19,6 +21,7 @@ use crate::{
 };
 
 const PROFILE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+const PROFILE_PACK_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,6 +135,51 @@ pub struct ProfilesStorageSummaryDto {
     pub active_profile_bytes: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportProfilePackResult {
+    pub cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mod_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProfilePackResult {
+    pub cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileDetailDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProfilePackPreviewModDto {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProfilePackPreviewResult {
+    pub cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mods: Vec<ImportProfilePackPreviewModDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProfileManifest {
@@ -164,6 +212,52 @@ pub struct ProfileManifestModEntry {
     pub source_kind: String,
     pub install_dir: String,
     pub installed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfilePackManifest {
+    pub schema_version: u32,
+    pub kind: String,
+    pub exported_at: String,
+    pub source_profile_id: String,
+    pub source_profile_name: String,
+    pub mod_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfilePackProfileDocument {
+    pub name: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub game_path: String,
+    #[serde(default = "default_launch_mode")]
+    pub launch_mode_default: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfilePackModsLockDocument {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub mods: Vec<ProfilePackModLockEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfilePackModLockEntry {
+    pub package_id: String,
+    pub package_name: String,
+    pub version_id: String,
+    pub version_number: String,
+    #[serde(default = "default_enabled_true")]
+    pub enabled: bool,
+    #[serde(default = "default_source_kind")]
+    pub source_kind: String,
+    pub install_dir: String,
+    pub installed_at: Option<String>,
 }
 
 pub fn list_profiles(connection: &Connection) -> Result<Vec<ProfileSummaryDto>, InternalError> {
@@ -552,6 +646,259 @@ pub fn get_profile_storage_size_bytes(
 ) -> Result<i64, InternalError> {
     let bytes = directory_size_bytes(&profile_dir(state, profile_id))?;
     Ok(bytes.min(i64::MAX as u64) as i64)
+}
+
+pub fn export_profile_pack(
+    state: &AppState,
+    connection: &Connection,
+    profile_id: &str,
+) -> Result<ExportProfilePackResult, InternalError> {
+    let profile = get_profile_detail(connection, profile_id)?.ok_or_else(|| {
+        InternalError::app(
+            "PROFILE_NOT_FOUND",
+            format!("Profile {profile_id} does not exist."),
+        )
+    })?;
+
+    ensure_profile_storage(state, connection, profile_id)?;
+    let installed_mods = read_profile_manifest_mods(state, profile_id)?;
+
+    let default_file_name = format!("{}.49pack", sanitize_path_segment(&profile.name));
+    let Some(mut output_path) = FileDialog::new()
+        .set_title("Export profile as .49pack")
+        .add_filter("49modman profile pack", &["49pack"])
+        .set_file_name(&default_file_name)
+        .save_file()
+    else {
+        return Ok(ExportProfilePackResult {
+            cancelled: true,
+            path: None,
+            profile_id: None,
+            profile_name: None,
+            mod_count: None,
+        });
+    };
+
+    if output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| !value.eq_ignore_ascii_case("49pack"))
+        .unwrap_or(true)
+    {
+        output_path.set_extension("49pack");
+    }
+
+    let options = default_zip_options();
+    let output_file = fs::File::create(&output_path)?;
+    let mut writer = ZipWriter::new(output_file);
+
+    let manifest = ProfilePackManifest {
+        schema_version: PROFILE_PACK_SCHEMA_VERSION,
+        kind: "49pack".to_string(),
+        exported_at: now_rfc3339()?,
+        source_profile_id: profile.id.clone(),
+        source_profile_name: profile.name.clone(),
+        mod_count: installed_mods.len(),
+    };
+    write_zip_json_entry(&mut writer, "manifest.json", &manifest, options)?;
+
+    let profile_document = ProfilePackProfileDocument {
+        name: profile.name.clone(),
+        notes: profile.notes.clone(),
+        game_path: profile.game_path.clone(),
+        launch_mode_default: profile.launch_mode_default.clone(),
+    };
+    write_zip_json_entry(&mut writer, "profile.json", &profile_document, options)?;
+
+    let mods_lock = ProfilePackModsLockDocument {
+        schema_version: PROFILE_MANIFEST_SCHEMA_VERSION,
+        mods: installed_mods
+            .iter()
+            .map(|entry| ProfilePackModLockEntry {
+                package_id: entry.package_id.clone(),
+                package_name: entry.package_name.clone(),
+                version_id: entry.version_id.clone(),
+                version_number: entry.version_number.clone(),
+                enabled: entry.enabled,
+                source_kind: entry.source_kind.clone(),
+                install_dir: entry.install_dir.clone(),
+                installed_at: Some(entry.installed_at.clone()),
+            })
+            .collect(),
+    };
+    write_zip_json_entry(&mut writer, "mods.lock.json", &mods_lock, options)?;
+
+    if !profile.notes.trim().is_empty() {
+        let notes = format!("{}\n", profile.notes.trim_end());
+        write_zip_text_entry(&mut writer, "notes.txt", &notes, options)?;
+    }
+
+    for entry in &installed_mods {
+        let Some(source_path) = profile_install_dir_path(state, profile_id, &entry.install_dir) else {
+            continue;
+        };
+        if !source_path.exists() {
+            continue;
+        }
+
+        copy_path_into_zip(&mut writer, &source_path, Path::new(&entry.install_dir), options)?;
+    }
+
+    let runtime_config_dir = profile_dir(state, profile_id).join("runtime/BepInEx/config");
+    if runtime_config_dir.exists() {
+        copy_directory_children_into_zip(
+            &mut writer,
+            &runtime_config_dir,
+            Path::new("config/BepInEx/config"),
+            options,
+        )?;
+    }
+
+    let runtime_plugins_dir = profile_dir(state, profile_id).join("runtime/BepInEx/plugins");
+    if runtime_plugins_dir.exists() {
+        copy_directory_children_into_zip(
+            &mut writer,
+            &runtime_plugins_dir,
+            Path::new("config/BepInEx/plugins"),
+            options,
+        )?;
+    }
+
+    writer.finish()?;
+
+    Ok(ExportProfilePackResult {
+        cancelled: false,
+        path: Some(output_path.display().to_string()),
+        profile_id: Some(profile.id),
+        profile_name: Some(profile.name),
+        mod_count: Some(installed_mods.len()),
+    })
+}
+
+pub fn preview_import_profile_pack() -> Result<ImportProfilePackPreviewResult, InternalError> {
+    let Some(source_path) = FileDialog::new()
+        .set_title("Import .49pack profile")
+        .add_filter("49modman profile pack", &["49pack"])
+        .pick_file()
+    else {
+        return Ok(ImportProfilePackPreviewResult {
+            cancelled: true,
+            source_path: None,
+            profile_name: None,
+            mods: Vec::new(),
+        });
+    };
+
+    let (profile_document, mods_lock_document) = read_pack_documents_from_path(&source_path)?;
+    let mut mods = mods_lock_document
+        .mods
+        .into_iter()
+        .filter(|entry| !entry.package_id.trim().is_empty() && !entry.version_id.trim().is_empty())
+        .map(|entry| ImportProfilePackPreviewModDto {
+            package_id: entry.package_id,
+            package_name: entry.package_name,
+            version_id: entry.version_id,
+            version_number: entry.version_number,
+        })
+        .collect::<Vec<_>>();
+    mods.sort_by(|left, right| {
+        left.package_name
+            .to_lowercase()
+            .cmp(&right.package_name.to_lowercase())
+            .then_with(|| left.version_number.cmp(&right.version_number))
+    });
+
+    Ok(ImportProfilePackPreviewResult {
+        cancelled: false,
+        source_path: Some(source_path.display().to_string()),
+        profile_name: Some(profile_document.name),
+        mods,
+    })
+}
+
+pub fn import_profile_pack(
+    state: &AppState,
+    connection: &Connection,
+    source_path: &str,
+) -> Result<ImportProfilePackResult, InternalError> {
+    let source_path = Path::new(source_path);
+    if !source_path.is_file() {
+        return Err(InternalError::app(
+            "PROFILE_PACK_NOT_FOUND",
+            "The selected .49pack file no longer exists.",
+        ));
+    }
+
+    let (profile_document, mods_lock_document) = read_pack_documents_from_path(source_path)?;
+    let archive_file = fs::File::open(source_path)?;
+    let mut archive = ZipArchive::new(archive_file)?;
+
+    let desired_name = profile_document.name.trim();
+    if desired_name.is_empty() {
+        return Err(InternalError::app(
+            "PROFILE_IMPORT_INVALID",
+            "That .49pack profile name is empty.",
+        ));
+    }
+
+    let import_profile_name = resolve_import_profile_name(connection, desired_name)?;
+    let launch_mode_default = match profile_document.launch_mode_default.as_str() {
+        "direct" => Some("direct".to_string()),
+        _ => Some("steam".to_string()),
+    };
+
+    let mut profile = create_profile(
+        connection,
+        CreateProfileInput {
+            name: import_profile_name,
+            notes: Some(profile_document.notes),
+            game_path: Some(profile_document.game_path),
+            launch_mode_default,
+        },
+    )?;
+
+    ensure_profile_storage(state, connection, &profile.id)?;
+
+    let profile_root = profile_dir(state, &profile.id);
+    extract_zip_tree_into_directory(&mut archive, &["mods"], &profile_root.join("mods"))?;
+    extract_zip_tree_into_directory(
+        &mut archive,
+        &["config", "BepInEx", "config"],
+        &profile_root.join("runtime/BepInEx/config"),
+    )?;
+    extract_zip_tree_into_directory(
+        &mut archive,
+        &["config", "BepInEx", "plugins"],
+        &profile_root.join("runtime/BepInEx/plugins"),
+    )?;
+
+    let fallback_installed_at = now_rfc3339()?;
+    let imported_mods = mods_lock_document
+        .mods
+        .into_iter()
+        .filter(|entry| !entry.package_id.trim().is_empty() && !entry.version_id.trim().is_empty())
+        .map(|entry| ProfileManifestModEntry {
+            package_id: entry.package_id,
+            package_name: entry.package_name,
+            version_id: entry.version_id,
+            version_number: entry.version_number,
+            enabled: entry.enabled,
+            source_kind: entry.source_kind,
+            install_dir: entry.install_dir,
+            installed_at: entry
+                .installed_at
+                .unwrap_or_else(|| fallback_installed_at.clone()),
+        })
+        .collect::<Vec<_>>();
+
+    write_profile_manifest(state, &profile, imported_mods)?;
+    profile.installed_mods = read_profile_installed_mods(state, &profile.id)?;
+
+    Ok(ImportProfilePackResult {
+        cancelled: false,
+        source_path: Some(source_path.display().to_string()),
+        profile: Some(profile),
+    })
 }
 
 pub fn read_profile_manifest_mods(
@@ -1085,6 +1432,257 @@ fn parse_dependency_entries(value: &str) -> Vec<String> {
             }
         }
     }
+}
+
+fn resolve_import_profile_name(
+    connection: &Connection,
+    desired_name: &str,
+) -> Result<String, InternalError> {
+    let base_name = desired_name.trim();
+    if base_name.is_empty() {
+        return Ok("Imported profile".to_string());
+    }
+
+    let exists = profile_name_exists(connection, base_name)?;
+    if !exists {
+        return Ok(base_name.to_string());
+    }
+
+    for suffix in 2..=999 {
+        let candidate = format!("{base_name} ({suffix})");
+        if !profile_name_exists(connection, &candidate)? {
+            return Ok(candidate);
+        }
+    }
+
+    Ok(format!(
+        "{}-{}",
+        base_name,
+        OffsetDateTime::now_utc().unix_timestamp()
+    ))
+}
+
+fn profile_name_exists(connection: &Connection, name: &str) -> Result<bool, InternalError> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM profiles WHERE name = ?1 COLLATE NOCASE)",
+        params![name],
+        |row| row.get::<_, i64>(0),
+    )? != 0)
+}
+
+fn default_enabled_true() -> bool {
+    true
+}
+
+fn default_source_kind() -> String {
+    "thunderstore".to_string()
+}
+
+fn default_launch_mode() -> String {
+    "steam".to_string()
+}
+
+fn default_zip_options() -> SimpleFileOptions {
+    SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .unix_permissions(0o644)
+}
+
+fn write_zip_json_entry<T: Serialize>(
+    writer: &mut ZipWriter<fs::File>,
+    entry_path: &str,
+    value: &T,
+    options: SimpleFileOptions,
+) -> Result<(), InternalError> {
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    write_zip_binary_entry(writer, entry_path, &bytes, options)
+}
+
+fn write_zip_text_entry(
+    writer: &mut ZipWriter<fs::File>,
+    entry_path: &str,
+    value: &str,
+    options: SimpleFileOptions,
+) -> Result<(), InternalError> {
+    write_zip_binary_entry(writer, entry_path, value.as_bytes(), options)
+}
+
+fn write_zip_binary_entry(
+    writer: &mut ZipWriter<fs::File>,
+    entry_path: &str,
+    bytes: &[u8],
+    options: SimpleFileOptions,
+) -> Result<(), InternalError> {
+    writer.start_file(normalize_archive_path_str(entry_path), options)?;
+    writer.write_all(bytes)?;
+    Ok(())
+}
+
+fn write_zip_directory_entry(
+    writer: &mut ZipWriter<fs::File>,
+    entry_path: &str,
+    options: SimpleFileOptions,
+) -> Result<(), InternalError> {
+    let mut normalized = normalize_archive_path_str(entry_path);
+    if !normalized.ends_with('/') {
+        normalized.push('/');
+    }
+    writer.add_directory(normalized, options)?;
+    Ok(())
+}
+
+fn normalize_archive_path_str(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn normalize_archive_path(path: &Path) -> String {
+    let mut segments = Vec::<String>::new();
+    for component in path.components() {
+        if let std::path::Component::Normal(value) = component {
+            let segment = value.to_string_lossy();
+            if !segment.is_empty() {
+                segments.push(segment.to_string());
+            }
+        }
+    }
+    segments.join("/")
+}
+
+fn copy_path_into_zip(
+    writer: &mut ZipWriter<fs::File>,
+    source_path: &Path,
+    archive_path: &Path,
+    options: SimpleFileOptions,
+) -> Result<(), InternalError> {
+    if source_path.is_dir() {
+        write_zip_directory_entry(writer, &normalize_archive_path(archive_path), options)?;
+
+        for entry in fs::read_dir(source_path)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            let entry_archive_path = archive_path.join(entry.file_name());
+            copy_path_into_zip(writer, &entry_path, &entry_archive_path, options)?;
+        }
+
+        return Ok(());
+    }
+
+    if source_path.is_file() {
+        let entry_name = normalize_archive_path(archive_path);
+        let mut source_file = fs::File::open(source_path)?;
+        writer.start_file(entry_name, options)?;
+        io::copy(&mut source_file, writer)?;
+    }
+
+    Ok(())
+}
+
+fn copy_directory_children_into_zip(
+    writer: &mut ZipWriter<fs::File>,
+    source_dir: &Path,
+    archive_base: &Path,
+    options: SimpleFileOptions,
+) -> Result<(), InternalError> {
+    if !source_dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(source_dir)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let archive_path = archive_base.join(entry.file_name());
+        copy_path_into_zip(writer, &source_path, &archive_path, options)?;
+    }
+
+    Ok(())
+}
+
+fn read_pack_documents_from_path(
+    source_path: &Path,
+) -> Result<(ProfilePackProfileDocument, ProfilePackModsLockDocument), InternalError> {
+    let archive_file = fs::File::open(source_path)?;
+    let mut archive = ZipArchive::new(archive_file)?;
+    let profile_document = read_zip_json_entry::<ProfilePackProfileDocument>(
+        &mut archive,
+        "profile.json",
+        "That .49pack is missing a valid profile.json.",
+    )?;
+    let mods_lock_document = read_zip_json_entry::<ProfilePackModsLockDocument>(
+        &mut archive,
+        "mods.lock.json",
+        "That .49pack is missing a valid mods.lock.json.",
+    )?;
+    Ok((profile_document, mods_lock_document))
+}
+
+fn read_zip_json_entry<T: DeserializeOwned>(
+    archive: &mut ZipArchive<fs::File>,
+    entry_path: &str,
+    invalid_message: &'static str,
+) -> Result<T, InternalError> {
+    let mut entry = archive.by_name(entry_path).map_err(|_| {
+        InternalError::app("PROFILE_PACK_INVALID", invalid_message.to_string())
+    })?;
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes)?;
+    serde_json::from_slice::<T>(&bytes).map_err(|error| {
+        InternalError::with_detail("PROFILE_PACK_INVALID", invalid_message.to_string(), error.to_string())
+    })
+}
+
+fn extract_zip_tree_into_directory(
+    archive: &mut ZipArchive<fs::File>,
+    source_prefix: &[&str],
+    destination_root: &Path,
+) -> Result<(), InternalError> {
+    fs::create_dir_all(destination_root)?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let Some(enclosed_path) = entry.enclosed_name().map(|value| value.to_path_buf()) else {
+            continue;
+        };
+
+        let enclosed_segments = enclosed_path
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if enclosed_segments.len() < source_prefix.len()
+            || !source_prefix
+                .iter()
+                .enumerate()
+                .all(|(index, segment)| enclosed_segments[index] == *segment)
+        {
+            continue;
+        }
+
+        let relative_segments = &enclosed_segments[source_prefix.len()..];
+        if relative_segments.is_empty() {
+            continue;
+        }
+
+        let output_path = relative_segments
+            .iter()
+            .fold(destination_root.to_path_buf(), |path, segment| path.join(segment));
+        if entry.is_dir() {
+            fs::create_dir_all(&output_path)?;
+            continue;
+        }
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut output_file = fs::File::create(&output_path)?;
+        io::copy(&mut entry, &mut output_file)?;
+    }
+
+    Ok(())
 }
 
 fn open_folder_path(

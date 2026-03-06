@@ -344,6 +344,34 @@ export interface DeleteProfileResult {
   nextActiveProfileId: string | null;
 }
 
+export interface ExportProfilePackResult {
+  cancelled: boolean;
+  path?: string;
+  profileId?: string;
+  profileName?: string;
+  modCount?: number;
+}
+
+export interface ImportProfilePackResult {
+  cancelled: boolean;
+  sourcePath?: string;
+  profile?: ProfileDetailDto;
+}
+
+export interface ImportProfilePackPreviewModDto {
+  packageId: string;
+  packageName: string;
+  versionId: string;
+  versionNumber: string;
+}
+
+export interface ImportProfilePackPreviewResult {
+  cancelled: boolean;
+  sourcePath?: string;
+  profileName?: string;
+  mods: ImportProfilePackPreviewModDto[];
+}
+
 export interface CacheSummaryDto {
   archiveCount: number;
   totalBytes: number;
@@ -526,6 +554,7 @@ export interface WarningPrefsDto {
   broken: boolean;
   installWithoutDependencies: boolean;
   uninstallWithDependants: boolean;
+  importProfilePack: boolean;
   conserveWhileGameRunning: boolean;
 }
 
@@ -540,6 +569,11 @@ export interface MemoryDiagnosticsModalState {
   isLoading: boolean;
   data?: MemoryDiagnosticsSnapshot;
   error: string | null;
+}
+
+export interface ImportProfilePackModalState {
+  preview: ImportProfilePackPreviewResult;
+  isImporting: boolean;
 }
 
 export type ResetProgressStep = "deleting" | "restoring" | "browse" | "finalizing";
@@ -565,6 +599,7 @@ export interface AppState {
   downloads: DownloadJobDto[];
   cacheSummary?: CacheSummaryDto;
   clearUnreferencedCacheModal: CachePrunePreviewDto | null;
+  importProfilePackModal: ImportProfilePackModalState | null;
   profilesStorageSummary?: ProfilesStorageSummaryDto;
   activeCacheTaskIds: string[];
   busyPackageIds: string[];

@@ -125,6 +125,12 @@ img {
   min-height: 0;
 }
 
+.settings-screen {
+  overflow: auto;
+  padding-right: 4px;
+  align-content: start;
+}
+
 .overview-screen,
 .profile-screen,
 .download-screen {
@@ -1798,6 +1804,35 @@ img {
 .dependant-depth {
   color: var(--text-faint);
   font-size: 0.88rem;
+}
+
+.import-pack-modal {
+  width: min(620px, 100%);
+  max-height: min(82vh, 760px);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: 12px;
+}
+
+.import-pack-modal .modal-copy {
+  margin: 0;
+}
+
+.import-pack-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+  max-height: min(40vh, 320px);
+  overflow: auto;
+}
+
+.import-pack-list li {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
 }
 
 .version-menu-trigger {

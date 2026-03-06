@@ -2,7 +2,10 @@ import { invokeCommand } from "./client";
 import type {
   CreateProfileInput,
   DeleteProfileResult,
+  ExportProfilePackResult,
   GetUninstallDependantsInput,
+  ImportProfilePackPreviewResult,
+  ImportProfilePackResult,
   ProfileDetailDto,
   ProfilesStorageSummaryDto,
   ProfileSummaryDto,
@@ -54,6 +57,18 @@ export function openActiveProfileFolder(): Promise<void> {
 
 export function getProfilesStorageSummary(): Promise<ProfilesStorageSummaryDto> {
   return invokeCommand("get_profiles_storage_summary");
+}
+
+export function exportProfilePack(profileId: string): Promise<ExportProfilePackResult> {
+  return invokeCommand("export_profile_pack", { profileId });
+}
+
+export function previewImportProfilePack(): Promise<ImportProfilePackPreviewResult> {
+  return invokeCommand("preview_import_profile_pack");
+}
+
+export function importProfilePackFromPath(sourcePath: string): Promise<ImportProfilePackResult> {
+  return invokeCommand("import_profile_pack", { sourcePath });
 }
 
 export function setInstalledModEnabled(input: SetInstalledModEnabledInput): Promise<ProfileDetailDto> {
