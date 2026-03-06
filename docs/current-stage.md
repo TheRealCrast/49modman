@@ -106,6 +106,23 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - `Preferred Proton runtime` is now grouped under Settings -> `Launch (Linux)`
   - topbar launch buttons now append `(Direct)` only for direct mode
   - topbar launch buttons no longer append `(Steam)` in steam mode
+- Launch/runtime guard + resource-saver follow-up is now in place:
+  - launch now rejects duplicate attempts while a launch is in progress
+  - launch now rejects when Lethal Company is already running, with stale tracked-PID cleanup before blocking
+  - Settings -> `Performance` now includes `Conserve resources while game is running` (default off)
+  - while resource saver is active:
+    - heavy Browse/reference loading and navigation actions are blocked
+    - Browse/reference in-memory lists are cleared
+    - backend dependency index cache is invalidated
+    - SQLite memory trim is requested (`PRAGMA optimize; PRAGMA shrink_memory;`)
+    - Linux allocator trim is requested (`malloc_trim(0)`) as best effort
+  - when resource saver exits, dependency index prewarm is restored automatically
+  - app now polls launch runtime state so resource saver can auto-enter on game start and auto-exit on game close
+  - Settings -> `Performance` now includes `View RAM usage` modal:
+    - auto-refreshes every 2 seconds while open
+    - shows process-level RAM totals and per-process rows for the app process tree
+    - Linux reports RSS/PSS/private/shared/swap from `/proc/*/smaps_rollup` when available
+    - Windows reports working-set (RSS-style) process rows via PowerShell/CIM, with unavailable fields noted
 - Cache follow-up is now in place:
   - Settings -> `Cache` now includes `Clear unreferenced cache` alongside full `Clear cache`
   - unreferenced cleanup has a confirmation modal that previews exactly which cached mod versions will be removed
@@ -173,7 +190,7 @@ Current locked behavior:
 
 ## Current Uncommitted Work
 
-Browse sorting/discovery and loading-lock polish are now captured in this checkpoint.
+Resource-saver/runtime-memory diagnostics and launch-runtime guard follow-up are captured in this checkpoint.
 
 ## Profile Milestone Notes
 

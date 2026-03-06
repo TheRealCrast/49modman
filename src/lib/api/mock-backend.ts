@@ -16,6 +16,8 @@ import type {
   ActivationApplyResult,
   BuildRuntimeStageInput,
   LaunchProfileInput,
+  LaunchRuntimeStatus,
+  MemoryDiagnosticsSnapshot,
   LaunchResult,
   LaunchVanillaInput,
   ProtonRuntime,
@@ -53,6 +55,7 @@ import type {
   SteamScanResult,
   UninstallDependantDto,
   UninstallInstalledModInput,
+  TrimResourceMemoryResult,
   UpdateProfileInput,
   UnresolvedDependencySummaryItemDto,
   V49ValidationResult,
@@ -100,7 +103,8 @@ const defaultDb: MockDb = {
     red: true,
     broken: true,
     installWithoutDependencies: true,
-    uninstallWithDependants: true
+    uninstallWithDependants: true,
+    conserveWhileGameRunning: false
   },
   lastSyncAt: null,
   overrides: [],
@@ -160,7 +164,8 @@ function normalizeDb(db: MockDb): MockDb {
       red: db.warningPrefs?.red ?? true,
       broken: db.warningPrefs?.broken ?? true,
       installWithoutDependencies: db.warningPrefs?.installWithoutDependencies ?? true,
-      uninstallWithDependants: db.warningPrefs?.uninstallWithDependants ?? true
+      uninstallWithDependants: db.warningPrefs?.uninstallWithDependants ?? true,
+      conserveWhileGameRunning: db.warningPrefs?.conserveWhileGameRunning ?? false
     },
     profiles,
     activeProfileId: hasActive ? db.activeProfileId : "default",
@@ -1243,16 +1248,87 @@ export async function getWarningPrefsMock(): Promise<WarningPrefsDto> {
 }
 
 export async function setWarningPreferenceMock(
-  kind: "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants",
-  enabled: boolean
+  input: {
+    kind:
+      | "red"
+      | "broken"
+      | "installWithoutDependencies"
+      | "uninstallWithDependants"
+      | "conserveWhileGameRunning";
+    enabled: boolean;
+  }
 ): Promise<WarningPrefsDto> {
   const db = normalizeDb(loadDb());
   db.warningPrefs = {
     ...db.warningPrefs,
-    [kind]: enabled
+    [input.kind]: input.enabled
   };
   saveDb(db);
   return db.warningPrefs;
+}
+
+export async function getLaunchRuntimeStatusMock(): Promise<LaunchRuntimeStatus> {
+  return {
+    isGameRunning: false
+  };
+}
+
+export async function getMemoryDiagnosticsMock(): Promise<MemoryDiagnosticsSnapshot> {
+  return {
+    capturedAt: new Date().toISOString(),
+    platform: "mock",
+    processes: [
+      {
+        pid: 13024,
+        parentPid: 1,
+        name: "49modman",
+        role: "appMain",
+        rssBytes: 412_876_800,
+        pssBytes: 336_592_896,
+        privateBytes: 289_406_976,
+        sharedBytes: 123_469_824,
+        swapBytes: 0
+      },
+      {
+        pid: 13041,
+        parentPid: 13024,
+        name: "WebKitWebProcess",
+        role: "webview",
+        rssBytes: 931_184_640,
+        pssBytes: 774_307_840,
+        privateBytes: 706_740_224,
+        sharedBytes: 224_444_416,
+        swapBytes: 0
+      },
+      {
+        pid: 13052,
+        parentPid: 13024,
+        name: "WebKitNetworkProcess",
+        role: "network",
+        rssBytes: 87_031_808,
+        pssBytes: 66_617_344,
+        privateBytes: 42_729_472,
+        sharedBytes: 44_302_336,
+        swapBytes: 0
+      }
+    ],
+    totals: {
+      rssBytes: 1_431_093_248,
+      pssBytes: 1_177_518_080,
+      privateBytes: 1_038_876_672,
+      sharedBytes: 392_216_576,
+      swapBytes: 0
+    },
+    notes: ["Mock diagnostics snapshot for browser mode."]
+  };
+}
+
+export async function trimResourceSaverMemoryMock(): Promise<TrimResourceMemoryResult> {
+  return {
+    ok: true,
+    code: "RESOURCE_MEMORY_TRIMMED",
+    message: "Mock runtime caches trimmed."
+  };
 }
 
 export async function scanSteamInstallationsMock(): Promise<SteamScanResult> {

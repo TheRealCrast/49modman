@@ -7,15 +7,19 @@ use crate::{
         activate_profile as activate_profile_service,
         build_runtime_stage as build_runtime_stage_service,
         deactivate_to_vanilla as deactivate_to_vanilla_service,
+        get_launch_runtime_status as get_launch_runtime_status_service,
+        get_memory_diagnostics as get_memory_diagnostics_service,
         launch_profile as launch_profile_service, launch_vanilla as launch_vanilla_service,
         list_proton_runtimes as list_proton_runtimes_service,
         repair_activation as repair_activation_service,
         scan_steam_installations as scan_steam_installations_service,
         set_preferred_proton_runtime as set_preferred_proton_runtime_service,
+        trim_resource_saver_memory as trim_resource_saver_memory_service,
         validate_v49_install as validate_v49_install_service, ActivateProfileInput,
         ActivationApplyResult, BuildRuntimeStageInput, LaunchProfileInput, LaunchResult,
-        LaunchVanillaInput, ProtonRuntime, RuntimeStageBuildResult, SteamScanResult,
-        V49ValidationResult, ValidateV49InstallInput, VanillaCleanupResult,
+        LaunchRuntimeStatus, LaunchVanillaInput, MemoryDiagnosticsSnapshot, ProtonRuntime,
+        RuntimeStageBuildResult, SteamScanResult, TrimResourceMemoryResult, V49ValidationResult,
+        ValidateV49InstallInput, VanillaCleanupResult,
     },
 };
 
@@ -112,6 +116,50 @@ pub async fn repair_activation(
     async_runtime::spawn_blocking(move || repair_activation_service(&state).map_err(AppError::from))
         .await
         .map_err(|error| AppError::new("REPAIR_ACTIVATION_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn get_launch_runtime_status(
+    state: State<'_, AppState>,
+) -> Result<LaunchRuntimeStatus, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        get_launch_runtime_status_service(&state).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("GET_LAUNCH_RUNTIME_STATUS_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn get_memory_diagnostics(
+    state: State<'_, AppState>,
+) -> Result<MemoryDiagnosticsSnapshot, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        get_memory_diagnostics_service(&state).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("GET_MEMORY_DIAGNOSTICS_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn trim_resource_saver_memory(
+    state: State<'_, AppState>,
+) -> Result<TrimResourceMemoryResult, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+
+        trim_resource_saver_memory_service(&state, &connection).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("TRIM_RESOURCE_MEMORY_FAILED", error.to_string()))?
 }
 
 #[tauri::command]

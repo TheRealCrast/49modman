@@ -1,9 +1,10 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fs,
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{Arc, Mutex},
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -12,9 +13,10 @@ use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
 use crate::{
-    app_state::AppState,
+    app_state::{AppState, LaunchRuntimeState},
     db::{get_setting, now_rfc3339, upsert_setting},
     error::InternalError,
+    services::dependency_service::invalidate_dependency_catalog_index,
     services::profile_service::{get_active_profile_id, read_profile_manifest_mods},
 };
 
@@ -182,6 +184,63 @@ pub struct LaunchResult {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LaunchRuntimeStatus {
+    pub is_game_running: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrimResourceMemoryResult {
+    pub ok: bool,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDiagnosticsProcess {
+    pub pid: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_pid: Option<u32>,
+    pub name: String,
+    pub role: String,
+    pub rss_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pss_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swap_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDiagnosticsTotals {
+    pub rss_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pss_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub swap_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDiagnosticsSnapshot {
+    pub captured_at: String,
+    pub platform: String,
+    pub processes: Vec<MemoryDiagnosticsProcess>,
+    pub totals: MemoryDiagnosticsTotals,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProtonRuntime {
     pub id: String,
     pub display_name: String,
@@ -247,6 +306,73 @@ struct LaunchDiagnosticsRecord {
     code: String,
     message: String,
     pid: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct LaunchReservation {
+    shared_state: Arc<Mutex<LaunchRuntimeState>>,
+}
+
+impl LaunchReservation {
+    fn reserve(state: &AppState) -> Result<Self, InternalError> {
+        let mut launch_state = state.launch_runtime_state.lock().map_err(|_| {
+            InternalError::app(
+                "LAUNCH_STATE_LOCK_FAILED",
+                "Failed to lock launch runtime state.",
+            )
+        })?;
+
+        if launch_state.launch_in_progress {
+            return Err(InternalError::app(
+                "LAUNCH_ALREADY_IN_PROGRESS",
+                "A launch is already in progress. Wait for it to finish before launching again.",
+            ));
+        }
+
+        if let Some(pid) = launch_state.tracked_game_pid {
+            if is_tracked_game_pid_running(pid)? {
+                return Err(InternalError::app(
+                    "LAUNCH_ALREADY_RUNNING",
+                    format!(
+                        "Lethal Company is already running (pid {pid}). Close it before launching again."
+                    ),
+                ));
+            }
+
+            launch_state.tracked_game_pid = None;
+        }
+
+        if is_game_process_running()? {
+            return Err(InternalError::app(
+                "LAUNCH_ALREADY_RUNNING",
+                "Lethal Company is already running. Close it before launching again.",
+            ));
+        }
+
+        launch_state.launch_in_progress = true;
+        Ok(Self {
+            shared_state: Arc::clone(&state.launch_runtime_state),
+        })
+    }
+
+    fn track_direct_launch_pid(&self, pid: u32) -> Result<(), InternalError> {
+        let mut launch_state = self.shared_state.lock().map_err(|_| {
+            InternalError::app(
+                "LAUNCH_STATE_LOCK_FAILED",
+                "Failed to lock launch runtime state.",
+            )
+        })?;
+        launch_state.tracked_game_pid = Some(pid);
+        Ok(())
+    }
+}
+
+impl Drop for LaunchReservation {
+    fn drop(&mut self) {
+        if let Ok(mut launch_state) = self.shared_state.lock() {
+            launch_state.launch_in_progress = false;
+        }
+    }
 }
 
 pub fn scan_steam_installations() -> Result<SteamScanResult, InternalError> {
@@ -375,7 +501,8 @@ pub fn build_runtime_stage(
 
             let mod_files = collect_relative_files(&install_root)?;
             for relative_path in mod_files {
-                let Some(stage_relative_path) = normalize_stage_relative_path(&relative_path) else {
+                let Some(stage_relative_path) = normalize_stage_relative_path(&relative_path)
+                else {
                     continue;
                 };
 
@@ -603,6 +730,84 @@ pub fn list_proton_runtimes() -> Result<Vec<ProtonRuntime>, InternalError> {
     discover_proton_runtimes()
 }
 
+pub fn get_launch_runtime_status(state: &AppState) -> Result<LaunchRuntimeStatus, InternalError> {
+    let tracked_pid = {
+        let launch_state = state.launch_runtime_state.lock().map_err(|_| {
+            InternalError::app(
+                "LAUNCH_STATE_LOCK_FAILED",
+                "Failed to lock launch runtime state.",
+            )
+        })?;
+        launch_state.tracked_game_pid
+    };
+
+    let tracked_pid_running = if let Some(pid) = tracked_pid {
+        is_tracked_game_pid_running(pid)?
+    } else {
+        false
+    };
+
+    if !tracked_pid_running && tracked_pid.is_some() {
+        if let Ok(mut launch_state) = state.launch_runtime_state.lock() {
+            launch_state.tracked_game_pid = None;
+        }
+    }
+
+    let is_game_running = if tracked_pid_running {
+        true
+    } else {
+        is_game_process_running()?
+    };
+
+    Ok(LaunchRuntimeStatus { is_game_running })
+}
+
+pub fn get_memory_diagnostics(
+    _state: &AppState,
+) -> Result<MemoryDiagnosticsSnapshot, InternalError> {
+    #[cfg(target_os = "linux")]
+    {
+        return get_memory_diagnostics_linux();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return get_memory_diagnostics_windows();
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Ok(MemoryDiagnosticsSnapshot {
+            captured_at: now_rfc3339()?,
+            platform: std::env::consts::OS.to_string(),
+            processes: Vec::new(),
+            totals: MemoryDiagnosticsTotals {
+                rss_bytes: 0,
+                pss_bytes: None,
+                private_bytes: None,
+                shared_bytes: None,
+                swap_bytes: None,
+            },
+            notes: vec!["Memory diagnostics is not supported on this platform.".to_string()],
+        })
+    }
+}
+
+pub fn trim_resource_saver_memory(
+    state: &AppState,
+    connection: &Connection,
+) -> Result<TrimResourceMemoryResult, InternalError> {
+    invalidate_dependency_catalog_index(&state.dependency_index_cache)?;
+    connection.execute_batch("PRAGMA optimize; PRAGMA shrink_memory;")?;
+    trim_allocator_memory();
+
+    Ok(TrimResourceMemoryResult {
+        ok: true,
+        code: "RESOURCE_MEMORY_TRIMMED".to_string(),
+        message: "Runtime caches were trimmed for resource saver mode.".to_string(),
+    })
+}
+
 pub fn set_preferred_proton_runtime(
     connection: &Connection,
     runtime_id: &str,
@@ -680,6 +885,38 @@ pub fn launch_profile(
         )?;
         return Ok(result);
     }
+
+    let launch_reservation = match LaunchReservation::reserve(state) {
+        Ok(reservation) => reservation,
+        Err(error) => {
+            let app_error = error.to_app_error();
+            let result = LaunchResult {
+                ok: false,
+                code: app_error.code.to_string(),
+                message: app_error.message,
+                pid: None,
+                used_game_path: None,
+                used_profile_id: Some(profile_id.clone()),
+                used_launch_mode: Some(launch_mode.clone()),
+                diagnostics_path: Some(path_to_string(&diagnostics_dir)),
+            };
+            write_launch_diagnostics(
+                &diagnostics_dir,
+                &LaunchDiagnosticsRecord {
+                    timestamp: now_rfc3339()?,
+                    variant: "modded".to_string(),
+                    launch_mode,
+                    profile_id: Some(profile_id),
+                    game_path: None,
+                    ok: result.ok,
+                    code: result.code.clone(),
+                    message: result.message.clone(),
+                    pid: None,
+                },
+            )?;
+            return Ok(result);
+        }
+    };
 
     let preflight = validate_v49_install(
         state,
@@ -861,6 +1098,12 @@ pub fn launch_profile(
         Err(error) => (false, "LAUNCH_FAILED".to_string(), error.to_string(), None),
     };
 
+    if ok && launch_mode == "direct" {
+        if let Some(pid) = pid {
+            launch_reservation.track_direct_launch_pid(pid)?;
+        }
+    }
+
     let result = LaunchResult {
         ok,
         code: code.clone(),
@@ -897,6 +1140,38 @@ pub fn launch_vanilla(
     let diagnostics_dir = ensure_launch_diagnostics_dir(state)?;
     let launch_mode = input.launch_mode.trim().to_ascii_lowercase();
     let _requested_proton_runtime = input.proton_runtime_id.clone();
+
+    let launch_reservation = match LaunchReservation::reserve(state) {
+        Ok(reservation) => reservation,
+        Err(error) => {
+            let app_error = error.to_app_error();
+            let result = LaunchResult {
+                ok: false,
+                code: app_error.code.to_string(),
+                message: app_error.message,
+                pid: None,
+                used_game_path: None,
+                used_profile_id: None,
+                used_launch_mode: Some(launch_mode.clone()),
+                diagnostics_path: Some(path_to_string(&diagnostics_dir)),
+            };
+            write_launch_diagnostics(
+                &diagnostics_dir,
+                &LaunchDiagnosticsRecord {
+                    timestamp: now_rfc3339()?,
+                    variant: "vanilla".to_string(),
+                    launch_mode,
+                    profile_id: None,
+                    game_path: None,
+                    ok: result.ok,
+                    code: result.code.clone(),
+                    message: result.message.clone(),
+                    pid: None,
+                },
+            )?;
+            return Ok(result);
+        }
+    };
 
     let cleanup_result = deactivate_to_vanilla(state)?;
     if !cleanup_result.ok {
@@ -1041,6 +1316,12 @@ pub fn launch_vanilla(
         ),
         Err(error) => (false, "LAUNCH_FAILED".to_string(), error.to_string(), None),
     };
+
+    if ok && launch_mode == "direct" {
+        if let Some(pid) = pid {
+            launch_reservation.track_direct_launch_pid(pid)?;
+        }
+    }
 
     let result = LaunchResult {
         ok,
@@ -1984,6 +2265,796 @@ fn write_launch_diagnostics(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct ProcessIdentity {
+    pid: u32,
+    parent_pid: Option<u32>,
+    name: String,
+    vm_rss_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct ProcessMemoryStats {
+    rss_bytes: u64,
+    pss_bytes: Option<u64>,
+    private_bytes: Option<u64>,
+    shared_bytes: Option<u64>,
+    swap_bytes: Option<u64>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone)]
+struct WindowsProcessIdentity {
+    pid: u32,
+    parent_pid: Option<u32>,
+    name: String,
+    working_set_bytes: u64,
+}
+
+#[cfg(target_os = "linux")]
+fn get_memory_diagnostics_linux() -> Result<MemoryDiagnosticsSnapshot, InternalError> {
+    let root_pid = std::process::id();
+    let mut rows = Vec::<MemoryDiagnosticsProcess>::new();
+    let mut notes = Vec::<String>::new();
+    let mut skipped = 0usize;
+    let mut memory_read_errors = 0usize;
+
+    let (processes, status_read_errors) = collect_linux_process_tree(root_pid)?;
+
+    for process in processes {
+        match read_linux_process_memory_stats(process.pid, process.vm_rss_bytes) {
+            Ok(Some(memory)) => rows.push(MemoryDiagnosticsProcess {
+                pid: process.pid,
+                parent_pid: process.parent_pid,
+                name: process.name.clone(),
+                role: classify_memory_process_role(root_pid, process.pid, &process.name),
+                rss_bytes: memory.rss_bytes,
+                pss_bytes: memory.pss_bytes,
+                private_bytes: memory.private_bytes,
+                shared_bytes: memory.shared_bytes,
+                swap_bytes: memory.swap_bytes,
+            }),
+            Ok(None) => {
+                skipped = skipped.saturating_add(1);
+            }
+            Err(_) => {
+                skipped = skipped.saturating_add(1);
+                memory_read_errors = memory_read_errors.saturating_add(1);
+            }
+        }
+    }
+
+    rows.sort_by(|left, right| right.rss_bytes.cmp(&left.rss_bytes));
+    let totals = summarize_memory_totals(&rows);
+
+    if rows.is_empty() {
+        notes.push("No matching app processes were readable at snapshot time.".to_string());
+    }
+    if skipped > 0 {
+        notes.push(format!(
+            "Skipped {skipped} process{} while collecting memory metrics.",
+            if skipped == 1 { "" } else { "es" }
+        ));
+    }
+    if status_read_errors > 0 {
+        notes.push(format!(
+            "Encountered {status_read_errors} process status read error{}.",
+            if status_read_errors == 1 { "" } else { "s" }
+        ));
+    }
+    if memory_read_errors > 0 {
+        notes.push(format!(
+            "Encountered {memory_read_errors} process memory read error{}.",
+            if memory_read_errors == 1 { "" } else { "s" }
+        ));
+    }
+    if rows.iter().all(|row| row.pss_bytes.is_none()) {
+        notes.push("PSS metrics were unavailable for this snapshot.".to_string());
+    }
+    if rows
+        .iter()
+        .all(|row| row.private_bytes.is_none() || row.shared_bytes.is_none())
+    {
+        notes.push("Private/shared split was unavailable for one or more processes.".to_string());
+    }
+
+    Ok(MemoryDiagnosticsSnapshot {
+        captured_at: now_rfc3339()?,
+        platform: "linux".to_string(),
+        processes: rows,
+        totals,
+        notes,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn collect_linux_process_tree(
+    root_pid: u32,
+) -> Result<(Vec<ProcessIdentity>, usize), InternalError> {
+    let entries = fs::read_dir("/proc")?;
+    let mut all = HashMap::<u32, ProcessIdentity>::new();
+    let mut status_read_errors = 0usize;
+
+    for entry_result in entries {
+        let entry = match entry_result {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        let Some(pid_text) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Ok(pid) = pid_text.parse::<u32>() else {
+            continue;
+        };
+
+        match read_linux_process_status(pid) {
+            Ok(Some(status)) => {
+                all.insert(pid, status);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                status_read_errors = status_read_errors.saturating_add(1);
+            }
+        }
+    }
+
+    all.entry(root_pid).or_insert_with(|| ProcessIdentity {
+        pid: root_pid,
+        parent_pid: None,
+        name: current_process_name(),
+        vm_rss_bytes: None,
+    });
+
+    let mut children = HashMap::<u32, Vec<u32>>::new();
+    for process in all.values() {
+        if let Some(parent_pid) = process.parent_pid {
+            children.entry(parent_pid).or_default().push(process.pid);
+        }
+    }
+
+    let mut ordered = Vec::<ProcessIdentity>::new();
+    let mut visited = HashSet::<u32>::new();
+    let mut queue = VecDeque::<u32>::from([root_pid]);
+
+    while let Some(pid) = queue.pop_front() {
+        if !visited.insert(pid) {
+            continue;
+        }
+
+        let Some(process) = all.get(&pid) else {
+            continue;
+        };
+        ordered.push(process.clone());
+
+        if let Some(child_ids) = children.get(&pid) {
+            for child_pid in child_ids {
+                queue.push_back(*child_pid);
+            }
+        }
+    }
+
+    Ok((ordered, status_read_errors))
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_process_status(pid: u32) -> Result<Option<ProcessIdentity>, InternalError> {
+    let status_path = PathBuf::from("/proc").join(pid.to_string()).join("status");
+    let content = match fs::read_to_string(status_path) {
+        Ok(content) => content,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    let mut name = None::<String>;
+    let mut parent_pid = None::<u32>;
+    let mut vm_rss_bytes = None::<u64>;
+
+    for line in content.lines() {
+        if let Some(value) = line.strip_prefix("Name:") {
+            name = Some(value.trim().to_string());
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("PPid:") {
+            parent_pid = parse_status_u32(value);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("VmRSS:") {
+            vm_rss_bytes = parse_status_kib_bytes(value);
+        }
+    }
+
+    let Some(name) = name else {
+        return Ok(None);
+    };
+
+    Ok(Some(ProcessIdentity {
+        pid,
+        parent_pid,
+        name,
+        vm_rss_bytes,
+    }))
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_process_memory_stats(
+    pid: u32,
+    fallback_rss_bytes: Option<u64>,
+) -> Result<Option<ProcessMemoryStats>, InternalError> {
+    let smaps_rollup = PathBuf::from("/proc")
+        .join(pid.to_string())
+        .join("smaps_rollup");
+    let content = match fs::read_to_string(&smaps_rollup) {
+        Ok(content) => Some(content),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            None
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    if let Some(content) = content {
+        let mut rss_bytes = None::<u64>;
+        let mut pss_bytes = None::<u64>;
+        let mut private_clean_bytes = None::<u64>;
+        let mut private_dirty_bytes = None::<u64>;
+        let mut shared_clean_bytes = None::<u64>;
+        let mut shared_dirty_bytes = None::<u64>;
+        let mut swap_bytes = None::<u64>;
+
+        for line in content.lines() {
+            rss_bytes = rss_bytes.or_else(|| parse_kib_field(line, "Rss:"));
+            pss_bytes = pss_bytes.or_else(|| parse_kib_field(line, "Pss:"));
+            private_clean_bytes =
+                private_clean_bytes.or_else(|| parse_kib_field(line, "Private_Clean:"));
+            private_dirty_bytes =
+                private_dirty_bytes.or_else(|| parse_kib_field(line, "Private_Dirty:"));
+            shared_clean_bytes =
+                shared_clean_bytes.or_else(|| parse_kib_field(line, "Shared_Clean:"));
+            shared_dirty_bytes =
+                shared_dirty_bytes.or_else(|| parse_kib_field(line, "Shared_Dirty:"));
+            swap_bytes = swap_bytes.or_else(|| parse_kib_field(line, "Swap:"));
+        }
+
+        let private_bytes = match (private_clean_bytes, private_dirty_bytes) {
+            (None, None) => None,
+            (clean, dirty) => Some(clean.unwrap_or(0).saturating_add(dirty.unwrap_or(0))),
+        };
+        let shared_bytes = match (shared_clean_bytes, shared_dirty_bytes) {
+            (None, None) => None,
+            (clean, dirty) => Some(clean.unwrap_or(0).saturating_add(dirty.unwrap_or(0))),
+        };
+        let rss_bytes = rss_bytes.or(fallback_rss_bytes);
+
+        if let Some(rss_bytes) = rss_bytes {
+            return Ok(Some(ProcessMemoryStats {
+                rss_bytes,
+                pss_bytes,
+                private_bytes,
+                shared_bytes,
+                swap_bytes,
+            }));
+        }
+    }
+
+    if let Some(rss_bytes) = fallback_rss_bytes {
+        return Ok(Some(ProcessMemoryStats {
+            rss_bytes,
+            pss_bytes: None,
+            private_bytes: None,
+            shared_bytes: None,
+            swap_bytes: None,
+        }));
+    }
+
+    Ok(None)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_status_u32(value: &str) -> Option<u32> {
+    value.split_whitespace().next()?.parse::<u32>().ok()
+}
+
+#[cfg(target_os = "linux")]
+fn parse_status_kib_bytes(value: &str) -> Option<u64> {
+    let kib = value.split_whitespace().next()?.parse::<u64>().ok()?;
+    Some(kib.saturating_mul(1024))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_kib_field(line: &str, key: &str) -> Option<u64> {
+    let value = line.strip_prefix(key)?.trim().split_whitespace().next()?;
+    let kib = value.parse::<u64>().ok()?;
+    Some(kib.saturating_mul(1024))
+}
+
+#[cfg(target_os = "windows")]
+fn get_memory_diagnostics_windows() -> Result<MemoryDiagnosticsSnapshot, InternalError> {
+    let root_pid = std::process::id();
+    let mut notes = Vec::<String>::new();
+
+    let windows_processes = match collect_windows_process_tree(root_pid) {
+        Ok(processes) => processes,
+        Err(error) => {
+            notes.push(format!(
+                "Falling back to limited Windows snapshot: {}",
+                error
+            ));
+            Vec::new()
+        }
+    };
+
+    let mut rows = windows_processes
+        .into_iter()
+        .map(|process| MemoryDiagnosticsProcess {
+            pid: process.pid,
+            parent_pid: process.parent_pid,
+            name: process.name.clone(),
+            role: classify_memory_process_role(root_pid, process.pid, &process.name),
+            rss_bytes: process.working_set_bytes,
+            pss_bytes: None,
+            private_bytes: None,
+            shared_bytes: None,
+            swap_bytes: None,
+        })
+        .collect::<Vec<_>>();
+
+    if rows.is_empty() {
+        rows.push(MemoryDiagnosticsProcess {
+            pid: root_pid,
+            parent_pid: None,
+            name: current_process_name(),
+            role: "appMain".to_string(),
+            rss_bytes: 0,
+            pss_bytes: None,
+            private_bytes: None,
+            shared_bytes: None,
+            swap_bytes: None,
+        });
+        notes.push(
+            "No process tree data was available; showing a placeholder for the app process."
+                .to_string(),
+        );
+    }
+
+    notes.push(
+        "Windows currently reports RSS/Working Set only; PSS/private/shared/swap are unavailable."
+            .to_string(),
+    );
+
+    rows.sort_by(|left, right| right.rss_bytes.cmp(&left.rss_bytes));
+    let totals = summarize_memory_totals(&rows);
+
+    Ok(MemoryDiagnosticsSnapshot {
+        captured_at: now_rfc3339()?,
+        platform: "windows".to_string(),
+        processes: rows,
+        totals,
+        notes,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn collect_windows_process_tree(
+    root_pid: u32,
+) -> Result<Vec<WindowsProcessIdentity>, InternalError> {
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize | ConvertTo-Json -Compress",
+        ])
+        .output()
+        .map_err(|error| {
+            InternalError::with_detail(
+                "MEMORY_DIAGNOSTICS_FAILED",
+                "Could not run PowerShell process query for memory diagnostics.",
+                error.to_string(),
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(InternalError::with_detail(
+            "MEMORY_DIAGNOSTICS_FAILED",
+            "PowerShell process query failed for memory diagnostics.",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let json = serde_json::from_str::<serde_json::Value>(&stdout)?;
+    let mut all = HashMap::<u32, WindowsProcessIdentity>::new();
+    for process in parse_windows_process_rows(&json) {
+        all.insert(process.pid, process);
+    }
+
+    if all.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut children = HashMap::<u32, Vec<u32>>::new();
+    for process in all.values() {
+        if let Some(parent_pid) = process.parent_pid {
+            children.entry(parent_pid).or_default().push(process.pid);
+        }
+    }
+
+    let mut ordered = Vec::<WindowsProcessIdentity>::new();
+    let mut visited = HashSet::<u32>::new();
+    let mut queue = VecDeque::<u32>::from([root_pid]);
+
+    while let Some(pid) = queue.pop_front() {
+        if !visited.insert(pid) {
+            continue;
+        }
+
+        let Some(process) = all.get(&pid) else {
+            continue;
+        };
+        ordered.push(process.clone());
+
+        if let Some(child_ids) = children.get(&pid) {
+            for child_pid in child_ids {
+                queue.push_back(*child_pid);
+            }
+        }
+    }
+
+    Ok(ordered)
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_process_rows(json: &serde_json::Value) -> Vec<WindowsProcessIdentity> {
+    match json {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(parse_windows_process_row)
+            .collect::<Vec<_>>(),
+        serde_json::Value::Object(_) => parse_windows_process_row(json).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_process_row(value: &serde_json::Value) -> Option<WindowsProcessIdentity> {
+    let pid = parse_json_u32(value.get("ProcessId")?)?;
+    let parent_pid = value.get("ParentProcessId").and_then(parse_json_u32);
+    let name = value
+        .get("Name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let working_set_bytes = value
+        .get("WorkingSetSize")
+        .and_then(parse_json_u64)
+        .unwrap_or(0);
+
+    Some(WindowsProcessIdentity {
+        pid,
+        parent_pid,
+        name,
+        working_set_bytes,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn parse_json_u32(value: &serde_json::Value) -> Option<u32> {
+    if let Some(number) = value.as_u64() {
+        return u32::try_from(number).ok();
+    }
+
+    value
+        .as_str()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .and_then(|number| u32::try_from(number).ok())
+}
+
+#[cfg(target_os = "windows")]
+fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
+    if let Some(number) = value.as_u64() {
+        return Some(number);
+    }
+
+    value
+        .as_str()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+}
+
+fn current_process_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "49modman".to_string())
+}
+
+fn classify_memory_process_role(root_pid: u32, pid: u32, name: &str) -> String {
+    if pid == root_pid {
+        return "appMain".to_string();
+    }
+
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("webkit") {
+        return "webview".to_string();
+    }
+    if lower.contains("network") {
+        return "network".to_string();
+    }
+
+    "appChild".to_string()
+}
+
+fn summarize_memory_totals(rows: &[MemoryDiagnosticsProcess]) -> MemoryDiagnosticsTotals {
+    MemoryDiagnosticsTotals {
+        rss_bytes: rows
+            .iter()
+            .fold(0_u64, |sum, row| sum.saturating_add(row.rss_bytes)),
+        pss_bytes: sum_optional_bytes(rows.iter().map(|row| row.pss_bytes)),
+        private_bytes: sum_optional_bytes(rows.iter().map(|row| row.private_bytes)),
+        shared_bytes: sum_optional_bytes(rows.iter().map(|row| row.shared_bytes)),
+        swap_bytes: sum_optional_bytes(rows.iter().map(|row| row.swap_bytes)),
+    }
+}
+
+fn sum_optional_bytes(values: impl Iterator<Item = Option<u64>>) -> Option<u64> {
+    let mut total = 0_u64;
+    let mut had_any = false;
+
+    for value in values.flatten() {
+        had_any = true;
+        total = total.saturating_add(value);
+    }
+
+    had_any.then_some(total)
+}
+
+fn trim_allocator_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        // Best-effort hint to glibc allocator to release free heap pages back to the OS.
+        let _ = malloc_trim(0);
+    }
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+unsafe extern "C" {
+    fn malloc_trim(pad: usize) -> i32;
+}
+
+fn is_tracked_game_pid_running(pid: u32) -> Result<bool, InternalError> {
+    #[cfg(target_os = "windows")]
+    {
+        return is_tracked_game_pid_running_windows(pid);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return is_tracked_game_pid_running_linux(pid);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = pid;
+        Ok(false)
+    }
+}
+
+fn is_game_process_running() -> Result<bool, InternalError> {
+    #[cfg(target_os = "windows")]
+    {
+        return is_game_process_running_windows();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return is_game_process_running_linux();
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        Ok(false)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_tracked_game_pid_running_windows(pid: u32) -> Result<bool, InternalError> {
+    let output = match Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let fields = line
+            .split(',')
+            .map(|value| value.trim().trim_matches('"'))
+            .collect::<Vec<_>>();
+
+        if fields.len() < 2 {
+            continue;
+        }
+
+        if fields[0].eq_ignore_ascii_case(GAME_EXECUTABLE_NAME)
+            && fields[1].parse::<u32>().ok() == Some(pid)
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn is_tracked_game_pid_running_linux(pid: u32) -> Result<bool, InternalError> {
+    let proc_dir = PathBuf::from("/proc").join(pid.to_string());
+    if !proc_dir.exists() {
+        return Ok(false);
+    }
+
+    let cmdline_matches = read_process_cmdline_contains_game_executable(&proc_dir.join("cmdline"))?;
+    if cmdline_matches {
+        return Ok(true);
+    }
+
+    read_process_comm_matches_game_executable(&proc_dir.join("comm"))
+}
+
+#[cfg(target_os = "windows")]
+fn is_game_process_running_windows() -> Result<bool, InternalError> {
+    let output = match Command::new("tasklist")
+        .args([
+            "/FI",
+            &format!("IMAGENAME eq {GAME_EXECUTABLE_NAME}"),
+            "/FO",
+            "CSV",
+            "/NH",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let image_name = line
+            .split(',')
+            .next()
+            .map(|value| value.trim().trim_matches('"'))
+            .unwrap_or_default();
+        if image_name.eq_ignore_ascii_case(GAME_EXECUTABLE_NAME) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn is_game_process_running_linux() -> Result<bool, InternalError> {
+    let entries = match fs::read_dir("/proc") {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+
+    for entry_result in entries {
+        let entry = match entry_result {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        let file_name = entry.file_name();
+        let Some(pid_text) = file_name.to_str() else {
+            continue;
+        };
+        if pid_text.parse::<u32>().is_err() {
+            continue;
+        }
+
+        let process_dir = entry.path();
+        if read_process_cmdline_contains_game_executable(&process_dir.join("cmdline"))? {
+            return Ok(true);
+        }
+        if read_process_comm_matches_game_executable(&process_dir.join("comm"))? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn read_process_cmdline_contains_game_executable(path: &Path) -> Result<bool, InternalError> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            return Ok(false);
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    if bytes.is_empty() {
+        return Ok(false);
+    }
+
+    for arg in bytes.split(|byte| *byte == 0) {
+        if arg.is_empty() {
+            continue;
+        }
+
+        let token = String::from_utf8_lossy(arg);
+        if is_game_executable_arg(token.as_ref()) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn read_process_comm_matches_game_executable(path: &Path) -> Result<bool, InternalError> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            return Ok(false);
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    if bytes.is_empty() {
+        return Ok(false);
+    }
+
+    let name = String::from_utf8_lossy(&bytes).trim().to_ascii_lowercase();
+    Ok(name == "lethal company.exe" || name == "lethal company.")
+}
+
+fn is_game_executable_arg(value: &str) -> bool {
+    let normalized = value
+        .trim()
+        .trim_matches('"')
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+
+    normalized == "lethal company.exe"
+        || normalized == "./lethal company.exe"
+        || normalized.ends_with("/lethal company.exe")
+}
+
 fn launch_game_process(
     launch_mode: &str,
     game_root: &Path,
@@ -2428,7 +3499,12 @@ fn should_skip_stage_path(relative_path: &Path) -> bool {
 fn normalize_stage_relative_path(relative_path: &Path) -> Option<PathBuf> {
     let mut components = relative_path
         .components()
-        .map(|component| component.as_os_str().to_str().map(|value| value.to_string()))
+        .map(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .map(|value| value.to_string())
+        })
         .collect::<Option<Vec<_>>>()?;
 
     if components.is_empty() {
@@ -2452,10 +3528,7 @@ fn normalize_stage_relative_path(relative_path: &Path) -> Option<PathBuf> {
 
     if let Some(first_component) = components.first() {
         let first = first_component.to_ascii_lowercase();
-        if matches!(
-            first.as_str(),
-            "plugins" | "patchers" | "config" | "core"
-        ) {
+        if matches!(first.as_str(), "plugins" | "patchers" | "config" | "core") {
             let mut remapped = Vec::<String>::with_capacity(components.len() + 1);
             remapped.push("BepInEx".to_string());
             remapped.extend(components);
@@ -2896,7 +3969,7 @@ mod tests {
     use time::OffsetDateTime;
 
     use super::{
-        collect_relative_files, extract_quoted_tokens, normalize_sha256,
+        collect_relative_files, extract_quoted_tokens, is_game_executable_arg, normalize_sha256,
         normalize_stage_relative_path, parse_dependency_entries,
         parse_steam_launch_options_from_vdf_content, should_skip_stage_path,
     };
@@ -3046,9 +4119,19 @@ mod tests {
                 .unwrap_or_default(),
             "./Lethal Company.exe"
         );
-        assert!(
-            parse_steam_launch_options_from_vdf_content(content, "9999999").is_none()
-        );
+        assert!(parse_steam_launch_options_from_vdf_content(content, "9999999").is_none());
+    }
+
+    #[test]
+    fn game_executable_arg_matcher_requires_executable_path() {
+        assert!(is_game_executable_arg("./Lethal Company.exe"));
+        assert!(is_game_executable_arg(
+            "Z:\\steamapps\\common\\Lethal Company\\Lethal Company.exe"
+        ));
+        assert!(!is_game_executable_arg(
+            "/mnt/recovery/SteamLibrary/steamapps/common/Lethal Company"
+        ));
+        assert!(!is_game_executable_arg("dolphin"));
     }
 
     fn temp_test_dir(prefix: &str) -> PathBuf {

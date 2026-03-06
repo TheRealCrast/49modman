@@ -5,6 +5,9 @@ import {
   deleteProfileMock,
   activateProfileMock,
   deactivateToVanillaMock,
+  getLaunchRuntimeStatusMock,
+  getMemoryDiagnosticsMock,
+  trimResourceSaverMemoryMock,
   listProtonRuntimesMock,
   launchProfileMock,
   launchVanillaMock,
@@ -84,6 +87,9 @@ type CommandMap = {
   activate_profile: typeof activateProfileMock;
   deactivate_to_vanilla: typeof deactivateToVanillaMock;
   repair_activation: typeof repairActivationMock;
+  get_launch_runtime_status: typeof getLaunchRuntimeStatusMock;
+  get_memory_diagnostics: typeof getMemoryDiagnosticsMock;
+  trim_resource_saver_memory: typeof trimResourceSaverMemoryMock;
   launch_profile: typeof launchProfileMock;
   launch_vanilla: typeof launchVanillaMock;
   list_proton_runtimes: typeof listProtonRuntimesMock;
@@ -129,6 +135,9 @@ const mockCommands: CommandMap = {
   activate_profile: activateProfileMock,
   deactivate_to_vanilla: deactivateToVanillaMock,
   repair_activation: repairActivationMock,
+  get_launch_runtime_status: getLaunchRuntimeStatusMock,
+  get_memory_diagnostics: getMemoryDiagnosticsMock,
+  trim_resource_saver_memory: trimResourceSaverMemoryMock,
   launch_profile: launchProfileMock,
   launch_vanilla: launchVanillaMock,
   list_proton_runtimes: listProtonRuntimesMock,

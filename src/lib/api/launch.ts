@@ -3,12 +3,15 @@ import type {
   ActivateProfileInput,
   ActivationApplyResult,
   BuildRuntimeStageInput,
+  LaunchRuntimeStatus,
+  MemoryDiagnosticsSnapshot,
   LaunchProfileInput,
   LaunchResult,
   LaunchVanillaInput,
   ProtonRuntime,
   RuntimeStageBuildResult,
   SteamScanResult,
+  TrimResourceMemoryResult,
   ValidateV49InstallInput,
   V49ValidationResult,
   VanillaCleanupResult
@@ -42,6 +45,18 @@ export function deactivateToVanilla(): Promise<VanillaCleanupResult> {
 
 export function repairActivation(): Promise<VanillaCleanupResult> {
   return invokeCommand("repair_activation");
+}
+
+export function getLaunchRuntimeStatus(): Promise<LaunchRuntimeStatus> {
+  return invokeCommand("get_launch_runtime_status");
+}
+
+export function getMemoryDiagnostics(): Promise<MemoryDiagnosticsSnapshot> {
+  return invokeCommand("get_memory_diagnostics");
+}
+
+export function trimResourceSaverMemory(): Promise<TrimResourceMemoryResult> {
+  return invokeCommand("trim_resource_saver_memory");
 }
 
 export function launchProfile(input: LaunchProfileInput): Promise<LaunchResult> {

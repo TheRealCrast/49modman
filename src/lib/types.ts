@@ -70,6 +70,44 @@ export interface LaunchResult {
   diagnosticsPath?: string;
 }
 
+export interface LaunchRuntimeStatus {
+  isGameRunning: boolean;
+}
+
+export interface MemoryDiagnosticsProcess {
+  pid: number;
+  parentPid?: number;
+  name: string;
+  role: string;
+  rssBytes: number;
+  pssBytes?: number;
+  privateBytes?: number;
+  sharedBytes?: number;
+  swapBytes?: number;
+}
+
+export interface MemoryDiagnosticsTotals {
+  rssBytes: number;
+  pssBytes?: number;
+  privateBytes?: number;
+  sharedBytes?: number;
+  swapBytes?: number;
+}
+
+export interface MemoryDiagnosticsSnapshot {
+  capturedAt: string;
+  platform: string;
+  processes: MemoryDiagnosticsProcess[];
+  totals: MemoryDiagnosticsTotals;
+  notes: string[];
+}
+
+export interface TrimResourceMemoryResult {
+  ok: boolean;
+  code: string;
+  message: string;
+}
+
 export interface ProtonRuntime {
   id: string;
   displayName: string;
@@ -488,6 +526,7 @@ export interface WarningPrefsDto {
   broken: boolean;
   installWithoutDependencies: boolean;
   uninstallWithDependants: boolean;
+  conserveWhileGameRunning: boolean;
 }
 
 export interface UninstallDependantsModalState {
@@ -495,6 +534,12 @@ export interface UninstallDependantsModalState {
   packageName: string;
   versionIds: string[];
   dependants: UninstallDependantDto[];
+}
+
+export interface MemoryDiagnosticsModalState {
+  isLoading: boolean;
+  data?: MemoryDiagnosticsSnapshot;
+  error: string | null;
 }
 
 export type ResetProgressStep = "deleting" | "restoring" | "browse" | "finalizing";
@@ -529,10 +574,14 @@ export interface AppState {
   isLoadingProtonRuntimes: boolean;
   isLaunching: boolean;
   launchingVariant: LaunchVariant | null;
+  isGameRunning: boolean;
+  resourceSaverActive: boolean;
+  resourceSaverLastView: AppView | null;
   launchFeedback: LaunchFeedbackState | null;
   warningPrefs: WarningPrefsDto;
   modal: WarningModalState | null;
   uninstallDependantsModal: UninstallDependantsModalState | null;
+  memoryDiagnosticsModal: MemoryDiagnosticsModalState | null;
   resetProgress: ResetProgressState | null;
   dependencyModal: DependencyModalState | null;
   focusedVersion: FocusedVersionState | null;

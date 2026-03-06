@@ -9,9 +9,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::{
-    app_state::AppState,
-    db::now_rfc3339,
-    error::InternalError,
+    app_state::AppState, db::now_rfc3339, error::InternalError,
     services::profile_service::read_profile_manifest_mods,
 };
 
@@ -257,9 +255,9 @@ pub fn preview_clear_cache_unreferenced(
     }
 
     let removable = list_removable_archives(state, connection)?;
-    let removable_bytes = removable
-        .iter()
-        .fold(0_i64, |sum, row| sum.saturating_add(row.candidate.file_size));
+    let removable_bytes = removable.iter().fold(0_i64, |sum, row| {
+        sum.saturating_add(row.candidate.file_size)
+    });
 
     Ok(CachePrunePreviewDto {
         removable_count: removable.len(),
@@ -391,7 +389,9 @@ fn list_removable_archives(
         let package_name = row.get::<_, Option<String>>(6)?;
         let version_number = row.get::<_, Option<String>>(7)?;
 
-        let fallback_package_id = package_id.clone().unwrap_or_else(|| "unknown-package".to_string());
+        let fallback_package_id = package_id
+            .clone()
+            .unwrap_or_else(|| "unknown-package".to_string());
         let fallback_version_id = version_id.clone().unwrap_or_else(|| archive_name.clone());
         let fallback_package_name = package_name
             .or(package_id)

@@ -1420,6 +1420,84 @@ img {
   color: var(--red);
 }
 
+.memory-diagnostics-modal {
+  width: min(860px, 100%);
+  max-height: min(84vh, 900px);
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+}
+
+.memory-diagnostics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-diagnostics-note {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.memory-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--panel-alt);
+}
+
+.memory-totals p {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.memory-notes {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(47, 111, 237, 0.04);
+}
+
+.memory-notes p {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.memory-process-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.memory-process-row {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-process-main {
+  display: grid;
+  gap: 4px;
+}
+
+.memory-process-meta {
+  color: var(--text-faint);
+  font-size: 0.9rem;
+}
+
+.memory-process-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+}
+
 .dependency-modal-switcher {
   display: inline-flex;
   gap: 6px;

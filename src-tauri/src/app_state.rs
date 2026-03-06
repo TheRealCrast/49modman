@@ -16,6 +16,12 @@ use crate::{
     },
 };
 
+#[derive(Debug, Default)]
+pub struct LaunchRuntimeState {
+    pub launch_in_progress: bool,
+    pub tracked_game_pid: Option<u32>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub connection: Arc<Mutex<Connection>>,
@@ -26,6 +32,7 @@ pub struct AppState {
     pub cache_archives_dir: PathBuf,
     pub cache_tmp_dir: PathBuf,
     pub dependency_index_cache: SharedDependencyCatalogIndexCache,
+    pub launch_runtime_state: Arc<Mutex<LaunchRuntimeState>>,
 }
 
 impl AppState {
@@ -68,6 +75,7 @@ impl AppState {
             cache_archives_dir,
             cache_tmp_dir,
             dependency_index_cache: new_dependency_catalog_index_cache(),
+            launch_runtime_state: Arc::new(Mutex::new(LaunchRuntimeState::default())),
         })
     }
 }

@@ -6,6 +6,7 @@
   import DownloadsScreen from "./components/DownloadsScreen.svelte";
   import Icon from "./components/Icon.svelte";
   import InstallWarningModal from "./components/InstallWarningModal.svelte";
+  import MemoryDiagnosticsModal from "./components/MemoryDiagnosticsModal.svelte";
   import NavRail from "./components/NavRail.svelte";
   import OverviewScreen from "./components/OverviewScreen.svelte";
   import ProfilesScreen from "./components/ProfilesScreen.svelte";
@@ -128,6 +129,16 @@
 
     <div class="main-content">
       <div class="feedback-stack">
+        {#if $appState.resourceSaverActive}
+          <section class="panel launch-feedback-panel">
+            <div class="compact-heading compact-heading-left">
+              <Icon label="Resource saver" name="warning" />
+              <h3>Resource saver active</h3>
+            </div>
+            <p>Heavy Browse and reference data loading is paused while Lethal Company is running.</p>
+          </section>
+        {/if}
+
         {#if $appState.desktopError}
           <section class="panel desktop-error-panel">
             <div class="compact-heading compact-heading-left">
@@ -219,6 +230,7 @@
           refreshLabel={$appState.lastCatalogRefreshLabel}
           searchDraft={$appState.browseSearchDraft}
           busyPackageIds={$appState.busyPackageIds}
+          isResourceSaverActive={$appState.resourceSaverActive}
           selectedPackage={$appState.selectedPackageDetail}
           installedMods={$selectedProfile?.installedMods ?? []}
           visibleStatuses={$appState.visibleStatuses}
@@ -244,6 +256,7 @@
           isLoadingProtonRuntimes={$appState.isLoadingProtonRuntimes}
           profilesStorageSummary={$appState.profilesStorageSummary}
           onOpenActiveProfileFolder={actions.openActiveProfileFolder}
+          onOpenMemoryDiagnostics={actions.openMemoryDiagnosticsModal}
           onClearCache={actions.clearCache}
           onClearUnreferencedCache={actions.requestClearUnreferencedCache}
           onOpenCacheFolder={actions.openCacheFolder}
@@ -327,6 +340,14 @@
     preview={$appState.clearUnreferencedCacheModal}
     onCancel={actions.dismissClearUnreferencedCacheModal}
     onConfirm={actions.confirmClearUnreferencedCacheModal}
+  />
+{/if}
+
+{#if $appState.memoryDiagnosticsModal}
+  <MemoryDiagnosticsModal
+    state={$appState.memoryDiagnosticsModal}
+    onClose={actions.dismissMemoryDiagnosticsModal}
+    onRefresh={actions.refreshMemoryDiagnostics}
   />
 {/if}
 

@@ -31,6 +31,7 @@
   export let visibleStatuses: EffectiveStatus[] = [];
   export let busyPackageIds: string[] = [];
   export let isRefreshingCatalog = false;
+  export let isResourceSaverActive = false;
   export let isLoadingFirstPage = false;
   export let isLoadingNextPage = false;
   export let hasMore = false;
@@ -85,6 +86,10 @@
   }
 
   function handleListScroll(event: Event) {
+    if (isResourceSaverActive) {
+      return;
+    }
+
     const target = event.currentTarget as HTMLElement;
 
     if (
@@ -97,7 +102,14 @@
     }
   }
 
-  $: if (listElement && hasMore && !isLoadingFirstPage && !isLoadingNextPage && !autoloadQueued) {
+  $: if (
+    listElement &&
+    hasMore &&
+    !isLoadingFirstPage &&
+    !isLoadingNextPage &&
+    !isResourceSaverActive &&
+    !autoloadQueued
+  ) {
     if (listElement.scrollHeight <= listElement.clientHeight + 40) {
       autoloadQueued = true;
       requestAnimationFrame(() => {
@@ -116,6 +128,10 @@
   }
 
   function handleCardPrimaryAction(card: (typeof cards)[number]) {
+    if (isResourceSaverActive) {
+      return;
+    }
+
     if (isPackageBusy(card.id)) {
       return;
     }
@@ -148,6 +164,7 @@
             placeholder="Search by mod, author, category, or note"
             type="search"
             value={searchDraft}
+            disabled={isResourceSaverActive}
             on:input={(event) => onSearchDraftChange((event.currentTarget as HTMLInputElement).value)}
           />
         </label>
@@ -155,6 +172,7 @@
         <label class="settings-select browse-sort-select">
           <span>Sort</span>
           <select
+            disabled={isResourceSaverActive}
             value={browseSortMode}
             on:change={(event) =>
               onBrowseSortChange((event.currentTarget as HTMLSelectElement).value as BrowseSortMode)}
@@ -167,12 +185,17 @@
           </select>
         </label>
 
-        <button class="ghost-button icon-button" type="submit">
+        <button class="ghost-button icon-button" type="submit" disabled={isResourceSaverActive}>
           <Icon label="Search" name="search" />
           <span>Search</span>
         </button>
 
-        <button class="ghost-button icon-button" disabled={isRefreshingCatalog} type="button" on:click={onRefresh}>
+        <button
+          class="ghost-button icon-button"
+          disabled={isRefreshingCatalog || isResourceSaverActive}
+          type="button"
+          on:click={onRefresh}
+        >
           <Icon label="Refresh" name="refresh" />
           <span>{isRefreshingCatalog ? "Refreshing" : "Refresh"}</span>
         </button>
@@ -184,6 +207,7 @@
             class:active={visibleStatuses.includes(filter)}
             class={`toggle-chip ${filter}`}
             type="button"
+            disabled={isResourceSaverActive}
             on:click={() => onToggleStatus(filter)}
           >
             {#if filter === "verified"}
@@ -221,6 +245,10 @@
               <span>Retry</span>
             </button>
           </div>
+        {:else if cards.length === 0 && isResourceSaverActive}
+          <div class="list-state panel browse-status-padded">
+            <p>Resource saver is active while the game is running.</p>
+          </div>
         {:else if cards.length === 0}
           <div class="list-state panel browse-status-padded">
             <p>No mods matched this search.</p>
@@ -230,7 +258,12 @@
             {@const packageInstalled = isPackageInstalled(card.id)}
             {@const packageBusy = isPackageBusy(card.id)}
             <article class="package-card panel">
-              <button class="package-card-select" type="button" on:click={() => onSelectPackage(card.id)}>
+              <button
+                class="package-card-select"
+                type="button"
+                disabled={isResourceSaverActive}
+                on:click={() => onSelectPackage(card.id)}
+              >
                 <div class="package-card-header">
                   <div>
                     <p class="package-name">{card.fullName}</p>
@@ -261,10 +294,12 @@
                 <button
                   class={`solid-button icon-button package-install-button package-card-install-button ${packageBusy ? "busy" : packageInstalled ? "uninstall" : card.effectiveStatus}`}
                   type="button"
-                  disabled={packageBusy}
+                  disabled={packageBusy || isResourceSaverActive}
                   aria-label={
                     packageBusy
                       ? `Working on ${card.fullName}`
+                      : isResourceSaverActive
+                      ? `${card.fullName} is unavailable while resource saver is active`
                       : packageInstalled
                       ? `Uninstall ${card.fullName}`
                       : `Install ${card.fullName} ${card.recommendedVersion}`
@@ -272,6 +307,8 @@
                   title={
                     packageBusy
                       ? "Working..."
+                      : isResourceSaverActive
+                      ? "Unavailable while resource saver is active"
                       : packageInstalled
                       ? "Uninstall"
                       : `Install ${card.recommendedVersion}`

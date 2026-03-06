@@ -13,6 +13,7 @@ pub struct WarningPrefsDto {
     pub broken: bool,
     pub install_without_dependencies: bool,
     pub uninstall_with_dependants: bool,
+    pub conserve_while_game_running: bool,
 }
 
 pub fn get_warning_prefs(connection: &Connection) -> Result<WarningPrefsDto, InternalError> {
@@ -29,6 +30,11 @@ pub fn get_warning_prefs(connection: &Connection) -> Result<WarningPrefsDto, Int
             "warning.uninstall_with_dependants",
             true,
         )?,
+        conserve_while_game_running: get_bool_setting(
+            connection,
+            "launch.conserve_while_game_running",
+            false,
+        )?,
     })
 }
 
@@ -39,7 +45,11 @@ pub fn set_warning_preference(
 ) -> Result<WarningPrefsDto, InternalError> {
     if !matches!(
         kind,
-        "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants"
+        "red"
+            | "broken"
+            | "installWithoutDependencies"
+            | "uninstallWithDependants"
+            | "conserveWhileGameRunning"
     ) {
         return Err(InternalError::app(
             "SETTINGS_SAVE_FAILED",
@@ -52,6 +62,7 @@ pub fn set_warning_preference(
         "broken" => "warning.broken",
         "installWithoutDependencies" => "warning.install_without_dependencies",
         "uninstallWithDependants" => "warning.uninstall_with_dependants",
+        "conserveWhileGameRunning" => "launch.conserve_while_game_running",
         _ => unreachable!("validated above"),
     };
     let updated_at = now_rfc3339()?;

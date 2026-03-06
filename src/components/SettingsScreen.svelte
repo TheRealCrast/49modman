@@ -7,6 +7,7 @@
     broken: boolean;
     installWithoutDependencies: boolean;
     uninstallWithDependants: boolean;
+    conserveWhileGameRunning: boolean;
   };
   export let cacheSummary: CacheSummaryDto | undefined;
   export let profilesStorageSummary: ProfilesStorageSummaryDto | undefined;
@@ -16,12 +17,18 @@
   export let isLoadingProtonRuntimes = false;
   export let settingsError: string | null = null;
   export let onWarningPrefChange: (
-    kind: "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants",
+    kind:
+      | "red"
+      | "broken"
+      | "installWithoutDependencies"
+      | "uninstallWithDependants"
+      | "conserveWhileGameRunning",
     enabled: boolean
   ) => void | Promise<void>;
   export let onOpenCacheFolder: () => void | Promise<void>;
   export let onOpenProfilesFolder: () => void | Promise<void>;
   export let onOpenActiveProfileFolder: () => void | Promise<void>;
+  export let onOpenMemoryDiagnostics: () => void | Promise<void>;
   export let onClearCache: () => void | Promise<void>;
   export let onClearUnreferencedCache: () => void | Promise<void>;
   export let onResetAllData: () => void | Promise<void>;
@@ -160,6 +167,48 @@
               name={warningPrefs.uninstallWithDependants ? "check" : "circle"}
             />
             <span>{warningPrefs.uninstallWithDependants ? "On" : "Off"}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-subheading">
+        <h3>Performance</h3>
+      </div>
+
+      <div class="preference-list">
+        <div class="switch-row">
+          <div>
+            <strong>Conserve resources while game is running</strong>
+            <p>Pause background polling and non-essential refresh activity while Lethal Company is open.</p>
+          </div>
+          <button
+            aria-pressed={warningPrefs.conserveWhileGameRunning}
+            class="ghost-button icon-button toggle-icon-button"
+            type="button"
+            on:click={() =>
+              onWarningPrefChange(
+                "conserveWhileGameRunning",
+                !warningPrefs.conserveWhileGameRunning
+              )}
+          >
+            <Icon
+              label={warningPrefs.conserveWhileGameRunning ? "Enabled" : "Disabled"}
+              name={warningPrefs.conserveWhileGameRunning ? "check" : "circle"}
+            />
+            <span>{warningPrefs.conserveWhileGameRunning ? "On" : "Off"}</span>
+          </button>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <strong>View RAM usage</strong>
+            <p>Open a live process snapshot showing how much memory 49modman is using.</p>
+          </div>
+          <button class="ghost-button icon-button" type="button" on:click={onOpenMemoryDiagnostics}>
+            <Icon label="Open RAM diagnostics" name="details" />
+            <span>Open</span>
           </button>
         </div>
       </div>

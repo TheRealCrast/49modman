@@ -11,11 +11,14 @@ import { getCatalogSummary, getPackageDetail, searchPackages, syncCatalog } from
 import { getVersionDependencies, warmDependencyIndex } from "./api/dependencies";
 import { listActiveDownloads } from "./api/downloads";
 import {
+  getLaunchRuntimeStatus as getLaunchRuntimeStatusApi,
+  getMemoryDiagnostics as getMemoryDiagnosticsApi,
   launchProfile as launchProfileApi,
   launchVanilla as launchVanillaApi,
   listProtonRuntimes as listProtonRuntimesApi,
   repairActivation as repairActivationApi,
-  setPreferredProtonRuntime as setPreferredProtonRuntimeApi
+  setPreferredProtonRuntime as setPreferredProtonRuntimeApi,
+  trimResourceSaverMemory as trimResourceSaverMemoryApi
 } from "./api/launch";
 import {
   createProfile as createProfileApi,
@@ -69,7 +72,19 @@ const defaultBrowseSortMode: BrowseSortMode = "mostDownloads";
 const defaultCatalogPageSize = 40;
 const defaultReferencePageSize = 50;
 const downloadPollIntervalMs = 500;
+const launchRuntimePollIntervalMs = 2500;
+const memoryDiagnosticsPollIntervalMs = 2000;
+const resourceSaverTransitionPollThreshold = 2;
+const resourceSaverBlockNoticeCooldownMs = 4000;
 let downloadPollHandle: number | null = null;
+let launchRuntimePollHandle: number | null = null;
+let memoryDiagnosticsPollHandle: number | null = null;
+let isLoadingMemoryDiagnostics = false;
+let isLoadingLaunchRuntimeStatus = false;
+let consecutiveGameRunningPolls = 0;
+let consecutiveGameStoppedPolls = 0;
+let isResourceSaverTransitionInFlight = false;
+let resourceSaverBlockNoticeLastAtMs = 0;
 let focusedVersionClearHandle: number | null = null;
 const busyPackageRefCounts = new Map<string, number>();
 const activeInstallTaskPackageIds = new Map<string, string>();
@@ -105,10 +120,15 @@ const initialState: AppState = {
     red: true,
     broken: true,
     installWithoutDependencies: true,
-    uninstallWithDependants: true
+    uninstallWithDependants: true,
+    conserveWhileGameRunning: false
   },
+  isGameRunning: false,
+  resourceSaverActive: false,
+  resourceSaverLastView: null,
   modal: null,
   uninstallDependantsModal: null,
+  memoryDiagnosticsModal: null,
   resetProgress: null,
   dependencyModal: null,
   focusedVersion: null,
@@ -178,6 +198,35 @@ function withActivity(title: string, detail: string, tone: ActivityItem["tone"])
   };
 }
 
+function describeUnknownError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const message = typeof record.message === "string" ? record.message.trim() : "";
+    const code = typeof record.code === "string" ? record.code.trim() : "";
+    const detail = typeof record.detail === "string" ? record.detail.trim() : "";
+
+    if (message && detail) {
+      return `${code ? `${code}: ` : ""}${message} (${detail})`;
+    }
+    if (message) {
+      return `${code ? `${code}: ` : ""}${message}`;
+    }
+    if (detail) {
+      return detail;
+    }
+  }
+
+  return fallback;
+}
+
 function resolveLaunchMode(profile: ProfileDetailDto | undefined): LaunchMode {
   return profile?.launchModeDefault === "direct" ? "direct" : "steam";
 }
@@ -235,6 +284,299 @@ function stopDownloadPolling() {
   if (downloadPollHandle !== null) {
     window.clearInterval(downloadPollHandle);
     downloadPollHandle = null;
+  }
+}
+
+function resetResourceSaverPollCounters() {
+  consecutiveGameRunningPolls = 0;
+  consecutiveGameStoppedPolls = 0;
+}
+
+function isHeavyWorkBlocked(state = get(appState)) {
+  return state.warningPrefs.conserveWhileGameRunning && state.resourceSaverActive;
+}
+
+function notifyHeavyWorkBlocked(actionLabel: string) {
+  const now = Date.now();
+  if (now - resourceSaverBlockNoticeLastAtMs < resourceSaverBlockNoticeCooldownMs) {
+    return;
+  }
+  resourceSaverBlockNoticeLastAtMs = now;
+
+  appState.update((state) =>
+    appendActivity(
+      state,
+      withActivity(
+        "Resource saver active",
+        `${actionLabel} is paused while Lethal Company is running.`,
+        "warning"
+      )
+    )
+  );
+}
+
+async function enterResourceSaverMode() {
+  const snapshot = get(appState);
+  if (!snapshot.warningPrefs.conserveWhileGameRunning || snapshot.resourceSaverActive) {
+    return;
+  }
+  if (isResourceSaverTransitionInFlight) {
+    return;
+  }
+  isResourceSaverTransitionInFlight = true;
+
+  stopDownloadPolling();
+  clearFocusedVersionTimer();
+
+  appState.update((state) => ({
+    ...state,
+    resourceSaverActive: true,
+    resourceSaverLastView: state.view !== "overview" ? state.view : state.resourceSaverLastView,
+    view: "overview",
+    catalogCards: [],
+    catalogNextCursor: null,
+    catalogHasMore: false,
+    selectedPackageDetail: undefined,
+    dependencyModal: null,
+    focusedVersion: null,
+    isLoadingCatalogFirstPage: false,
+    isLoadingCatalogNextPage: false,
+    isLoadingPackageDetail: false,
+    referenceRowsData: [],
+    referenceNextCursor: null,
+    referenceHasMore: false,
+    isLoadingReferences: false,
+    isLoadingReferencesNextPage: false
+  }));
+
+  try {
+    await trimResourceSaverMemoryApi();
+    appState.update((state) =>
+      appendActivity(
+        {
+          ...state,
+          desktopError: null
+        },
+        withActivity(
+          "Resource saver enabled",
+          "Paused heavy UI data and released dependency index memory while the game is running.",
+          "neutral"
+        )
+      )
+    );
+  } catch (error) {
+    appState.update((state) => ({
+      ...state,
+      desktopError:
+        state.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to trim desktop runtime memory for resource saver mode."
+          : state.desktopError
+    }));
+  } finally {
+    syncDownloadPollingForState(get(appState));
+    isResourceSaverTransitionInFlight = false;
+  }
+}
+
+async function warmDependencyIndexAfterResourceSaver() {
+  try {
+    await warmDependencyIndex();
+  } catch (error) {
+    appState.update((state) => ({
+      ...state,
+      desktopError:
+        state.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to warm dependency index after resource saver mode."
+          : state.desktopError
+    }));
+  }
+}
+
+async function exitResourceSaverMode() {
+  const snapshot = get(appState);
+  if (!snapshot.resourceSaverActive) {
+    return;
+  }
+  if (isResourceSaverTransitionInFlight) {
+    return;
+  }
+  isResourceSaverTransitionInFlight = true;
+
+  const restoreView = snapshot.resourceSaverLastView ?? "overview";
+  appState.update((state) => ({
+    ...state,
+    resourceSaverActive: false,
+    resourceSaverLastView: null,
+    view: restoreView
+  }));
+
+  try {
+    const refreshedState = get(appState);
+    await Promise.all([
+      loadActiveDownloads(),
+      loadCacheSummary(),
+      refreshActiveProfileState(),
+      refreshedState.view === "settings" ? loadProfilesStorageSummary() : Promise.resolve(),
+      loadCatalogFirstPage({ showLoading: false, waitForSelectedPackageDetail: false }),
+      warmDependencyIndexAfterResourceSaver()
+    ]);
+
+    appState.update((state) =>
+      appendActivity(
+        state,
+        withActivity(
+          "Resource saver disabled",
+          "Restored normal background updates and rewarmed dependency cache after game exit.",
+          "positive"
+        )
+      )
+    );
+  } catch (error) {
+    appState.update((state) => ({
+      ...state,
+      desktopError:
+        state.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to restore desktop state after resource saver mode."
+          : state.desktopError
+    }));
+  } finally {
+    syncDownloadPollingForState(get(appState));
+    isResourceSaverTransitionInFlight = false;
+  }
+}
+
+function shouldConserveResources(state: AppState) {
+  return (
+    state.warningPrefs.conserveWhileGameRunning &&
+    (state.resourceSaverActive || state.isGameRunning)
+  );
+}
+
+function syncDownloadPollingForState(state = get(appState)) {
+  if (shouldConserveResources(state)) {
+    stopDownloadPolling();
+    return;
+  }
+
+  if (state.activeCacheTaskIds.length > 0) {
+    startDownloadPolling();
+  } else {
+    stopDownloadPolling();
+  }
+}
+
+function stopLaunchRuntimePolling() {
+  if (launchRuntimePollHandle !== null) {
+    window.clearInterval(launchRuntimePollHandle);
+    launchRuntimePollHandle = null;
+  }
+  resetResourceSaverPollCounters();
+}
+
+function startLaunchRuntimePolling() {
+  if (launchRuntimePollHandle !== null) {
+    return;
+  }
+
+  resetResourceSaverPollCounters();
+  void loadLaunchRuntimeStatus();
+  launchRuntimePollHandle = window.setInterval(() => {
+    void loadLaunchRuntimeStatus();
+  }, launchRuntimePollIntervalMs);
+}
+
+function syncLaunchRuntimePollingForState(state = get(appState)) {
+  if (state.warningPrefs.conserveWhileGameRunning) {
+    startLaunchRuntimePolling();
+    return;
+  }
+
+  stopLaunchRuntimePolling();
+  if (state.resourceSaverActive) {
+    void exitResourceSaverMode();
+    return;
+  }
+
+  if (state.isGameRunning) {
+    appState.update((current) => ({
+      ...current,
+      isGameRunning: false
+    }));
+  }
+}
+
+function stopMemoryDiagnosticsPolling() {
+  if (memoryDiagnosticsPollHandle !== null) {
+    window.clearInterval(memoryDiagnosticsPollHandle);
+    memoryDiagnosticsPollHandle = null;
+  }
+}
+
+function startMemoryDiagnosticsPolling() {
+  if (memoryDiagnosticsPollHandle !== null) {
+    return;
+  }
+
+  memoryDiagnosticsPollHandle = window.setInterval(() => {
+    void loadMemoryDiagnosticsSnapshot();
+  }, memoryDiagnosticsPollIntervalMs);
+}
+
+async function loadMemoryDiagnosticsSnapshot(options: { showLoading?: boolean } = {}) {
+  const { showLoading = false } = options;
+  const snapshot = get(appState).memoryDiagnosticsModal;
+  if (!snapshot || isLoadingMemoryDiagnostics) {
+    return;
+  }
+
+  isLoadingMemoryDiagnostics = true;
+  if (showLoading) {
+    appState.update((state) => ({
+      ...state,
+      memoryDiagnosticsModal: state.memoryDiagnosticsModal
+        ? {
+            ...state.memoryDiagnosticsModal,
+            isLoading: true,
+            error: null
+          }
+        : state.memoryDiagnosticsModal
+    }));
+  }
+
+  try {
+    const diagnostics = await getMemoryDiagnosticsApi();
+
+    appState.update((state) => ({
+      ...state,
+      memoryDiagnosticsModal: state.memoryDiagnosticsModal
+        ? {
+            isLoading: false,
+            data: diagnostics,
+            error: null
+          }
+        : state.memoryDiagnosticsModal
+    }));
+  } catch (error) {
+    const message = describeUnknownError(error, "Failed to load process memory diagnostics.");
+
+    appState.update((state) => ({
+      ...state,
+      memoryDiagnosticsModal: state.memoryDiagnosticsModal
+        ? {
+            ...state.memoryDiagnosticsModal,
+            isLoading: false,
+            error: message
+          }
+        : state.memoryDiagnosticsModal
+    }));
+  } finally {
+    isLoadingMemoryDiagnostics = false;
   }
 }
 
@@ -382,6 +724,14 @@ function appendDownloadActivity(downloads: DownloadJobDto[], taskIds: string[]) 
 }
 
 async function loadSelectedPackageDetail(packageId = get(appState).selectedPackageId) {
+  if (isHeavyWorkBlocked()) {
+    appState.update((current) => ({
+      ...current,
+      isLoadingPackageDetail: false
+    }));
+    return;
+  }
+
   if (!packageId) {
     appState.update((current) => ({
       ...current,
@@ -483,6 +833,43 @@ async function loadSettingsState() {
     settingsError: null,
     desktopError: null
   }));
+  syncLaunchRuntimePollingForState(get(appState));
+  syncDownloadPollingForState(get(appState));
+}
+
+async function loadLaunchRuntimeStatus() {
+  const snapshot = get(appState);
+  if (!snapshot.warningPrefs.conserveWhileGameRunning || isLoadingLaunchRuntimeStatus) {
+    return;
+  }
+
+  isLoadingLaunchRuntimeStatus = true;
+  try {
+    const status = await getLaunchRuntimeStatusApi();
+    appState.update((state) => ({
+      ...state,
+      isGameRunning: status.isGameRunning
+    }));
+
+    if (status.isGameRunning) {
+      consecutiveGameRunningPolls += 1;
+      consecutiveGameStoppedPolls = 0;
+      if (consecutiveGameRunningPolls >= resourceSaverTransitionPollThreshold) {
+        void enterResourceSaverMode();
+      }
+    } else {
+      consecutiveGameStoppedPolls += 1;
+      consecutiveGameRunningPolls = 0;
+      if (consecutiveGameStoppedPolls >= resourceSaverTransitionPollThreshold) {
+        void exitResourceSaverMode();
+      }
+    }
+  } catch {
+    // Keep this silent to avoid poll-loop error spam in the UI.
+  } finally {
+    isLoadingLaunchRuntimeStatus = false;
+    syncDownloadPollingForState(get(appState));
+  }
 }
 
 async function loadProtonRuntimesState() {
@@ -613,14 +1000,10 @@ async function loadActiveDownloads() {
       desktopError: null
     }));
 
-    if (activeTaskIds.length > 0) {
-      startDownloadPolling();
-    } else {
-      stopDownloadPolling();
-      if (hadActiveTasks) {
-        await Promise.all([loadCacheSummary(), refreshActiveProfileState(), loadProfilesStorageSummary()]);
-        appendDownloadActivity(previous.downloads, activeTaskIds);
-      }
+    syncDownloadPollingForState(get(appState));
+    if (activeTaskIds.length === 0 && hadActiveTasks) {
+      await Promise.all([loadCacheSummary(), refreshActiveProfileState(), loadProfilesStorageSummary()]);
+      appendDownloadActivity(previous.downloads, activeTaskIds);
     }
   } catch (error) {
     stopDownloadPolling();
@@ -641,6 +1024,14 @@ async function loadActiveDownloads() {
 async function loadCatalogFirstPage(
   options: { showLoading?: boolean; waitForSelectedPackageDetail?: boolean } = {}
 ) {
+  if (isHeavyWorkBlocked()) {
+    appState.update((current) => ({
+      ...current,
+      isLoadingCatalogFirstPage: false
+    }));
+    return false;
+  }
+
   const { showLoading = true, waitForSelectedPackageDetail = false } = options;
   const state = get(appState);
 
@@ -711,6 +1102,14 @@ async function loadCatalogFirstPage(
 }
 
 async function loadCatalogNextPage() {
+  if (isHeavyWorkBlocked()) {
+    appState.update((current) => ({
+      ...current,
+      isLoadingCatalogNextPage: false
+    }));
+    return;
+  }
+
   const state = get(appState);
 
   if (state.isLoadingCatalogNextPage || !state.catalogHasMore || state.catalogNextCursor === null) {
@@ -750,6 +1149,14 @@ async function loadCatalogNextPage() {
 }
 
 async function loadReferenceLibrary() {
+  if (isHeavyWorkBlocked()) {
+    appState.update((current) => ({
+      ...current,
+      isLoadingReferences: false
+    }));
+    return;
+  }
+
   const state = get(appState);
 
   appState.update((current) => ({
@@ -784,6 +1191,14 @@ async function loadReferenceLibrary() {
 }
 
 async function loadMoreReferenceLibrary() {
+  if (isHeavyWorkBlocked()) {
+    appState.update((current) => ({
+      ...current,
+      isLoadingReferencesNextPage: false
+    }));
+    return;
+  }
+
   const state = get(appState);
 
   if (
@@ -1507,7 +1922,7 @@ async function queueVersionForCache(
       )
     );
 
-    startDownloadPolling();
+    syncDownloadPollingForState(get(appState));
     await Promise.all([loadActiveDownloads(), loadCacheSummary()]);
     return true;
   } catch (error) {
@@ -1710,9 +2125,20 @@ export const actions = {
     }
   },
   setView(view: AppView) {
+    if (view === "browse" && isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Browse view");
+      return;
+    }
+
+    if (view !== "settings") {
+      stopMemoryDiagnosticsPolling();
+    }
+
     appState.update((state) => ({
       ...state,
-      view
+      view,
+      memoryDiagnosticsModal:
+        view === "settings" ? state.memoryDiagnosticsModal : null
     }));
 
     if (view === "settings") {
@@ -1804,6 +2230,7 @@ export const actions = {
           withActivity(feedback.title, feedback.detail, feedback.tone)
         )
       );
+      void loadLaunchRuntimeStatus();
     } catch (error) {
       const message =
         error instanceof Error
@@ -1865,6 +2292,7 @@ export const actions = {
           withActivity(feedback.title, feedback.detail, feedback.tone)
         )
       );
+      void loadLaunchRuntimeStatus();
     } catch (error) {
       const message =
         error instanceof Error
@@ -1983,6 +2411,11 @@ export const actions = {
     }));
   },
   async submitBrowseSearch() {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Browse search");
+      return;
+    }
+
     appState.update((state) => ({
       ...state,
       browseSearchSubmitted: state.browseSearchDraft.trim()
@@ -1990,6 +2423,11 @@ export const actions = {
     await loadCatalogFirstPage();
   },
   async setBrowseSortMode(sortMode: BrowseSortMode) {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Browse sorting");
+      return;
+    }
+
     appState.update((state) => ({
       ...state,
       browseSortMode: sortMode
@@ -1997,6 +2435,11 @@ export const actions = {
     await loadCatalogFirstPage();
   },
   async toggleVisibleStatus(status: EffectiveStatus) {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Browse filtering");
+      return;
+    }
+
     appState.update((state) => {
       const visible = state.visibleStatuses.includes(status)
         ? state.visibleStatuses.filter((entry) => entry !== status)
@@ -2011,6 +2454,11 @@ export const actions = {
     await loadCatalogFirstPage();
   },
   async selectPackage(packageId: string) {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Package details");
+      return;
+    }
+
     appState.update((state) => ({
       ...state,
       selectedPackageId: packageId
@@ -2018,6 +2466,11 @@ export const actions = {
     await loadSelectedPackageDetail();
   },
   async loadMoreCatalog() {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Browse pagination");
+      return;
+    }
+
     await loadCatalogNextPage();
   },
   async selectProfile(profileId: string) {
@@ -2114,6 +2567,32 @@ export const actions = {
       uninstallDependantsModal: null
     }));
     resolvePendingUninstallDependantsConfirmation(false);
+  },
+  openMemoryDiagnosticsModal() {
+    stopMemoryDiagnosticsPolling();
+
+    appState.update((state) => ({
+      ...state,
+      memoryDiagnosticsModal: {
+        isLoading: true,
+        data: state.memoryDiagnosticsModal?.data,
+        error: null
+      },
+      settingsError: null
+    }));
+
+    void loadMemoryDiagnosticsSnapshot({ showLoading: true });
+    startMemoryDiagnosticsPolling();
+  },
+  dismissMemoryDiagnosticsModal() {
+    stopMemoryDiagnosticsPolling();
+    appState.update((state) => ({
+      ...state,
+      memoryDiagnosticsModal: null
+    }));
+  },
+  refreshMemoryDiagnostics() {
+    void loadMemoryDiagnosticsSnapshot({ showLoading: true });
   },
   async requestClearUnreferencedCache() {
     try {
@@ -2224,6 +2703,11 @@ export const actions = {
     versionId: string;
     versionNumber: string;
   }) {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Dependency details");
+      return;
+    }
+
     appState.update((state) => ({
       ...state,
       dependencyModal: {
@@ -2283,9 +2767,19 @@ export const actions = {
     }));
   },
   async jumpToDependency(packageId: string, versionId: string) {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Dependency navigation");
+      return;
+    }
+
     await navigateToPackageVersionInBrowse(packageId, versionId);
   },
   async jumpToInstalledModDetails(packageId: string, versionId: string) {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Installed mod details");
+      return;
+    }
+
     await navigateToPackageVersionInBrowse(packageId, versionId);
   },
   confirmModal(doNotShowAgain: boolean) {
@@ -2303,7 +2797,8 @@ export const actions = {
           broken:
             state.modal.status === "broken" && doNotShowAgain ? false : state.warningPrefs.broken,
           installWithoutDependencies: state.warningPrefs.installWithoutDependencies,
-          uninstallWithDependants: state.warningPrefs.uninstallWithDependants
+          uninstallWithDependants: state.warningPrefs.uninstallWithDependants,
+          conserveWhileGameRunning: state.warningPrefs.conserveWhileGameRunning
         }
       };
 
@@ -2346,7 +2841,12 @@ export const actions = {
     resolvePendingUninstallDependantsConfirmation(true);
   },
   async setWarningPreference(
-    kind: "red" | "broken" | "installWithoutDependencies" | "uninstallWithDependants",
+    kind:
+      | "red"
+      | "broken"
+      | "installWithoutDependencies"
+      | "uninstallWithDependants"
+      | "conserveWhileGameRunning",
     enabled: boolean
   ) {
     try {
@@ -2357,6 +2857,8 @@ export const actions = {
         settingsError: null,
         desktopError: null
       }));
+      syncLaunchRuntimePollingForState(get(appState));
+      syncDownloadPollingForState(get(appState));
     } catch (error) {
       appState.update((state) => ({
         ...state,
@@ -2377,6 +2879,11 @@ export const actions = {
     }));
   },
   async submitReferenceSearch() {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Reference search");
+      return;
+    }
+
     appState.update((state) => ({
       ...state,
       referenceSearchSubmitted: state.referenceSearchDraft.trim(),
@@ -2387,9 +2894,19 @@ export const actions = {
     await loadReferenceLibrary();
   },
   async loadMoreReferences() {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Reference pagination");
+      return;
+    }
+
     await loadMoreReferenceLibrary();
   },
   async refreshCatalog() {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Catalog refresh");
+      return;
+    }
+
     await refreshCatalog(true, { blockingOverlay: true });
   },
   async toggleInstalledMod(
@@ -2689,6 +3206,7 @@ export const actions = {
 
       await resetAllDataApi();
       stopDownloadPolling();
+      stopMemoryDiagnosticsPolling();
       clearBusyPackages();
 
       setResetProgress(
@@ -2704,6 +3222,7 @@ export const actions = {
         selectedProfileId: "default",
         modal: null,
         uninstallDependantsModal: null,
+        memoryDiagnosticsModal: null,
         clearUnreferencedCacheModal: null,
         dependencyModal: null,
         focusedVersion: null,
@@ -2726,6 +3245,9 @@ export const actions = {
         protonRuntimes: [],
         selectedProtonRuntimeId: null,
         isLoadingProtonRuntimes: false,
+        isGameRunning: false,
+        resourceSaverActive: false,
+        resourceSaverLastView: null,
         isLaunching: false,
         launchingVariant: null,
         launchFeedback: null,
@@ -2805,6 +3327,11 @@ export const actions = {
     }
   },
   async setReferenceState(packageId: string, versionId: string, referenceState: ReferenceState) {
+    if (isHeavyWorkBlocked()) {
+      notifyHeavyWorkBlocked("Reference updates");
+      return;
+    }
+
     try {
       const pkg = get(appState).packages.find((entry) => entry.id === packageId);
       const version = pkg?.versions.find((entry) => entry.id === versionId);
