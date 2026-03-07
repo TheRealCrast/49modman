@@ -1966,6 +1966,15 @@ img {
   margin: 0;
 }
 
+.simple-confirm-modal {
+  display: grid;
+  gap: 12px;
+}
+
+.simple-confirm-modal .modal-copy {
+  margin: 0;
+}
+
 .export-pack-modal {
   width: min(620px, 100%);
   max-height: min(82vh, 760px);
@@ -2010,6 +2019,22 @@ img {
   gap: 8px;
   flex-wrap: wrap;
   align-items: baseline;
+}
+
+.import-mod-zip-modal {
+  width: min(620px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
+.import-mod-zip-modal .modal-copy {
+  margin: 0;
+}
+
+.modal-path {
+  margin: 0;
+  color: var(--text-soft);
+  word-break: break-word;
 }
 
 .version-menu-trigger {

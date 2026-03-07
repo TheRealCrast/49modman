@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { CreateProfileInput, ProfileDetailDto, ProfileSummaryDto } from "../lib/types";
   import Icon from "./Icon.svelte";
+  import SimpleConfirmModal from "./SimpleConfirmModal.svelte";
 
   export let profiles: ProfileSummaryDto[] = [];
   export let selectedProfile: ProfileDetailDto | undefined;
@@ -21,6 +22,7 @@
   let isCreating = false;
   let isEditing = false;
   let createError: string | null = null;
+  let showDeleteConfirm = false;
   let name = "";
   let notes = "";
   let gamePath = "";
@@ -95,16 +97,26 @@
     isEditing = false;
   }
 
-  async function confirmDelete() {
+  function confirmDelete() {
     if (!selectedProfile || selectedProfile.isBuiltinDefault) {
       return;
     }
 
-    if (!window.confirm(`Delete profile "${selectedProfile.name}"?`)) {
+    showDeleteConfirm = true;
+  }
+
+  async function runDelete() {
+    if (!selectedProfile || selectedProfile.isBuiltinDefault) {
+      showDeleteConfirm = false;
       return;
     }
 
+    showDeleteConfirm = false;
     await onDeleteSelectedProfile();
+  }
+
+  $: if (!selectedProfile || selectedProfile.isBuiltinDefault) {
+    showDeleteConfirm = false;
   }
 </script>
 
@@ -299,3 +311,15 @@
     </div>
   </div>
 </section>
+
+{#if showDeleteConfirm && selectedProfile}
+  <SimpleConfirmModal
+    title={`Delete profile "${selectedProfile.name}"?`}
+    description="This removes the profile and its installed mod layout from local storage."
+    confirmLabel="Delete profile"
+    confirmIcon="trash"
+    isDanger={true}
+    onCancel={() => (showDeleteConfirm = false)}
+    onConfirm={runDelete}
+  />
+{/if}

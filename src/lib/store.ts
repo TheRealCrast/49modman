@@ -64,6 +64,7 @@ import type {
   FocusedVersionState,
   ImportProfilePackPreviewModDto,
   ImportProfilePackPreviewResult,
+  ImportProfileModZipPreviewResult,
   ImportProfileModZipResult,
   InstallRequest,
   LaunchMode,
@@ -98,6 +99,9 @@ const busyPackageRefCounts = new Map<string, number>();
 const activeInstallTaskPackageIds = new Map<string, string>();
 let pendingWarningConfirmationResolver: ((confirmed: boolean) => void) | null = null;
 let pendingUninstallDependantsConfirmationResolver: ((confirmed: boolean) => void) | null = null;
+let pendingInstallWithoutDependenciesConfirmationResolver: ((confirmed: boolean) => void) | null =
+  null;
+let pendingImportModZipDecisionResolver: ((addToCache: boolean | null) => void) | null = null;
 
 const initialState: AppState = {
   view: "browse",
@@ -138,7 +142,9 @@ const initialState: AppState = {
   resourceSaverLastView: null,
   modal: null,
   uninstallDependantsModal: null,
+  installWithoutDependenciesModal: null,
   importProfilePackModal: null,
+  importModZipModal: null,
   memoryDiagnosticsModal: null,
   resetProgress: null,
   dependencyModal: null,
@@ -1467,6 +1473,22 @@ function resolvePendingUninstallDependantsConfirmation(confirmed: boolean) {
   }
 }
 
+function resolvePendingInstallWithoutDependenciesConfirmation(confirmed: boolean) {
+  const resolver = pendingInstallWithoutDependenciesConfirmationResolver;
+  pendingInstallWithoutDependenciesConfirmationResolver = null;
+  if (resolver) {
+    resolver(confirmed);
+  }
+}
+
+function resolvePendingImportModZipDecision(addToCache: boolean | null) {
+  const resolver = pendingImportModZipDecisionResolver;
+  pendingImportModZipDecisionResolver = null;
+  if (resolver) {
+    resolver(addToCache);
+  }
+}
+
 async function confirmWarningForInstallIfNeeded(
   request: InstallRequest,
   switchFromVersionIds: string[] = []
@@ -1502,15 +1524,44 @@ async function confirmWarningForInstallIfNeeded(
   });
 }
 
-function confirmInstallWithoutDependenciesIfNeeded() {
+async function confirmInstallWithoutDependenciesIfNeeded(request: InstallRequest) {
   const state = get(appState);
   if (!state.warningPrefs.installWithoutDependencies) {
     return true;
   }
 
-  return window.confirm(
-    "Install without dependencies? The selected mod may fail if required dependencies are missing."
-  );
+  if (pendingInstallWithoutDependenciesConfirmationResolver) {
+    resolvePendingInstallWithoutDependenciesConfirmation(false);
+  }
+
+  appState.update((current) => ({
+    ...current,
+    installWithoutDependenciesModal: {
+      packageName: request.packageName,
+      versionNumber: request.versionNumber
+    }
+  }));
+
+  return new Promise<boolean>((resolve) => {
+    pendingInstallWithoutDependenciesConfirmationResolver = resolve;
+  });
+}
+
+async function confirmImportModZipWithModal(preview: ImportProfileModZipPreviewResult) {
+  if (pendingImportModZipDecisionResolver) {
+    resolvePendingImportModZipDecision(null);
+  }
+
+  appState.update((current) => ({
+    ...current,
+    importModZipModal: {
+      preview
+    }
+  }));
+
+  return new Promise<boolean | null>((resolve) => {
+    pendingImportModZipDecisionResolver = resolve;
+  });
 }
 
 async function confirmUninstallWithDependantsIfNeeded(options: {
@@ -1772,7 +1823,7 @@ async function requestInstallWithOptionalSwitch(
   const { includeDependencies = true, promptWithoutDependencies = false } = options;
 
   if (!includeDependencies && promptWithoutDependencies) {
-    const confirmed = confirmInstallWithoutDependenciesIfNeeded();
+    const confirmed = await confirmInstallWithoutDependenciesIfNeeded(request);
     if (!confirmed) {
       return;
     }
@@ -2241,7 +2292,7 @@ function buildImportProfileModZipActivityDetail(result: ImportProfileModZipResul
     return "Imported mod archive into the active profile.";
   }
 
-  return `${importedMod.packageName} ${importedMod.versionNumber} was imported from .zip${result.addedToCache ? " and added to the shared cache." : "."}`;
+  return `${importedMod.packageName} ${importedMod.versionNumber} was imported from .zip.`;
 }
 
 async function exportProfilePackWithActivity(options: {
@@ -2894,6 +2945,34 @@ export const actions = {
     }));
     resolvePendingUninstallDependantsConfirmation(false);
   },
+  dismissInstallWithoutDependenciesModal() {
+    appState.update((state) => ({
+      ...state,
+      installWithoutDependenciesModal: null
+    }));
+    resolvePendingInstallWithoutDependenciesConfirmation(false);
+  },
+  confirmInstallWithoutDependenciesModal() {
+    appState.update((state) => ({
+      ...state,
+      installWithoutDependenciesModal: null
+    }));
+    resolvePendingInstallWithoutDependenciesConfirmation(true);
+  },
+  dismissImportModZipModal() {
+    appState.update((state) => ({
+      ...state,
+      importModZipModal: null
+    }));
+    resolvePendingImportModZipDecision(null);
+  },
+  confirmImportModZipModal(addToCache: boolean) {
+    appState.update((state) => ({
+      ...state,
+      importModZipModal: null
+    }));
+    resolvePendingImportModZipDecision(addToCache);
+  },
   openMemoryDiagnosticsModal() {
     stopMemoryDiagnosticsPolling();
 
@@ -3522,23 +3601,18 @@ export const actions = {
       return;
     }
 
-    const addToCache = window.confirm(
-      "Also add this .zip archive to the shared cache?\n\nSelect OK to import and cache it.\nSelect Cancel to import without caching."
-    );
-
     try {
       const result = await importProfileModZipApi({
         profileId: selectedProfile.id,
-        addToCache
+        addToCache: false
       });
       if (result.cancelled || !result.profile) {
         return;
       }
 
-      const [profiles, profilesStorageSummary, cacheSummary] = await Promise.all([
+      const [profiles, profilesStorageSummary] = await Promise.all([
         listProfilesApi(),
-        getProfilesStorageSummaryApi(),
-        result.addedToCache ? getCacheSummary() : Promise.resolve(get(appState).cacheSummary)
+        getProfilesStorageSummaryApi()
       ]);
 
       appState.update((state) =>
@@ -3547,7 +3621,7 @@ export const actions = {
             ...mapActiveProfile(state, result.profile),
             profiles,
             profilesStorageSummary,
-            cacheSummary,
+            cacheSummary: state.cacheSummary,
             profileError: null,
             cacheError: null,
             desktopError: null
@@ -3824,6 +3898,11 @@ export const actions = {
     }
   },
   async resetAllData() {
+    resolvePendingWarningConfirmation(false);
+    resolvePendingUninstallDependantsConfirmation(false);
+    resolvePendingInstallWithoutDependenciesConfirmation(false);
+    resolvePendingImportModZipDecision(null);
+
     const setResetProgress = (step: ResetProgressStep, title: string, message: string) => {
       appState.update((state) => ({
         ...state,
@@ -3863,10 +3942,12 @@ export const actions = {
         selectedProfileId: "default",
         modal: null,
         uninstallDependantsModal: null,
+        installWithoutDependenciesModal: null,
         memoryDiagnosticsModal: null,
         clearUnreferencedCacheModal: null,
         exportProfilePackModal: null,
         importProfilePackModal: null,
+        importModZipModal: null,
         dependencyModal: null,
         focusedVersion: null,
         catalogCards: [],

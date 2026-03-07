@@ -477,8 +477,8 @@ The reset action must never run without explicit confirmation.
 - Newly created profiles become active immediately.
 - Installed mods remain an empty array in this milestone.
 - Rename and duplicate are deferred.
-- Delete confirmation can use `window.confirm` for now.
-- Reset confirmation can use the existing modal style or `window.confirm`, but must be explicit.
+- Delete confirmation uses an in-app modal.
+- Reset confirmation uses an explicit in-app modal.
 - Game path is metadata only for now.
 - Default launch mode options are only `steam` and `direct`.
 - The Profiles tab owns the inline create form UI.

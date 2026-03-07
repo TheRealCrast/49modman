@@ -395,6 +395,7 @@ export interface ImportProfilePackResult {
 
 export interface ImportProfileModZipInput {
   profileId?: string;
+  sourcePath?: string;
   addToCache?: boolean;
 }
 
@@ -411,6 +412,12 @@ export interface ImportProfileModZipResult {
   addedToCache: boolean;
   importedMod?: ImportProfileModZipModDto;
   profile?: ProfileDetailDto;
+}
+
+export interface ImportProfileModZipPreviewResult {
+  cancelled: boolean;
+  sourcePath?: string;
+  importedMod?: ImportProfileModZipModDto;
 }
 
 export interface ImportProfilePackPreviewModDto {
@@ -625,6 +632,11 @@ export interface UninstallDependantsModalState {
   dependants: UninstallDependantDto[];
 }
 
+export interface InstallWithoutDependenciesModalState {
+  packageName: string;
+  versionNumber: string;
+}
+
 export interface MemoryDiagnosticsModalState {
   isLoading: boolean;
   data?: MemoryDiagnosticsSnapshot;
@@ -639,6 +651,10 @@ export interface ImportProfilePackModalState {
 export interface ExportProfilePackModalState {
   preview: PreviewExportProfilePackResult;
   isExporting: boolean;
+}
+
+export interface ImportModZipModalState {
+  preview: ImportProfileModZipPreviewResult;
 }
 
 export type ResetProgressStep = "deleting" | "restoring" | "browse" | "finalizing";
@@ -682,7 +698,9 @@ export interface AppState {
   warningPrefs: WarningPrefsDto;
   modal: WarningModalState | null;
   uninstallDependantsModal: UninstallDependantsModalState | null;
+  installWithoutDependenciesModal: InstallWithoutDependenciesModalState | null;
   memoryDiagnosticsModal: MemoryDiagnosticsModalState | null;
+  importModZipModal: ImportModZipModalState | null;
   resetProgress: ResetProgressState | null;
   dependencyModal: DependencyModalState | null;
   focusedVersion: FocusedVersionState | null;

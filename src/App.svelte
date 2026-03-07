@@ -14,6 +14,7 @@
   import ProfilesScreen from "./components/ProfilesScreen.svelte";
   import ResetProgressModal from "./components/ResetProgressModal.svelte";
   import SettingsScreen from "./components/SettingsScreen.svelte";
+  import SimpleConfirmModal from "./components/SimpleConfirmModal.svelte";
   import UninstallDependantsModal from "./components/UninstallDependantsModal.svelte";
   import { actions, appState, selectedProfile } from "./lib/store";
   import type { AppView, EffectiveStatus } from "./lib/types";
@@ -349,6 +350,18 @@
     dependants={$appState.uninstallDependantsModal.dependants}
     onCancel={actions.dismissUninstallDependantsModal}
     onConfirm={actions.confirmUninstallDependantsModal}
+  />
+{/if}
+
+{#if $appState.installWithoutDependenciesModal}
+  <SimpleConfirmModal
+    title="Install without dependencies?"
+    description={`${$appState.installWithoutDependenciesModal.packageName} ${$appState.installWithoutDependenciesModal.versionNumber} may fail if required dependencies are missing.`}
+    confirmLabel="Install anyway"
+    confirmIcon="download"
+    isDanger={true}
+    onCancel={actions.dismissInstallWithoutDependenciesModal}
+    onConfirm={actions.confirmInstallWithoutDependenciesModal}
   />
 {/if}
 

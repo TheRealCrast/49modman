@@ -75,6 +75,7 @@ fn main() {
             commands::profiles::preview_export_profile_pack,
             commands::profiles::export_profile_pack,
             commands::profiles::preview_import_profile_pack,
+            commands::profiles::preview_import_profile_mod_zip,
             commands::profiles::import_profile_pack,
             commands::profiles::import_profile_mod_zip,
             commands::reference::list_reference_rows,

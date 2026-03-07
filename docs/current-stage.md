@@ -154,7 +154,10 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - extracts selected archive into active profile `mods/`
   - upserts installed mod entry into profile `manifest.json`
   - imported entries use `sourceKind: "local_zip"`
-  - optional post-import cache copy path is supported
+  - local `.zip` cache copy features are currently disabled in frontend UX:
+    - import is one-click from picker to profile import
+    - frontend always sends `addToCache: false`
+    - backend cache-support code remains available but is not exposed
 - Thunderstore version icons are now surfaced in Browse:
   - backend now parses version-level `icon` from `/packages/` payloads
   - `package_versions` now persists `icon_url` and repairs legacy DBs by adding the column at runtime when missing
@@ -293,7 +296,7 @@ This checkpoint captures local `.zip` import, Browse version icons, launch depen
   - installed timestamp
 - manifest read APIs now enrich installed-mod DTOs with optional `iconDataUrl` if `icon.png` exists in that mod folder
 - manifest reads now also reconcile stale entries by pruning `mods[]` rows whose `installDir` no longer exists on disk
-- Overview `.zip` import can optionally copy the selected archive into shared cache storage and upsert a `cached_archives` row with source kind `local_zip`
+- Overview `.zip` import currently does not expose cache-copy UI; imports run as profile-only (`addToCache: false`) while backend local-cache paths remain dormant for future re-enable
 - `reset_all_data` now clears profile folders and then reseeds + re-ensures `default` profile storage
 - per-profile storage size is computed from profile directory bytes and returned in `list_profiles`
 - Settings profile summary is returned via backend command:

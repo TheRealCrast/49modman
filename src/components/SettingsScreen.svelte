@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { CacheSummaryDto, ProfilesStorageSummaryDto, ProtonRuntime } from "../lib/types";
   import Icon from "./Icon.svelte";
+  import SimpleConfirmModal from "./SimpleConfirmModal.svelte";
 
   export let warningPrefs: {
     red: boolean;
@@ -35,6 +36,8 @@
   export let onClearUnreferencedCache: () => void | Promise<void>;
   export let onResetAllData: () => void | Promise<void>;
   export let onSelectProtonRuntime: (runtimeId: string) => void | Promise<void>;
+  let showClearCacheConfirm = false;
+  let showResetConfirm = false;
 
   function formatDiskSpace(value = 0) {
     const bytes = Math.max(0, Math.trunc(value));
@@ -55,23 +58,13 @@
     })} ${units[unitIndex]}`;
   }
 
-  async function confirmClearCache() {
-    if (
-      !window.confirm(
-        "Clear all cached mod archives? This will remove downloaded versions from local storage, but it will not delete profiles."
-      )
-    ) {
-      return;
-    }
-
+  async function runClearCache() {
+    showClearCacheConfirm = false;
     await onClearCache();
   }
 
-  async function confirmReset() {
-    if (!window.confirm("Reset all app data and return to a clean first-launch state?")) {
-      return;
-    }
-
+  async function runResetAllData() {
+    showResetConfirm = false;
     await onResetAllData();
   }
 
@@ -268,14 +261,14 @@
             <strong>Clear cache</strong>
             <p>Remove all cached mod archives from local storage.</p>
           </div>
-          <button
-            class="ghost-button danger-outline"
-            disabled={cacheSummary?.hasActiveDownloads}
-            type="button"
-            on:click={confirmClearCache}
-          >
-            Clear cache
-          </button>
+        <button
+          class="ghost-button danger-outline"
+          disabled={cacheSummary?.hasActiveDownloads}
+          type="button"
+          on:click={() => (showClearCacheConfirm = true)}
+        >
+          Clear cache
+        </button>
         </div>
 
         <div class="switch-row danger-row">
@@ -389,7 +382,7 @@
           <strong>Reset all data</strong>
           <p>Clear profiles, settings, local overrides, cached catalog metadata, and cached archives.</p>
         </div>
-        <button class="ghost-button danger-outline" type="button" on:click={confirmReset}>
+        <button class="ghost-button danger-outline" type="button" on:click={() => (showResetConfirm = true)}>
           Reset
         </button>
       </div>
@@ -400,3 +393,27 @@
     {/if}
   </section>
 </section>
+
+{#if showClearCacheConfirm}
+  <SimpleConfirmModal
+    title="Clear all cached archives?"
+    description="This removes downloaded versions from local storage, but it does not delete profiles."
+    confirmLabel="Clear cache"
+    confirmIcon="trash"
+    isDanger={true}
+    onCancel={() => (showClearCacheConfirm = false)}
+    onConfirm={runClearCache}
+  />
+{/if}
+
+{#if showResetConfirm}
+  <SimpleConfirmModal
+    title="Reset all app data?"
+    description="This clears profiles, settings, cached metadata, and cached archives."
+    confirmLabel="Reset all data"
+    confirmIcon="trash"
+    isDanger={true}
+    onCancel={() => (showResetConfirm = false)}
+    onConfirm={runResetAllData}
+  />
+{/if}

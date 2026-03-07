@@ -8,6 +8,7 @@ import type {
   ImportProfilePackPreviewResult,
   ImportProfilePackResult,
   ImportProfileModZipInput,
+  ImportProfileModZipPreviewResult,
   ImportProfileModZipResult,
   PreviewExportProfilePackResult,
   ProfileDetailDto,
@@ -81,6 +82,10 @@ export function importProfilePackFromPath(sourcePath: string): Promise<ImportPro
 
 export function importProfileModZip(input: ImportProfileModZipInput): Promise<ImportProfileModZipResult> {
   return invokeCommand("import_profile_mod_zip", { input });
+}
+
+export function previewImportProfileModZip(): Promise<ImportProfileModZipPreviewResult> {
+  return invokeCommand("preview_import_profile_mod_zip");
 }
 
 export function setInstalledModEnabled(input: SetInstalledModEnabledInput): Promise<ProfileDetailDto> {

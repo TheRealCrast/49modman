@@ -35,6 +35,7 @@ import type {
   GetUninstallDependantsInput,
   ImportProfilePackPreviewResult,
   ImportProfileModZipInput,
+  ImportProfileModZipPreviewResult,
   ImportProfileModZipResult,
   GetVersionDependenciesInput,
   ImportProfilePackResult,
@@ -1045,6 +1046,12 @@ export async function importProfilePackMock(
     embeddedModCount: 0,
     referencedModCount: 0,
     hasLegacyRuntimePluginsPayload: false
+  };
+}
+
+export async function previewImportProfileModZipMock(): Promise<ImportProfileModZipPreviewResult> {
+  return {
+    cancelled: true
   };
 }
 

@@ -218,10 +218,21 @@ pub struct ImportProfilePackPreviewResult {
     pub mods: Vec<ImportProfilePackPreviewModDto>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportProfileModZipPreviewResult {
+    pub cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported_mod: Option<ImportProfileModZipModDto>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportProfileModZipInput {
     pub profile_id: Option<String>,
+    pub source_path: Option<String>,
     #[serde(default)]
     pub add_to_cache: Option<bool>,
 }
@@ -1050,6 +1061,42 @@ pub fn preview_import_profile_pack() -> Result<ImportProfilePackPreviewResult, I
     })
 }
 
+pub fn preview_import_profile_mod_zip(
+    connection: &Connection,
+) -> Result<ImportProfileModZipPreviewResult, InternalError> {
+    let Some(source_path) = FileDialog::new()
+        .set_title("Import mod .zip")
+        .add_filter("ZIP archive", &["zip"])
+        .pick_file()
+    else {
+        return Ok(ImportProfileModZipPreviewResult {
+            cancelled: true,
+            source_path: None,
+            imported_mod: None,
+        });
+    };
+
+    if !source_path.is_file() {
+        return Err(InternalError::app(
+            "MOD_ARCHIVE_NOT_FOUND",
+            "The selected mod archive no longer exists.",
+        ));
+    }
+
+    let resolved_identity = resolve_imported_mod_identity(connection, &source_path)?;
+
+    Ok(ImportProfileModZipPreviewResult {
+        cancelled: false,
+        source_path: Some(source_path.display().to_string()),
+        imported_mod: Some(ImportProfileModZipModDto {
+            package_id: resolved_identity.package_id,
+            package_name: resolved_identity.package_name,
+            version_id: resolved_identity.version_id,
+            version_number: resolved_identity.version_number,
+        }),
+    })
+}
+
 pub fn import_profile_pack(
     state: &AppState,
     connection: &Connection,
@@ -1159,19 +1206,30 @@ pub fn import_profile_mod_zip(
     })?;
     ensure_profile_storage(state, connection, &profile.id)?;
 
-    let Some(source_path) = FileDialog::new()
-        .set_title("Import mod .zip")
-        .add_filter("ZIP archive", &["zip"])
-        .pick_file()
-    else {
-        return Ok(ImportProfileModZipResult {
-            cancelled: true,
-            source_path: None,
-            added_to_cache: false,
-            imported_mod: None,
-            profile: None,
-        });
+    let source_path = if let Some(source_path) = input
+        .source_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        PathBuf::from(source_path)
+    } else {
+        let Some(selected_path) = FileDialog::new()
+            .set_title("Import mod .zip")
+            .add_filter("ZIP archive", &["zip"])
+            .pick_file()
+        else {
+            return Ok(ImportProfileModZipResult {
+                cancelled: true,
+                source_path: None,
+                added_to_cache: false,
+                imported_mod: None,
+                profile: None,
+            });
+        };
+        selected_path
     };
+
     if !source_path.is_file() {
         return Err(InternalError::app(
             "MOD_ARCHIVE_NOT_FOUND",
@@ -1790,11 +1848,9 @@ fn resolve_imported_mod_identity(
     let package_name_candidates = dedupe_non_empty_strings(package_name_candidates);
 
     for package_name in &package_name_candidates {
-        if let Some((package_id, resolved_package_name, version_id)) = find_catalog_version_identity(
-            connection,
-            package_name,
-            &version_number,
-        )? {
+        if let Some((package_id, resolved_package_name, version_id)) =
+            find_catalog_version_identity(connection, package_name, &version_number)?
+        {
             return Ok(ResolvedImportedModIdentity {
                 package_id,
                 package_name: resolved_package_name,

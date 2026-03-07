@@ -21,6 +21,7 @@ import {
   importProfilePackMock,
   importProfileModZipMock,
   previewImportProfilePackMock,
+  previewImportProfileModZipMock,
   warmDependencyIndexMock,
   getCacheSummaryMock,
   getActiveProfileMock,
@@ -75,6 +76,7 @@ type CommandMap = {
   preview_export_profile_pack: typeof previewExportProfilePackMock;
   export_profile_pack: typeof exportProfilePackMock;
   preview_import_profile_pack: typeof previewImportProfilePackMock;
+  preview_import_profile_mod_zip: typeof previewImportProfileModZipMock;
   import_profile_pack: typeof importProfilePackMock;
   import_profile_mod_zip: typeof importProfileModZipMock;
   set_installed_mod_enabled: typeof setInstalledModEnabledMock;
@@ -130,6 +132,7 @@ const mockCommands: CommandMap = {
   preview_export_profile_pack: previewExportProfilePackMock,
   export_profile_pack: exportProfilePackMock,
   preview_import_profile_pack: previewImportProfilePackMock,
+  preview_import_profile_mod_zip: previewImportProfileModZipMock,
   import_profile_pack: importProfilePackMock,
   import_profile_mod_zip: importProfileModZipMock,
   set_installed_mod_enabled: setInstalledModEnabledMock,

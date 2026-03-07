@@ -18,12 +18,13 @@ use crate::{
             get_profile_storage_size_bytes as get_profile_storage_size_bytes_service,
             get_profiles_storage_summary as get_profiles_storage_summary_service,
             get_uninstall_dependants as get_uninstall_dependants_service,
-            import_profile_pack as import_profile_pack_service,
             import_profile_mod_zip as import_profile_mod_zip_service,
+            import_profile_pack as import_profile_pack_service,
             list_profiles as list_profiles_service,
             open_active_profile_folder as open_active_profile_folder_service,
             open_profiles_folder as open_profiles_folder_service,
             preview_export_profile_pack as preview_export_profile_pack_service,
+            preview_import_profile_mod_zip as preview_import_profile_mod_zip_service,
             preview_import_profile_pack as preview_import_profile_pack_service,
             read_profile_installed_mods as read_profile_installed_mods_service,
             read_profile_manifest_mods as read_profile_manifest_mods_service,
@@ -33,11 +34,11 @@ use crate::{
             uninstall_profile_mod as uninstall_profile_mod_service,
             update_profile as update_profile_service, CreateProfileInput, DeleteProfileResult,
             ExportProfilePackInput, ExportProfilePackResult, GetUninstallDependantsInput,
-            ImportProfileModZipInput, ImportProfileModZipResult, ImportProfilePackPreviewResult,
-            ImportProfilePackResult,
-            PreviewExportProfilePackResult, ProfileDetailDto, ProfileSummaryDto,
-            ProfilesStorageSummaryDto, SetInstalledModEnabledInput, UninstallDependantDto,
-            UninstallInstalledModInput, UpdateProfileInput,
+            ImportProfileModZipInput, ImportProfileModZipPreviewResult, ImportProfileModZipResult,
+            ImportProfilePackPreviewResult, ImportProfilePackResult, PreviewExportProfilePackResult,
+            ProfileDetailDto, ProfileSummaryDto, ProfilesStorageSummaryDto,
+            SetInstalledModEnabledInput, UninstallDependantDto, UninstallInstalledModInput,
+            UpdateProfileInput,
         },
     },
 };
@@ -423,6 +424,24 @@ pub async fn preview_import_profile_pack(
     })
     .await
     .map_err(|error| AppError::new("PREVIEW_IMPORT_PROFILE_PACK_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn preview_import_profile_mod_zip(
+    state: State<'_, AppState>,
+) -> Result<ImportProfileModZipPreviewResult, AppError> {
+    let state = state.inner().clone();
+
+    async_runtime::spawn_blocking(move || {
+        let connection = state
+            .connection
+            .lock()
+            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+
+        preview_import_profile_mod_zip_service(&connection).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("PREVIEW_IMPORT_PROFILE_MOD_ZIP_FAILED", error.to_string()))?
 }
 
 #[tauri::command]
