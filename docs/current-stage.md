@@ -71,6 +71,8 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
 - Browse detail install/switch actions now expose an install-mode dropdown (excluding uninstall actions):
   - `Install without dependencies` skips dependency installs for that action
   - this path uses a confirmation prompt when enabled by warning settings
+  - the prompt now includes `Do not show this again`
+  - checking it immediately disables `warning.install_without_dependencies` (same preference as Settings -> `Warn on install without dependencies`)
   - Settings `Warn options` now include `Warn on install without dependencies`
 - Settings/Overview follow-up polish is now implemented:
   - Settings size summaries now display human-readable disk units (`B`, `KiB`, `MiB`, etc.) for:
@@ -104,6 +106,7 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - Steam launch-option error copy now uses explicit step-by-step wording for casual Steam/Proton users
 - Launch/settings UX follow-up polish is now in place:
   - `Preferred Proton runtime` is now grouped under Settings -> `Launch (Linux)`
+  - `Launch (Linux)` is now hidden on Windows hosts
   - topbar launch buttons now append `(Direct)` only for direct mode
   - topbar launch buttons no longer append `(Steam)` in steam mode
 - Launch/runtime guard + resource-saver follow-up is now in place:
@@ -129,6 +132,9 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - preview includes package/version rows and per-version size
   - cleanup preserves versions installed in any profile, including disabled installed mods
   - cleanup removes only unreferenced cache entries (and their cache-task rows), not the entire cache
+- Modal UI consistency follow-up is now in place:
+  - all `Do not show this again` toggles now reuse a shared component (`DoNotShowAgainToggle`)
+  - modals that use solid confirm actions now force white icons for contrast consistency
 - `.49pack` profile-pack flows are now implemented from Profiles:
   - `Export .49pack` is available on Profiles tab and writes a ZIP pack containing:
     - `manifest.json`

@@ -51,6 +51,7 @@
   export let onSelectProtonRuntime: (runtimeId: string) => void | Promise<void>;
   let showClearCacheConfirm = false;
   let showResetConfirm = false;
+  const isWindowsHost = detectWindowsHost();
 
   function formatDiskSpace(value = 0) {
     const bytes = Math.max(0, Math.trunc(value));
@@ -97,6 +98,23 @@
     }
 
     return date.toLocaleString();
+  }
+
+  function detectWindowsHost() {
+    if (typeof navigator === "undefined") {
+      return false;
+    }
+
+    const platformSources = [
+      navigator.userAgentData?.platform,
+      navigator.platform,
+      navigator.userAgent
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(" ")
+      .toLowerCase();
+
+    return platformSources.includes("win");
   }
 </script>
 
@@ -347,7 +365,7 @@
       </div>
     </div>
 
-    {#if isLoadingProtonRuntimes || protonRuntimes.length > 0 || selectedProtonRuntimeId}
+    {#if !isWindowsHost && (isLoadingProtonRuntimes || protonRuntimes.length > 0 || selectedProtonRuntimeId)}
       <div class="settings-section">
         <div class="settings-subheading">
           <h3>Launch (Linux)</h3>

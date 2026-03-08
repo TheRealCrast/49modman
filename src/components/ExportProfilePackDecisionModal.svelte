@@ -69,7 +69,7 @@
         disabled={isExporting}
         on:click={() => onConfirm(true)}
       >
-        <Icon label="Yes" name={isExporting ? "refresh" : "check"} spinning={isExporting} />
+        <Icon label="Yes" name={isExporting ? "refresh" : "check"} spinning={isExporting} forceWhite={true} />
         <span>{isExporting ? "Exporting..." : "Yes"}</span>
       </button>
     </div>

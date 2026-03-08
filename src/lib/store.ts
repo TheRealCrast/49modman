@@ -3452,11 +3452,27 @@ export const actions = {
     }));
     resolvePendingInstallWithoutDependenciesConfirmation(false);
   },
-  confirmInstallWithoutDependenciesModal() {
+  confirmInstallWithoutDependenciesModal(doNotShowAgain: boolean) {
     appState.update((state) => ({
       ...state,
-      installWithoutDependenciesModal: null
+      installWithoutDependenciesModal: null,
+      warningPrefs: {
+        ...state.warningPrefs,
+        installWithoutDependencies: doNotShowAgain
+          ? false
+          : state.warningPrefs.installWithoutDependencies
+      }
     }));
+
+    if (doNotShowAgain) {
+      void setWarningPreferenceApi("installWithoutDependencies", false).then((prefs) => {
+        appState.update((state) => ({
+          ...state,
+          warningPrefs: prefs
+        }));
+      });
+    }
+
     resolvePendingInstallWithoutDependenciesConfirmation(true);
   },
   dismissImportModZipModal() {

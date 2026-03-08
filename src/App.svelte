@@ -393,6 +393,7 @@
     confirmLabel="Install anyway"
     confirmIcon="download"
     isDanger={true}
+    showDoNotShowAgain={true}
     onCancel={actions.dismissInstallWithoutDependenciesModal}
     onConfirm={actions.confirmInstallWithoutDependenciesModal}
   />

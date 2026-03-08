@@ -59,7 +59,7 @@
         <span>Cancel</span>
       </button>
       <button class="danger-button icon-button" type="button" on:click={onConfirm}>
-        <Icon label="Clear cache" name="trash" />
+        <Icon label="Clear cache" name="trash" forceWhite={true} />
         <span>Clear unreferenced</span>
       </button>
     </div>

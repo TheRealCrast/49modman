@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ImportProfilePackPreviewResult } from "../lib/types";
+  import DoNotShowAgainToggle from "./DoNotShowAgainToggle.svelte";
   import Icon from "./Icon.svelte";
 
   export let preview: ImportProfilePackPreviewResult;
@@ -53,16 +54,11 @@
       {/if}
     </div>
 
-    <button
-      aria-pressed={doNotShowAgain}
-      class="ghost-button icon-button toggle-icon-button modal-toggle"
-      type="button"
+    <DoNotShowAgainToggle
+      checked={doNotShowAgain}
       disabled={isImporting}
-      on:click={() => (doNotShowAgain = !doNotShowAgain)}
-    >
-      <Icon label={doNotShowAgain ? "Enabled" : "Disabled"} name={doNotShowAgain ? "check" : "circle"} />
-      <span>Do not show this again</span>
-    </button>
+      onToggle={() => (doNotShowAgain = !doNotShowAgain)}
+    />
 
     <div class="modal-actions">
       <button class="ghost-button icon-button" type="button" disabled={isImporting} on:click={onCancel}>
@@ -70,7 +66,7 @@
         <span>Cancel</span>
       </button>
       <button class="solid-button icon-button" type="button" disabled={isImporting} on:click={() => onConfirm(doNotShowAgain)}>
-        <Icon label="Import profile" name={isImporting ? "refresh" : "download"} spinning={isImporting} />
+        <Icon label="Import profile" name={isImporting ? "refresh" : "download"} spinning={isImporting} forceWhite={true} />
         <span>{isImporting ? "Importing..." : "Import profile"}</span>
       </button>
     </div>

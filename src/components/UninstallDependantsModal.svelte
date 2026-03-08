@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { UninstallDependantDto } from "../lib/types";
+  import DoNotShowAgainToggle from "./DoNotShowAgainToggle.svelte";
   import Icon from "./Icon.svelte";
 
   export let packageName: string;
@@ -37,15 +38,10 @@
       </ul>
     </div>
 
-    <button
-      aria-pressed={doNotShowAgain}
-      class="ghost-button icon-button toggle-icon-button modal-toggle"
-      type="button"
-      on:click={() => (doNotShowAgain = !doNotShowAgain)}
-    >
-      <Icon label={doNotShowAgain ? "Enabled" : "Disabled"} name={doNotShowAgain ? "check" : "circle"} />
-      <span>Do not show this again</span>
-    </button>
+    <DoNotShowAgainToggle
+      checked={doNotShowAgain}
+      onToggle={() => (doNotShowAgain = !doNotShowAgain)}
+    />
 
     <div class="modal-actions">
       <button class="ghost-button icon-button" type="button" on:click={onCancel}>
@@ -53,7 +49,7 @@
         <span>Cancel</span>
       </button>
       <button class="danger-button icon-button" type="button" on:click={() => onConfirm(doNotShowAgain)}>
-        <Icon label="Uninstall anyway" name="trash" />
+        <Icon label="Uninstall anyway" name="trash" forceWhite={true} />
         <span>Uninstall anyway</span>
       </button>
     </div>
