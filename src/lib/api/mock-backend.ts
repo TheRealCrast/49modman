@@ -45,6 +45,7 @@ import type {
   ListReferenceRowsResult,
   ModPackage,
   ModVersion,
+  OnboardingStatusDto,
   PackageCardDto,
   PackageDetailDto,
   ProfileDetailDto,
@@ -85,6 +86,7 @@ type StoredOverride = {
 
 type MockDb = {
   warningPrefs: WarningPrefsDto;
+  onboardingStatus: OnboardingStatusDto;
   lastSyncAt: string | null;
   overrides: StoredOverride[];
   profiles: Array<{
@@ -119,6 +121,9 @@ const defaultDb: MockDb = {
     uninstallWithDependants: true,
     importProfilePack: true,
     conserveWhileGameRunning: false
+  },
+  onboardingStatus: {
+    completed: false
   },
   lastSyncAt: null,
   overrides: [],
@@ -195,6 +200,11 @@ function normalizeDb(db: MockDb): MockDb {
       uninstallWithDependants: db.warningPrefs?.uninstallWithDependants ?? true,
       importProfilePack: db.warningPrefs?.importProfilePack ?? true,
       conserveWhileGameRunning: db.warningPrefs?.conserveWhileGameRunning ?? false
+    },
+    onboardingStatus: {
+      completed: db.onboardingStatus?.completed ?? false,
+      completedAt: db.onboardingStatus?.completedAt,
+      lastValidatedGamePath: db.onboardingStatus?.lastValidatedGamePath
     },
     profiles,
     activeProfileId: hasActive ? db.activeProfileId : "default",
@@ -1358,6 +1368,28 @@ export async function getWarningPrefsMock(): Promise<WarningPrefsDto> {
   return normalizeDb(loadDb()).warningPrefs;
 }
 
+export async function getOnboardingStatusMock(): Promise<OnboardingStatusDto> {
+  return normalizeDb(loadDb()).onboardingStatus;
+}
+
+export async function completeOnboardingMock(input: {
+  validatedGamePath: string;
+}): Promise<OnboardingStatusDto> {
+  const validatedGamePath = input.validatedGamePath.trim();
+  if (!validatedGamePath) {
+    throw new Error("Validated game path cannot be empty.");
+  }
+
+  const db = normalizeDb(loadDb());
+  db.onboardingStatus = {
+    completed: true,
+    completedAt: new Date().toISOString(),
+    lastValidatedGamePath: validatedGamePath
+  };
+  saveDb(db);
+  return db.onboardingStatus;
+}
+
 export async function setWarningPreferenceMock(
   input: {
     kind:
@@ -1529,6 +1561,24 @@ export async function scanSteamInstallationsMock(): Promise<SteamScanResult> {
     gamePaths: [],
     selectedGamePath: null
   };
+}
+
+export async function pickGameInstallFolderMock(input: {
+  initialPath?: string;
+} = {}): Promise<string | null> {
+  const initialPath = input.initialPath?.trim();
+  if (initialPath) {
+    return initialPath;
+  }
+
+  const db = normalizeDb(loadDb());
+  const activeProfile = db.profiles.find((profile) => profile.id === db.activeProfileId);
+  const profilePath = activeProfile?.gamePath?.trim();
+  if (profilePath) {
+    return profilePath;
+  }
+
+  return "/mock/game/Lethal Company";
 }
 
 export async function validateV49InstallMock(

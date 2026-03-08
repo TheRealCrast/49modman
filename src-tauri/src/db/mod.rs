@@ -94,6 +94,30 @@ pub fn seed_defaults(connection: &Connection) -> Result<(), InternalError> {
             now_rfc3339()?
         ],
     )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "onboarding.v49.completed",
+            serde_json::to_string(&false)?,
+            now_rfc3339()?
+        ],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "onboarding.v49.completed_at",
+            serde_json::to_string(&Option::<String>::None)?,
+            now_rfc3339()?
+        ],
+    )?;
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+        params![
+            "onboarding.v49.last_validated_game_path",
+            serde_json::to_string(&Option::<String>::None)?,
+            now_rfc3339()?
+        ],
+    )?;
 
     connection.execute(
         "INSERT OR IGNORE INTO profiles (
@@ -284,4 +308,37 @@ fn repair_catalog_schema(connection: &Connection) -> Result<(), InternalError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::{get_setting, migrate, seed_defaults};
+
+    #[test]
+    fn seed_defaults_includes_onboarding_keys() {
+        let connection = Connection::open_in_memory().expect("in-memory database should open");
+        migrate(&connection).expect("migrations should succeed");
+        seed_defaults(&connection).expect("seed defaults should succeed");
+
+        assert_eq!(
+            get_setting(&connection, "onboarding.v49.completed")
+                .expect("setting read should succeed")
+                .as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            get_setting(&connection, "onboarding.v49.completed_at")
+                .expect("setting read should succeed")
+                .as_deref(),
+            Some("null")
+        );
+        assert_eq!(
+            get_setting(&connection, "onboarding.v49.last_validated_game_path")
+                .expect("setting read should succeed")
+                .as_deref(),
+            Some("null")
+        );
+    }
 }

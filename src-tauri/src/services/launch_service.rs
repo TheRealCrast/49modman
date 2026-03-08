@@ -7,6 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use rfd::FileDialog;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -50,6 +51,13 @@ pub struct ValidateV49InstallInput {
     pub profile_id: Option<String>,
     #[serde(default)]
     pub skip_dependency_validation: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PickGameInstallFolderInput {
+    #[serde(default)]
+    pub initial_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -430,6 +438,20 @@ pub fn scan_steam_installations() -> Result<SteamScanResult, InternalError> {
     })
 }
 
+pub fn pick_game_install_folder(
+    input: PickGameInstallFolderInput,
+) -> Result<Option<String>, InternalError> {
+    let initial_directory =
+        normalize_candidate_path(input.initial_path.as_deref()).or_else(default_game_picker_path);
+
+    let mut dialog = FileDialog::new().set_title("Choose Lethal Company game folder");
+    if let Some(initial_directory) = initial_directory {
+        dialog = dialog.set_directory(initial_directory);
+    }
+
+    Ok(dialog.pick_folder().map(|path| path_to_string(&path)))
+}
+
 pub fn build_runtime_stage(
     state: &AppState,
     connection: &Connection,
@@ -565,6 +587,22 @@ pub fn build_runtime_stage(
     }
 
     build_outcome
+}
+
+fn default_game_picker_path() -> Option<PathBuf> {
+    let steam_scan = scan_steam_installations().ok()?;
+    if let Some(selected_game_path) = steam_scan
+        .selected_game_path
+        .as_deref()
+        .and_then(|value| normalize_candidate_path(Some(value)))
+    {
+        return Some(selected_game_path);
+    }
+
+    steam_scan
+        .game_paths
+        .first()
+        .and_then(|value| normalize_candidate_path(Some(value)))
 }
 
 pub fn activate_profile(

@@ -15,6 +15,7 @@ import {
   repairActivationMock,
   setPreferredProtonRuntimeMock,
   buildRuntimeStageMock,
+  pickGameInstallFolderMock,
   scanSteamInstallationsMock,
   validateV49InstallMock,
   getVersionDependenciesMock,
@@ -31,6 +32,7 @@ import {
   getPackageReadmeMock,
   getProfileDetailMock,
   getProfilesStorageSummaryMock,
+  getOnboardingStatusMock,
   getUninstallDependantsMock,
   getWarningPrefsMock,
   getStorageLocationsMock,
@@ -52,6 +54,7 @@ import {
   updateProfileMock,
   setReferenceStateMock,
   setWarningPreferenceMock,
+  completeOnboardingMock,
   pickStorageFolderMock,
   startStorageMigrationMock,
   syncCatalogMock
@@ -90,6 +93,8 @@ type CommandMap = {
   set_reference_state: typeof setReferenceStateMock;
   get_warning_prefs: typeof getWarningPrefsMock;
   set_warning_preference: typeof setWarningPreferenceMock;
+  get_onboarding_status: typeof getOnboardingStatusMock;
+  complete_onboarding: typeof completeOnboardingMock;
   get_storage_locations: typeof getStorageLocationsMock;
   get_storage_migration_status: typeof getStorageMigrationStatusMock;
   pick_storage_folder: typeof pickStorageFolderMock;
@@ -104,6 +109,7 @@ type CommandMap = {
   get_task: typeof getTaskMock;
   open_external_url: (url: string) => Promise<void>;
   scan_steam_installations: typeof scanSteamInstallationsMock;
+  pick_game_install_folder: typeof pickGameInstallFolderMock;
   validate_v49_install: typeof validateV49InstallMock;
   build_runtime_stage: typeof buildRuntimeStageMock;
   activate_profile: typeof activateProfileMock;
@@ -150,6 +156,8 @@ const mockCommands: CommandMap = {
   set_reference_state: setReferenceStateMock,
   get_warning_prefs: getWarningPrefsMock,
   set_warning_preference: setWarningPreferenceMock,
+  get_onboarding_status: getOnboardingStatusMock,
+  complete_onboarding: completeOnboardingMock,
   get_storage_locations: getStorageLocationsMock,
   get_storage_migration_status: getStorageMigrationStatusMock,
   pick_storage_folder: pickStorageFolderMock,
@@ -163,6 +171,7 @@ const mockCommands: CommandMap = {
   list_active_downloads: listActiveDownloadsMock,
   get_task: getTaskMock,
   scan_steam_installations: scanSteamInstallationsMock,
+  pick_game_install_folder: pickGameInstallFolderMock,
   validate_v49_install: validateV49InstallMock,
   build_runtime_stage: buildRuntimeStageMock,
   activate_profile: activateProfileMock,

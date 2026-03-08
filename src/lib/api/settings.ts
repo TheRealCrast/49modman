@@ -1,5 +1,6 @@
 import { invokeCommand } from "./client";
 import type {
+  OnboardingStatusDto,
   StartStorageMigrationInput,
   StorageLocationsDto,
   StorageMigrationStatusDto,
@@ -24,6 +25,18 @@ export function setWarningPreference(
     input: {
       kind,
       enabled
+    }
+  });
+}
+
+export function getOnboardingStatus(): Promise<OnboardingStatusDto> {
+  return invokeCommand("get_onboarding_status");
+}
+
+export function completeOnboarding(validatedGamePath: string): Promise<OnboardingStatusDto> {
+  return invokeCommand("complete_onboarding", {
+    input: {
+      validatedGamePath
     }
   });
 }

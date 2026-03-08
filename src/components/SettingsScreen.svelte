@@ -1,6 +1,7 @@
 <script lang="ts">
   import type {
     CacheSummaryDto,
+    OnboardingStatusDto,
     ProfilesStorageSummaryDto,
     ProtonRuntime,
     StorageLocationsDto,
@@ -22,6 +23,7 @@
   export let storageLocations: StorageLocationsDto | undefined;
   export let storageMigration: StorageMigrationStatusDto | null = null;
   export let isLoadingProfilesStorageSummary = false;
+  export let onboardingStatus: OnboardingStatusDto | undefined;
   export let protonRuntimes: ProtonRuntime[] = [];
   export let selectedProtonRuntimeId: string | null = null;
   export let isLoadingProtonRuntimes = false;
@@ -45,6 +47,7 @@
   export let onClearCache: () => void | Promise<void>;
   export let onClearUnreferencedCache: () => void | Promise<void>;
   export let onResetAllData: () => void | Promise<void>;
+  export let onRunOnboardingAgain: () => void | Promise<void>;
   export let onSelectProtonRuntime: (runtimeId: string) => void | Promise<void>;
   let showClearCacheConfirm = false;
   let showResetConfirm = false;
@@ -81,6 +84,19 @@
   function handleProtonRuntimeChange(event: Event) {
     const value = (event.currentTarget as HTMLSelectElement).value;
     void onSelectProtonRuntime(value);
+  }
+
+  function formatTimestamp(value?: string) {
+    if (!value) {
+      return "Never";
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    return date.toLocaleString();
   }
 </script>
 
@@ -237,6 +253,28 @@
           <button class="ghost-button icon-button" type="button" on:click={onOpenMemoryDiagnostics}>
             <Icon label="Open RAM diagnostics" name="details" />
             <span>Open</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-subheading">
+        <h3>Onboarding</h3>
+      </div>
+
+      <div class="preference-list">
+        <div class="switch-row">
+          <div>
+            <strong>Run onboarding again</strong>
+            <p>
+              Validate your v49 install again without enabling the first-run lock.
+              Last completed: {formatTimestamp(onboardingStatus?.completedAt)}
+            </p>
+          </div>
+          <button class="ghost-button icon-button" type="button" on:click={onRunOnboardingAgain} disabled={storageMigration?.isActive}>
+            <Icon label="Run onboarding again" name="refresh" />
+            <span>Run</span>
           </button>
         </div>
       </div>

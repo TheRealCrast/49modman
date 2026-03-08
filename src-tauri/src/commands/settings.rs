@@ -5,8 +5,11 @@ use crate::{
     error::AppError,
     services::{
         settings_service::{
+            complete_onboarding as complete_onboarding_service,
+            get_onboarding_status as get_onboarding_status_service,
             get_warning_prefs as get_warning_prefs_service,
-            set_warning_preference as set_warning_preference_service, WarningPrefsDto,
+            set_warning_preference as set_warning_preference_service, OnboardingStatusDto,
+            WarningPrefsDto,
         },
         storage_service::{
             get_storage_locations as get_storage_locations_service,
@@ -23,6 +26,12 @@ use crate::{
 pub struct SetWarningPreferenceInput {
     pub kind: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompleteOnboardingInput {
+    pub validated_game_path: String,
 }
 
 #[tauri::command]
@@ -54,6 +63,41 @@ pub async fn set_warning_preference(
 
         set_warning_preference_service(&connection, &input.kind, input.enabled)
             .map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn get_onboarding_status(
+    state: State<'_, AppState>,
+) -> Result<OnboardingStatusDto, AppError> {
+    let connection = state.connection.clone();
+
+    async_runtime::spawn_blocking(move || {
+        let connection = connection
+            .lock()
+            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+
+        get_onboarding_status_service(&connection).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn complete_onboarding(
+    state: State<'_, AppState>,
+    input: CompleteOnboardingInput,
+) -> Result<OnboardingStatusDto, AppError> {
+    let connection = state.connection.clone();
+
+    async_runtime::spawn_blocking(move || {
+        let connection = connection
+            .lock()
+            .map_err(|_| AppError::new("DB_INIT_FAILED", "Failed to lock the SQLite connection"))?;
+
+        complete_onboarding_service(&connection, &input.validated_game_path).map_err(AppError::from)
     })
     .await
     .map_err(|error| AppError::new("DB_INIT_FAILED", error.to_string()))?

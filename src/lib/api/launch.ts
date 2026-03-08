@@ -9,6 +9,7 @@ import type {
   LaunchResult,
   LaunchVanillaInput,
   ProtonRuntime,
+  PickGameInstallFolderInput,
   RuntimeStageBuildResult,
   SteamScanResult,
   TrimResourceMemoryResult,
@@ -19,6 +20,12 @@ import type {
 
 export function scanSteamInstallations(): Promise<SteamScanResult> {
   return invokeCommand("scan_steam_installations");
+}
+
+export function pickGameInstallFolder(
+  input: PickGameInstallFolderInput = {}
+): Promise<string | null> {
+  return invokeCommand("pick_game_install_folder", { input });
 }
 
 export function validateV49Install(

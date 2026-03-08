@@ -69,6 +69,10 @@ img {
   overflow: hidden;
 }
 
+.app-shell.onboarding-gated {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--panel-border);
@@ -129,6 +133,54 @@ img {
   overflow: auto;
   padding-right: 4px;
   align-content: start;
+}
+
+.onboarding-screen {
+  overflow: auto;
+  padding-right: 4px;
+  align-content: start;
+}
+
+.onboarding-validation-block {
+  display: grid;
+  gap: 10px;
+}
+
+.onboarding-check-row {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--panel-alt);
+}
+
+.onboarding-check-row p {
+  margin: 4px 0 0;
+}
+
+.onboarding-depot {
+  display: grid;
+  gap: 10px;
+}
+
+.onboarding-depot ol {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-soft);
+}
+
+.onboarding-depot pre {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: var(--panel-alt);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.onboarding-validate-actions {
+  margin-top: 8px;
 }
 
 .overview-screen,

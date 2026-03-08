@@ -16,9 +16,12 @@ import {
   launchProfile as launchProfileApi,
   launchVanilla as launchVanillaApi,
   listProtonRuntimes as listProtonRuntimesApi,
+  pickGameInstallFolder as pickGameInstallFolderApi,
   repairActivation as repairActivationApi,
+  scanSteamInstallations as scanSteamInstallationsApi,
   setPreferredProtonRuntime as setPreferredProtonRuntimeApi,
-  trimResourceSaverMemory as trimResourceSaverMemoryApi
+  trimResourceSaverMemory as trimResourceSaverMemoryApi,
+  validateV49Install as validateV49InstallApi
 } from "./api/launch";
 import {
   createProfile as createProfileApi,
@@ -42,6 +45,8 @@ import {
 } from "./api/profiles";
 import { listReferenceRows, setReferenceState as setReferenceStateApi } from "./api/reference";
 import {
+  completeOnboarding,
+  getOnboardingStatus,
   getStorageLocations,
   getStorageMigrationStatus,
   getWarningPrefs,
@@ -82,6 +87,8 @@ import type {
 } from "./types";
 
 const defaultVisibleStatuses: EffectiveStatus[] = ["verified", "green", "yellow", "orange"];
+const steamConsoleUrl = "steam://open/console";
+const v49DepotCommand = "download_depot 1966720 1966721 7525563530173177311";
 const defaultBrowseSortMode: BrowseSortMode = "mostDownloads";
 const defaultCatalogPageSize = 40;
 const defaultReferencePageSize = 50;
@@ -113,6 +120,18 @@ let pendingImportModZipDecisionResolver: ((addToCache: boolean | null) => void) 
 const initialState: AppState = {
   view: "browse",
   runtimeKind: getRuntimeKind(),
+  onboardingRequired: false,
+  onboardingMode: null,
+  isLoadingOnboardingStatus: false,
+  onboardingStatus: undefined,
+  onboardingScan: undefined,
+  onboardingValidation: undefined,
+  onboardingPathDraft: "",
+  onboardingPathManuallyEdited: false,
+  isDetectingOnboardingPath: false,
+  isPickingOnboardingPath: false,
+  isValidatingOnboardingPath: false,
+  onboardingError: null,
   browseSearchDraft: "",
   browseSearchSubmitted: "",
   browseSortMode: defaultBrowseSortMode,
@@ -253,6 +272,22 @@ function describeUnknownError(error: unknown, fallback: string) {
   return fallback;
 }
 
+function canAutofillOnboardingPath(state: AppState, selectedGamePath: string, force = false) {
+  if (!selectedGamePath.trim()) {
+    return false;
+  }
+
+  if (force) {
+    return true;
+  }
+
+  if (!state.onboardingPathDraft.trim()) {
+    return true;
+  }
+
+  return !state.onboardingPathManuallyEdited;
+}
+
 function resolveLaunchMode(profile: ProfileDetailDto | undefined): LaunchMode {
   return profile?.launchModeDefault === "direct" ? "direct" : "steam";
 }
@@ -269,6 +304,33 @@ function toFileUrl(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const prefix = normalized.startsWith("/") ? "file://" : "file:///";
   return `${prefix}${encodeURI(normalized)}`;
+}
+
+async function copyTextToClipboard(value: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard API is unavailable.");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error("Clipboard copy was blocked by the current environment.");
+  }
 }
 
 function mergeMockReferenceState(
@@ -2453,6 +2515,53 @@ async function exportProfilePackWithActivity(options: {
   return { cancelled: false as const };
 }
 
+function shouldSyncActiveProfileGamePath(validatedGamePath: string, onboardingDraftPath: string) {
+  const activeProfile = get(appState).activeProfile;
+  if (!activeProfile) {
+    return false;
+  }
+
+  const currentPath = activeProfile.gamePath.trim();
+  const normalizedValidatedPath = validatedGamePath.trim();
+  const normalizedDraftPath = onboardingDraftPath.trim();
+  if (!normalizedValidatedPath) {
+    return false;
+  }
+
+  if (!currentPath) {
+    return true;
+  }
+
+  return Boolean(normalizedDraftPath) && currentPath === normalizedDraftPath;
+}
+
+async function syncActiveProfileGamePathFromOnboarding(
+  validatedGamePath: string,
+  onboardingDraftPath: string
+) {
+  const snapshot = get(appState);
+  const activeProfile = snapshot.activeProfile;
+  if (!activeProfile || !shouldSyncActiveProfileGamePath(validatedGamePath, onboardingDraftPath)) {
+    return;
+  }
+
+  const updatedProfile = await updateProfileApi({
+    profileId: activeProfile.id,
+    name: activeProfile.name,
+    notes: activeProfile.notes,
+    launchModeDefault: activeProfile.launchModeDefault,
+    gamePath: validatedGamePath
+  });
+  const profiles = await listProfilesApi();
+
+  appState.update((state) => ({
+    ...mapActiveProfile(state, updatedProfile),
+    profiles,
+    profileError: null,
+    desktopError: null
+  }));
+}
+
 export const actions = {
   async bootstrap() {
     const runtimeKind = getRuntimeKind();
@@ -2463,24 +2572,45 @@ export const actions = {
       ...state,
       runtimeKind,
       isBootstrapping: true,
+      isLoadingOnboardingStatus: true,
       desktopError: null
     }));
 
     try {
-      const [summary] = await Promise.all([getCatalogSummary()]);
-
       await loadProfilesState();
+      await loadSettingsState();
+      const onboardingStatus = await getOnboardingStatus();
 
       appState.update((state) => ({
         ...state,
         runtimeKind,
+        onboardingStatus,
+        onboardingRequired: !onboardingStatus.completed,
+        onboardingMode: onboardingStatus.completed ? null : "required",
+        isLoadingOnboardingStatus: false,
+        view: onboardingStatus.completed
+          ? state.view === "onboarding"
+            ? "browse"
+            : state.view
+          : "onboarding",
         settingsError: null,
+        desktopError: null
+      }));
+
+      if (!onboardingStatus.completed) {
+        await actions.detectOnboardingGamePath({ forceAutofill: true });
+        return;
+      }
+
+      const summary = await getCatalogSummary();
+
+      appState.update((state) => ({
+        ...state,
         lastCatalogRefreshLabel: summary.lastSyncLabel,
         desktopError: null
       }));
 
       await Promise.all([
-        loadSettingsState(),
         loadProfilesStorageSummary(),
         loadCacheSummary(),
         loadActiveDownloads(),
@@ -2532,6 +2662,7 @@ export const actions = {
       appState.update((state) => ({
         ...state,
         catalogError: error instanceof Error ? error.message : "Failed to bootstrap backend data.",
+        isLoadingOnboardingStatus: false,
         isCatalogOverlayVisible: false,
         catalogOverlayTitle: null,
         catalogOverlayMessage: null,
@@ -2551,6 +2682,11 @@ export const actions = {
     }
   },
   setView(view: AppView) {
+    const snapshot = get(appState);
+    if (snapshot.onboardingMode === "required" && view !== "onboarding") {
+      return;
+    }
+
     if (isStorageMigrationBlocking()) {
       return;
     }
@@ -2573,6 +2709,243 @@ export const actions = {
 
     if (view === "settings") {
       void loadProfilesStorageSummary();
+    }
+  },
+  setOnboardingPathDraft(path: string) {
+    appState.update((state) => ({
+      ...state,
+      onboardingPathDraft: path,
+      onboardingPathManuallyEdited: true,
+      onboardingValidation: undefined,
+      onboardingError: null
+    }));
+  },
+  async detectOnboardingGamePath(options: { forceAutofill?: boolean } = {}) {
+    if (get(appState).isDetectingOnboardingPath) {
+      return;
+    }
+
+    appState.update((state) => ({
+      ...state,
+      isDetectingOnboardingPath: true,
+      onboardingError: null
+    }));
+
+    try {
+      const scan = await scanSteamInstallationsApi();
+      appState.update((state) => {
+        const selectedGamePath = scan.selectedGamePath?.trim() ?? "";
+        const shouldAutofill = canAutofillOnboardingPath(
+          state,
+          selectedGamePath,
+          options.forceAutofill ?? false
+        );
+
+        return {
+          ...state,
+          onboardingScan: scan,
+          onboardingPathDraft: shouldAutofill ? selectedGamePath : state.onboardingPathDraft,
+          onboardingPathManuallyEdited: shouldAutofill ? false : state.onboardingPathManuallyEdited,
+          onboardingValidation: undefined,
+          isDetectingOnboardingPath: false,
+          onboardingError: null,
+          desktopError: null
+        };
+      });
+    } catch (error) {
+      const message = describeUnknownError(
+        error,
+        "Failed to detect Steam game libraries for onboarding."
+      );
+      appState.update((state) => ({
+        ...state,
+        isDetectingOnboardingPath: false,
+        onboardingError: message,
+        desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+      }));
+    }
+  },
+  async pickOnboardingGameFolder() {
+    if (get(appState).isPickingOnboardingPath) {
+      return;
+    }
+
+    const snapshot = get(appState);
+    const initialPath = snapshot.onboardingPathDraft.trim() || snapshot.onboardingScan?.selectedGamePath || undefined;
+
+    appState.update((state) => ({
+      ...state,
+      isPickingOnboardingPath: true,
+      onboardingError: null
+    }));
+
+    try {
+      const selectedPath = await pickGameInstallFolderApi({ initialPath });
+      appState.update((state) => ({
+        ...state,
+        isPickingOnboardingPath: false,
+        onboardingPathDraft: selectedPath ?? state.onboardingPathDraft,
+        onboardingPathManuallyEdited: selectedPath ? true : state.onboardingPathManuallyEdited,
+        onboardingValidation: selectedPath ? undefined : state.onboardingValidation,
+        onboardingError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      const message = describeUnknownError(error, "Failed to pick the game install folder.");
+      appState.update((state) => ({
+        ...state,
+        isPickingOnboardingPath: false,
+        onboardingError: message,
+        desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+      }));
+    }
+  },
+  async validateOnboardingInstall() {
+    const snapshot = get(appState);
+    if (snapshot.isValidatingOnboardingPath) {
+      return;
+    }
+
+    appState.update((state) => ({
+      ...state,
+      isValidatingOnboardingPath: true,
+      onboardingError: null
+    }));
+
+    try {
+      const path = snapshot.onboardingPathDraft.trim();
+      const validation = await validateV49InstallApi({
+        gamePathOverride: path.length > 0 ? path : undefined,
+        skipDependencyValidation: true
+      });
+
+      if (!validation.ok) {
+        appState.update((state) => ({
+          ...state,
+          onboardingValidation: validation,
+          isValidatingOnboardingPath: false,
+          onboardingError: null,
+          desktopError: null
+        }));
+        return;
+      }
+
+      const validatedGamePath = validation.resolvedGamePath?.trim() ?? path;
+      if (!validatedGamePath) {
+        throw new Error("Validation passed but resolved game path was empty.");
+      }
+
+      const onboardingStatus = await completeOnboarding(validatedGamePath);
+      const activeOnboardingMode = get(appState).onboardingMode;
+
+      try {
+        await syncActiveProfileGamePathFromOnboarding(validatedGamePath, path);
+      } catch (error) {
+        const profileSyncMessage = describeUnknownError(
+          error,
+          "Onboarding completed, but failed to update active profile game path."
+        );
+        appState.update((state) => ({
+          ...state,
+          profileError: profileSyncMessage,
+          desktopError: state.runtimeKind === "tauri" ? profileSyncMessage : state.desktopError
+        }));
+      }
+
+      appState.update((state) => ({
+        ...state,
+        onboardingStatus,
+        onboardingRequired: false,
+        onboardingMode: null,
+        onboardingValidation: validation,
+        isValidatingOnboardingPath: false,
+        onboardingError: null,
+        desktopError: null,
+        view: activeOnboardingMode === "manual" ? "settings" : "browse"
+      }));
+
+      if (activeOnboardingMode === "required") {
+        await actions.bootstrap();
+      }
+    } catch (error) {
+      const message = describeUnknownError(error, "Failed to validate the selected game path.");
+      appState.update((state) => ({
+        ...state,
+        isValidatingOnboardingPath: false,
+        onboardingError: message,
+        desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+      }));
+    }
+  },
+  async runOnboardingAgain() {
+    const snapshot = get(appState);
+    if (snapshot.onboardingRequired || isStorageMigrationBlocking(snapshot)) {
+      return;
+    }
+
+    const lastValidatedGamePath = snapshot.onboardingStatus?.lastValidatedGamePath?.trim() ?? "";
+    const activeProfileGamePath = snapshot.activeProfile?.gamePath?.trim() ?? "";
+    const onboardingPathDraft =
+      lastValidatedGamePath || activeProfileGamePath || snapshot.onboardingPathDraft.trim();
+
+    appState.update((state) => ({
+      ...state,
+      view: "onboarding",
+      onboardingRequired: false,
+      onboardingMode: "manual",
+      onboardingScan: undefined,
+      onboardingValidation: undefined,
+      onboardingPathDraft,
+      onboardingPathManuallyEdited: onboardingPathDraft.length > 0,
+      onboardingError: null
+    }));
+
+    await actions.detectOnboardingGamePath();
+  },
+  exitOnboarding() {
+    if (get(appState).onboardingMode === "required") {
+      return;
+    }
+
+    appState.update((state) => ({
+      ...state,
+      view: "settings",
+      onboardingMode: null,
+      onboardingError: null
+    }));
+  },
+  async openOnboardingSteamConsole() {
+    try {
+      await openExternalUrl(steamConsoleUrl);
+      appState.update((state) => ({
+        ...state,
+        onboardingError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      const message = describeUnknownError(error, "Failed to open Steam console.");
+      appState.update((state) => ({
+        ...state,
+        onboardingError: message,
+        desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+      }));
+    }
+  },
+  async copyOnboardingDepotCommand() {
+    try {
+      await copyTextToClipboard(v49DepotCommand);
+      appState.update((state) => ({
+        ...state,
+        onboardingError: null,
+        desktopError: null
+      }));
+    } catch (error) {
+      const message = describeUnknownError(error, "Failed to copy depot command to clipboard.");
+      appState.update((state) => ({
+        ...state,
+        onboardingError: message,
+        desktopError: state.runtimeKind === "tauri" ? message : state.desktopError
+      }));
     }
   },
   dismissLaunchFeedback() {
@@ -4125,6 +4498,18 @@ export const actions = {
 
       appState.update((state) => ({
         ...state,
+        onboardingRequired: false,
+        onboardingMode: null,
+        isLoadingOnboardingStatus: false,
+        onboardingStatus: undefined,
+        onboardingScan: undefined,
+        onboardingValidation: undefined,
+        onboardingPathDraft: "",
+        onboardingPathManuallyEdited: false,
+        isDetectingOnboardingPath: false,
+        isPickingOnboardingPath: false,
+        isValidatingOnboardingPath: false,
+        onboardingError: null,
         profiles: [],
         activeProfile: undefined,
         selectedProfileId: "default",

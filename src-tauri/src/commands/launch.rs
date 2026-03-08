@@ -11,6 +11,7 @@ use crate::{
         get_memory_diagnostics as get_memory_diagnostics_service,
         launch_profile as launch_profile_service, launch_vanilla as launch_vanilla_service,
         list_proton_runtimes as list_proton_runtimes_service,
+        pick_game_install_folder as pick_game_install_folder_service,
         repair_activation as repair_activation_service,
         scan_steam_installations as scan_steam_installations_service,
         set_preferred_proton_runtime as set_preferred_proton_runtime_service,
@@ -18,6 +19,7 @@ use crate::{
         validate_v49_install as validate_v49_install_service, ActivateProfileInput,
         ActivationApplyResult, BuildRuntimeStageInput, LaunchProfileInput, LaunchResult,
         LaunchRuntimeStatus, LaunchVanillaInput, MemoryDiagnosticsSnapshot, ProtonRuntime,
+        PickGameInstallFolderInput,
         RuntimeStageBuildResult, SteamScanResult, TrimResourceMemoryResult, V49ValidationResult,
         ValidateV49InstallInput, VanillaCleanupResult,
     },
@@ -32,6 +34,18 @@ pub async fn scan_steam_installations(
     })
     .await
     .map_err(|error| AppError::new("STEAM_SCAN_FAILED", error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn pick_game_install_folder(
+    _state: State<'_, AppState>,
+    input: Option<PickGameInstallFolderInput>,
+) -> Result<Option<String>, AppError> {
+    async_runtime::spawn_blocking(move || {
+        pick_game_install_folder_service(input.unwrap_or_default()).map_err(AppError::from)
+    })
+    .await
+    .map_err(|error| AppError::new("PICK_GAME_INSTALL_FOLDER_FAILED", error.to_string()))?
 }
 
 #[tauri::command]

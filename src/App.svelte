@@ -10,6 +10,7 @@
   import InstallWarningModal from "./components/InstallWarningModal.svelte";
   import MemoryDiagnosticsModal from "./components/MemoryDiagnosticsModal.svelte";
   import NavRail from "./components/NavRail.svelte";
+  import OnboardingScreen from "./components/OnboardingScreen.svelte";
   import OverviewScreen from "./components/OverviewScreen.svelte";
   import ProfilesScreen from "./components/ProfilesScreen.svelte";
   import ResetProgressModal from "./components/ResetProgressModal.svelte";
@@ -30,6 +31,7 @@
   $: launchModeSuffix = activeLaunchMode === "direct" ? " (Direct)" : "";
   $: launchingModded = $appState.isLaunching && $appState.launchingVariant === "modded";
   $: launchingVanilla = $appState.isLaunching && $appState.launchingVariant === "vanilla";
+  $: showShellChrome = !$appState.onboardingRequired && $appState.view !== "onboarding";
 
   $: modalCopy =
     $appState.modal
@@ -76,63 +78,68 @@
   />
 </svelte:head>
 
-<div class="app-shell">
-  <NavRail activeView={$appState.view} onSelect={setView} />
+<div class="app-shell" class:onboarding-gated={$appState.onboardingRequired || $appState.view === "onboarding"}>
+  {#if showShellChrome}
+    <NavRail activeView={$appState.view} onSelect={setView} />
+  {/if}
 
   <main class="main-shell">
-    <header class="topbar panel">
-      <div class="topbar-copy">
-        <h2>49modman</h2>
-        <p>Lethal Company v49</p>
-      </div>
-
-      <div class="topbar-actions">
-        <label class="profile-select">
-          <span>Profile</span>
-          <select
-            value={$appState.selectedProfileId}
-            on:change={(event) => void actions.selectProfile((event.currentTarget as HTMLSelectElement).value)}
-          >
-            {#each $appState.profiles as profile}
-              <option value={profile.id}>{profile.name}</option>
-            {/each}
-          </select>
-        </label>
-
-        <div class="launch-actions">
-          <button
-            class="solid-button icon-button"
-            type="button"
-            disabled={$appState.isBootstrapping || $appState.isLaunching || !$selectedProfile}
-            on:click={() => void actions.launchModded()}
-          >
-            <Icon
-              label="Launch modded"
-              name={launchingModded ? "refresh" : "play"}
-              forceWhite={true}
-              spinning={launchingModded}
-            />
-            <span>{launchingModded ? "Launching..." : `Launch modded${launchModeSuffix}`}</span>
-          </button>
-          <button
-            class="ghost-button icon-button"
-            type="button"
-            disabled={$appState.isBootstrapping || $appState.isLaunching}
-            on:click={() => void actions.launchVanilla()}
-          >
-            <Icon
-              label="Launch vanilla"
-              name={launchingVanilla ? "refresh" : "circle"}
-              spinning={launchingVanilla}
-            />
-            <span>{launchingVanilla ? "Launching..." : `Launch vanilla${launchModeSuffix}`}</span>
-          </button>
+    {#if showShellChrome}
+      <header class="topbar panel">
+        <div class="topbar-copy">
+          <h2>49modman</h2>
+          <p>Lethal Company v49</p>
         </div>
-      </div>
-    </header>
+
+        <div class="topbar-actions">
+          <label class="profile-select">
+            <span>Profile</span>
+            <select
+              value={$appState.selectedProfileId}
+              on:change={(event) => void actions.selectProfile((event.currentTarget as HTMLSelectElement).value)}
+            >
+              {#each $appState.profiles as profile}
+                <option value={profile.id}>{profile.name}</option>
+              {/each}
+            </select>
+          </label>
+
+          <div class="launch-actions">
+            <button
+              class="solid-button icon-button"
+              type="button"
+              disabled={$appState.isBootstrapping || $appState.isLaunching || !$selectedProfile}
+              on:click={() => void actions.launchModded()}
+            >
+              <Icon
+                label="Launch modded"
+                name={launchingModded ? "refresh" : "play"}
+                forceWhite={true}
+                spinning={launchingModded}
+              />
+              <span>{launchingModded ? "Launching..." : `Launch modded${launchModeSuffix}`}</span>
+            </button>
+            <button
+              class="ghost-button icon-button"
+              type="button"
+              disabled={$appState.isBootstrapping || $appState.isLaunching}
+              on:click={() => void actions.launchVanilla()}
+            >
+              <Icon
+                label="Launch vanilla"
+                name={launchingVanilla ? "refresh" : "circle"}
+                spinning={launchingVanilla}
+              />
+              <span>{launchingVanilla ? "Launching..." : `Launch vanilla${launchModeSuffix}`}</span>
+            </button>
+          </div>
+        </div>
+      </header>
+    {/if}
 
     <div class="main-content">
-      <div class="feedback-stack">
+      {#if showShellChrome}
+        <div class="feedback-stack">
         {#if $appState.resourceSaverActive}
           <section class="panel launch-feedback-panel">
             <div class="compact-heading compact-heading-left">
@@ -209,9 +216,28 @@
             </div>
           </section>
         {/if}
-      </div>
+        </div>
+      {/if}
 
-      {#if $appState.view === "overview"}
+      {#if $appState.view === "onboarding"}
+        <OnboardingScreen
+          mode={$appState.onboardingMode}
+          pathDraft={$appState.onboardingPathDraft}
+          scan={$appState.onboardingScan}
+          validation={$appState.onboardingValidation}
+          isDetecting={$appState.isDetectingOnboardingPath}
+          isPicking={$appState.isPickingOnboardingPath}
+          isValidating={$appState.isValidatingOnboardingPath}
+          error={$appState.onboardingError}
+          onPathDraftChange={actions.setOnboardingPathDraft}
+          onDetect={() => actions.detectOnboardingGamePath({ forceAutofill: true })}
+          onPickFolder={actions.pickOnboardingGameFolder}
+          onValidate={actions.validateOnboardingInstall}
+          onExit={actions.exitOnboarding}
+          onOpenSteamConsole={actions.openOnboardingSteamConsole}
+          onCopyDepotCommand={actions.copyOnboardingDepotCommand}
+        />
+      {:else if $appState.view === "overview"}
         <OverviewScreen
           activeProfile={$selectedProfile}
           lastCatalogRefreshLabel={$appState.lastCatalogRefreshLabel}
@@ -283,6 +309,8 @@
           onOpenCacheFolder={actions.openCacheFolder}
           onOpenProfilesFolder={actions.openProfilesFolder}
           onResetAllData={actions.resetAllData}
+          onboardingStatus={$appState.onboardingStatus}
+          onRunOnboardingAgain={actions.runOnboardingAgain}
           onSelectProtonRuntime={actions.selectProtonRuntime}
           onWarningPrefChange={actions.setWarningPreference}
           settingsError={$appState.settingsError}

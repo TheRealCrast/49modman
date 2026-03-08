@@ -1,4 +1,4 @@
-export type AppView = "overview" | "browse" | "profiles" | "downloads" | "settings";
+export type AppView = "onboarding" | "overview" | "browse" | "profiles" | "downloads" | "settings";
 export type RuntimeKind = "tauri" | "browser-mock";
 
 export type BaseZone = "orange" | "green" | "yellow" | "red";
@@ -25,6 +25,10 @@ export interface ValidateV49InstallInput {
   gamePathOverride?: string;
   profileId?: string;
   skipDependencyValidation?: boolean;
+}
+
+export interface PickGameInstallFolderInput {
+  initialPath?: string;
 }
 
 export interface LaunchProfileInput {
@@ -625,6 +629,14 @@ export interface WarningPrefsDto {
   conserveWhileGameRunning: boolean;
 }
 
+export interface OnboardingStatusDto {
+  completed: boolean;
+  completedAt?: string;
+  lastValidatedGamePath?: string;
+}
+
+export type OnboardingMode = "required" | "manual" | null;
+
 export interface StorageLocationsDto {
   cacheDir: string;
   profilesDir: string;
@@ -695,6 +707,18 @@ export interface ResetProgressState {
 export interface AppState {
   view: AppView;
   runtimeKind: RuntimeKind;
+  onboardingRequired: boolean;
+  onboardingMode: OnboardingMode;
+  isLoadingOnboardingStatus: boolean;
+  onboardingStatus?: OnboardingStatusDto;
+  onboardingScan?: SteamScanResult;
+  onboardingValidation?: V49ValidationResult;
+  onboardingPathDraft: string;
+  onboardingPathManuallyEdited: boolean;
+  isDetectingOnboardingPath: boolean;
+  isPickingOnboardingPath: boolean;
+  isValidatingOnboardingPath: boolean;
+  onboardingError: string | null;
   browseSearchDraft: string;
   browseSearchSubmitted: string;
   browseSortMode: BrowseSortMode;
