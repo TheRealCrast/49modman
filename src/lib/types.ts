@@ -625,6 +625,33 @@ export interface WarningPrefsDto {
   conserveWhileGameRunning: boolean;
 }
 
+export interface StorageLocationsDto {
+  cacheDir: string;
+  profilesDir: string;
+}
+
+export type StorageMigrationPhase =
+  | "idle"
+  | "copying"
+  | "finalizing"
+  | "restarting"
+  | "failed";
+
+export interface StorageMigrationStatusDto {
+  phase: StorageMigrationPhase;
+  message: string;
+  bytesCopied: number;
+  totalBytes: number;
+  percentComplete: number;
+  isActive: boolean;
+  error?: string;
+}
+
+export interface StartStorageMigrationInput {
+  cacheDir?: string;
+  profilesDir?: string;
+}
+
 export interface UninstallDependantsModalState {
   packageId: string;
   packageName: string;
@@ -696,6 +723,8 @@ export interface AppState {
   resourceSaverLastView: AppView | null;
   launchFeedback: LaunchFeedbackState | null;
   warningPrefs: WarningPrefsDto;
+  storageLocations?: StorageLocationsDto;
+  storageMigration: StorageMigrationStatusDto | null;
   modal: WarningModalState | null;
   uninstallDependantsModal: UninstallDependantsModalState | null;
   installWithoutDependenciesModal: InstallWithoutDependenciesModalState | null;

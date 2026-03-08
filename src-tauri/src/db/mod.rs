@@ -277,7 +277,10 @@ fn repair_catalog_schema(connection: &Connection) -> Result<(), InternalError> {
     }
 
     if !columns.iter().any(|column| column == "icon_url") {
-        connection.execute("ALTER TABLE package_versions ADD COLUMN icon_url TEXT NULL", [])?;
+        connection.execute(
+            "ALTER TABLE package_versions ADD COLUMN icon_url TEXT NULL",
+            [],
+        )?;
     }
 
     Ok(())

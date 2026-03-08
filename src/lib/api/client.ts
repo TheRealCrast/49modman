@@ -33,6 +33,8 @@ import {
   getProfilesStorageSummaryMock,
   getUninstallDependantsMock,
   getWarningPrefsMock,
+  getStorageLocationsMock,
+  getStorageMigrationStatusMock,
   listActiveDownloadsMock,
   listProfilesMock,
   listReferenceRowsMock,
@@ -50,6 +52,8 @@ import {
   updateProfileMock,
   setReferenceStateMock,
   setWarningPreferenceMock,
+  pickStorageFolderMock,
+  startStorageMigrationMock,
   syncCatalogMock
 } from "./mock-backend";
 import { getRuntimeKind, isTauriRuntime } from "../runtime";
@@ -86,6 +90,10 @@ type CommandMap = {
   set_reference_state: typeof setReferenceStateMock;
   get_warning_prefs: typeof getWarningPrefsMock;
   set_warning_preference: typeof setWarningPreferenceMock;
+  get_storage_locations: typeof getStorageLocationsMock;
+  get_storage_migration_status: typeof getStorageMigrationStatusMock;
+  pick_storage_folder: typeof pickStorageFolderMock;
+  start_storage_migration: typeof startStorageMigrationMock;
   queue_install_to_cache: typeof queueInstallToCacheMock;
   get_cache_summary: typeof getCacheSummaryMock;
   open_cache_folder: typeof openCacheFolderMock;
@@ -142,6 +150,10 @@ const mockCommands: CommandMap = {
   set_reference_state: setReferenceStateMock,
   get_warning_prefs: getWarningPrefsMock,
   set_warning_preference: setWarningPreferenceMock,
+  get_storage_locations: getStorageLocationsMock,
+  get_storage_migration_status: getStorageMigrationStatusMock,
+  pick_storage_folder: pickStorageFolderMock,
+  start_storage_migration: startStorageMigrationMock,
   queue_install_to_cache: queueInstallToCacheMock,
   get_cache_summary: getCacheSummaryMock,
   open_cache_folder: openCacheFolderMock,

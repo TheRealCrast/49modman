@@ -82,6 +82,10 @@ fn main() {
             commands::reference::set_reference_state,
             commands::settings::get_warning_prefs,
             commands::settings::set_warning_preference,
+            commands::settings::get_storage_locations,
+            commands::settings::get_storage_migration_status,
+            commands::settings::pick_storage_folder,
+            commands::settings::start_storage_migration,
             commands::system::open_external_url
         ])
         .run(tauri::generate_context!())

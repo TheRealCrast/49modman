@@ -1635,7 +1635,8 @@ pub fn validate_v49_install(
                         key: "enabledDependencies".to_string(),
                         ok: true,
                         code: "PROFILE_DEPENDENCY_STATE_VALID".to_string(),
-                        message: "Enabled installed mods have satisfied dependency state.".to_string(),
+                        message: "Enabled installed mods have satisfied dependency state."
+                            .to_string(),
                         detail: None,
                     });
                 }
@@ -2178,14 +2179,10 @@ fn ensure_target_parent_dirs(
 }
 
 fn activation_manifest_path(state: &AppState) -> Result<PathBuf, InternalError> {
-    let app_data = state.profiles_dir.parent().ok_or_else(|| {
-        InternalError::app(
-            "RESOURCE_LOAD_FAILED",
-            "Failed to resolve app data root from profiles directory.",
-        )
-    })?;
-
-    Ok(app_data.join("state").join(ACTIVATION_MANIFEST_FILE_NAME))
+    Ok(state
+        .app_data_dir
+        .join("state")
+        .join(ACTIVATION_MANIFEST_FILE_NAME))
 }
 
 fn read_activation_manifest(
@@ -2261,14 +2258,7 @@ fn current_platform_name() -> &'static str {
 }
 
 fn ensure_launch_diagnostics_dir(state: &AppState) -> Result<PathBuf, InternalError> {
-    let app_data = state.profiles_dir.parent().ok_or_else(|| {
-        InternalError::app(
-            "RESOURCE_LOAD_FAILED",
-            "Failed to resolve app data root for launch diagnostics.",
-        )
-    })?;
-
-    let launch_logs_root = app_data.join("logs").join("launch");
+    let launch_logs_root = state.app_data_dir.join("logs").join("launch");
     fs::create_dir_all(&launch_logs_root)?;
 
     let run_dir = launch_logs_root.join(format!(
@@ -3832,18 +3822,12 @@ fn resolve_steam_compat_data_path(
     state: &AppState,
     profile_hint: Option<&str>,
 ) -> Result<PathBuf, InternalError> {
-    let app_data = state.profiles_dir.parent().ok_or_else(|| {
-        InternalError::app(
-            "RESOURCE_LOAD_FAILED",
-            "Failed to resolve app data root for Proton compat data path.",
-        )
-    })?;
-
     let profile_hint = profile_hint
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .unwrap_or("default");
-    let compat_path = app_data
+    let compat_path = state
+        .app_data_dir
         .join("state")
         .join("proton-compat")
         .join(profile_hint);

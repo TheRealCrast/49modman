@@ -1,6 +1,6 @@
 # Current Stage Notes
 
-Last updated: 2026-03-06
+Last updated: 2026-03-08
 
 This file is the short-term implementation handoff for the current stage of the project.
 The broad product plan remains in [plan-v1.md](./plan-v1.md).
@@ -185,6 +185,12 @@ The broad product plan remains in [plan-v1.md](./plan-v1.md).
   - selecting a mod now enters a short resolving state before showing tab content
   - this prevents showing `Versions` first and then jumping to `Details`
   - the `Loading package details...` card is centered in the same content area used by `Details`/`Versions`
+- Settings now supports relocating storage paths for both cache and profiles:
+  - new Settings rows show current `Cache location` and `Profiles location`
+  - each row has `Move` action (folder picker)
+  - migration copies data to the selected path with a blocking progress modal + progress bar
+  - migration requires destination folders to be empty (or missing)
+  - on successful copy, old folders are deleted, new paths are persisted in settings, and the app restarts
 
 ## Next Milestone
 
@@ -246,7 +252,7 @@ Current locked behavior:
 
 ## Current Uncommitted Work
 
-This checkpoint captures local `.zip` import, Browse version icons, launch dependency precheck/run-anyway follow-ups, and non-blocking folder opener fixes.
+This checkpoint captures local `.zip` import, Browse version icons, launch dependency precheck/run-anyway follow-ups, storage relocation with progress + restart, and non-blocking folder opener fixes.
 
 ## Profile Milestone Notes
 
@@ -412,6 +418,11 @@ Linux/Tauri notes:
   - sets `GDK_BACKEND=x11` if unset
   - sets `WINIT_UNIX_BACKEND=x11` if unset
 - After that change, the user confirmed the app window rendered successfully
+- Dev-only restart caveat for storage migration:
+  - the migration flow calls `AppHandle::restart()`
+  - in `npm run tauri:dev`, the app UI is served from `http://127.0.0.1:4173` (`devUrl`)
+  - after restart in dev mode, the webview can briefly fail with `127.0.0.1: Connection refused` and require rerunning `npm run tauri:dev`
+  - this is expected to be a dev-runtime behavior; release bundles load from `frontendDist` and do not depend on the Vite dev server URL
 
 ## Last Verified Commands
 

@@ -42,7 +42,11 @@ import {
 } from "./api/profiles";
 import { listReferenceRows, setReferenceState as setReferenceStateApi } from "./api/reference";
 import {
+  getStorageLocations,
+  getStorageMigrationStatus,
   getWarningPrefs,
+  pickStorageFolder,
+  startStorageMigration,
   setWarningPreference as setWarningPreferenceApi
 } from "./api/settings";
 import { openExternalUrl } from "./api/system";
@@ -73,7 +77,8 @@ import type {
   ProfileDetailDto,
   ProfileInstalledModDto,
   ReferenceState,
-  ResetProgressStep
+  ResetProgressStep,
+  StorageMigrationStatusDto
 } from "./types";
 
 const defaultVisibleStatuses: EffectiveStatus[] = ["verified", "green", "yellow", "orange"];
@@ -83,11 +88,13 @@ const defaultReferencePageSize = 50;
 const downloadPollIntervalMs = 500;
 const launchRuntimePollIntervalMs = 2500;
 const memoryDiagnosticsPollIntervalMs = 2000;
+const storageMigrationPollIntervalMs = 200;
 const resourceSaverTransitionPollThreshold = 2;
 const resourceSaverBlockNoticeCooldownMs = 4000;
 let downloadPollHandle: number | null = null;
 let launchRuntimePollHandle: number | null = null;
 let memoryDiagnosticsPollHandle: number | null = null;
+let storageMigrationPollHandle: number | null = null;
 let isLoadingMemoryDiagnostics = false;
 let isLoadingLaunchRuntimeStatus = false;
 let consecutiveGameRunningPolls = 0;
@@ -137,6 +144,8 @@ const initialState: AppState = {
     importProfilePack: true,
     conserveWhileGameRunning: false
   },
+  storageLocations: undefined,
+  storageMigration: null,
   isGameRunning: false,
   resourceSaverActive: false,
   resourceSaverLastView: null,
@@ -297,11 +306,82 @@ function waitForNextPaint() {
   });
 }
 
+function isStorageMigrationBlocking(state = get(appState)) {
+  return state.storageMigration?.isActive ?? false;
+}
+
 function stopDownloadPolling() {
   if (downloadPollHandle !== null) {
     window.clearInterval(downloadPollHandle);
     downloadPollHandle = null;
   }
+}
+
+function stopStorageMigrationPolling() {
+  if (storageMigrationPollHandle !== null) {
+    window.clearInterval(storageMigrationPollHandle);
+    storageMigrationPollHandle = null;
+  }
+}
+
+async function loadStorageMigrationStatus() {
+  try {
+    const status = await getStorageMigrationStatus();
+    appState.update((state) => ({
+      ...state,
+      storageMigration: status
+    }));
+
+    if (!status.isActive) {
+      stopStorageMigrationPolling();
+      if (status.phase === "failed") {
+        appState.update((state) => ({
+          ...state,
+          settingsError: status.error ?? status.message,
+          desktopError:
+            state.runtimeKind === "tauri"
+              ? status.error ?? status.message
+              : state.desktopError
+        }));
+      } else if (status.phase === "idle") {
+        appState.update((state) => ({
+          ...state,
+          storageMigration: null
+        }));
+      }
+      syncLaunchRuntimePollingForState(get(appState));
+      syncDownloadPollingForState(get(appState));
+    }
+  } catch (error) {
+    stopStorageMigrationPolling();
+    appState.update((state) => ({
+      ...state,
+      storageMigration: null,
+      settingsError:
+        error instanceof Error
+          ? error.message
+          : "Failed to load storage migration progress.",
+      desktopError:
+        state.runtimeKind === "tauri"
+          ? error instanceof Error
+            ? error.message
+            : "Failed to load desktop storage migration progress."
+          : state.desktopError
+    }));
+    syncLaunchRuntimePollingForState(get(appState));
+    syncDownloadPollingForState(get(appState));
+  }
+}
+
+function startStorageMigrationPolling() {
+  if (storageMigrationPollHandle !== null) {
+    return;
+  }
+
+  void loadStorageMigrationStatus();
+  storageMigrationPollHandle = window.setInterval(() => {
+    void loadStorageMigrationStatus();
+  }, storageMigrationPollIntervalMs);
 }
 
 function resetResourceSaverPollCounters() {
@@ -310,10 +390,27 @@ function resetResourceSaverPollCounters() {
 }
 
 function isHeavyWorkBlocked(state = get(appState)) {
+  if (isStorageMigrationBlocking(state)) {
+    return true;
+  }
   return state.warningPrefs.conserveWhileGameRunning && state.resourceSaverActive;
 }
 
 function notifyHeavyWorkBlocked(actionLabel: string) {
+  if (isStorageMigrationBlocking()) {
+    appState.update((state) =>
+      appendActivity(
+        state,
+        withActivity(
+          "Storage migration in progress",
+          `${actionLabel} is paused while storage data is being moved.`,
+          "warning"
+        )
+      )
+    );
+    return;
+  }
+
   const now = Date.now();
   if (now - resourceSaverBlockNoticeLastAtMs < resourceSaverBlockNoticeCooldownMs) {
     return;
@@ -476,6 +573,11 @@ function shouldConserveResources(state: AppState) {
 }
 
 function syncDownloadPollingForState(state = get(appState)) {
+  if (isStorageMigrationBlocking(state)) {
+    stopDownloadPolling();
+    return;
+  }
+
   if (shouldConserveResources(state)) {
     stopDownloadPolling();
     return;
@@ -509,6 +611,11 @@ function startLaunchRuntimePolling() {
 }
 
 function syncLaunchRuntimePollingForState(state = get(appState)) {
+  if (isStorageMigrationBlocking(state)) {
+    stopLaunchRuntimePolling();
+    return;
+  }
+
   if (state.warningPrefs.conserveWhileGameRunning) {
     startLaunchRuntimePolling();
     return;
@@ -843,20 +950,35 @@ async function refreshActiveProfileState() {
 }
 
 async function loadSettingsState() {
-  const warningPrefs = await getWarningPrefs();
+  const [warningPrefs, storageLocations, storageMigration] = await Promise.all([
+    getWarningPrefs(),
+    getStorageLocations(),
+    getStorageMigrationStatus()
+  ]);
   appState.update((state) => ({
     ...state,
     warningPrefs,
+    storageLocations,
+    storageMigration: storageMigration.isActive ? storageMigration : null,
     settingsError: null,
     desktopError: null
   }));
+  if (storageMigration.isActive) {
+    startStorageMigrationPolling();
+  } else {
+    stopStorageMigrationPolling();
+  }
   syncLaunchRuntimePollingForState(get(appState));
   syncDownloadPollingForState(get(appState));
 }
 
 async function loadLaunchRuntimeStatus() {
   const snapshot = get(appState);
-  if (!snapshot.warningPrefs.conserveWhileGameRunning || isLoadingLaunchRuntimeStatus) {
+  if (
+    isStorageMigrationBlocking(snapshot) ||
+    !snapshot.warningPrefs.conserveWhileGameRunning ||
+    isLoadingLaunchRuntimeStatus
+  ) {
     return;
   }
 
@@ -2335,6 +2457,7 @@ export const actions = {
   async bootstrap() {
     const runtimeKind = getRuntimeKind();
     clearBusyPackages();
+    stopStorageMigrationPolling();
 
     appState.update((state) => ({
       ...state,
@@ -2428,6 +2551,10 @@ export const actions = {
     }
   },
   setView(view: AppView) {
+    if (isStorageMigrationBlocking()) {
+      return;
+    }
+
     if (view === "browse" && isHeavyWorkBlocked()) {
       notifyHeavyWorkBlocked("Browse view");
       return;
@@ -3816,6 +3943,62 @@ export const actions = {
       }));
     }
   },
+  async moveStorageLocation(kind: "cache" | "profiles") {
+    if (isStorageMigrationBlocking()) {
+      return;
+    }
+
+    try {
+      const selectedPath = await pickStorageFolder(kind);
+      if (!selectedPath) {
+        return;
+      }
+
+      const status = await startStorageMigration(
+        kind === "cache"
+          ? { cacheDir: selectedPath }
+          : { profilesDir: selectedPath }
+      );
+
+      stopDownloadPolling();
+      stopLaunchRuntimePolling();
+      stopMemoryDiagnosticsPolling();
+
+      appState.update((state) =>
+        appendActivity(
+          {
+            ...state,
+            storageMigration: status,
+            settingsError: null,
+            desktopError: null
+          },
+          withActivity(
+            "Storage migration started",
+            `Moving ${kind} data to ${selectedPath}.`,
+            "neutral"
+          )
+        )
+      );
+
+      startStorageMigrationPolling();
+    } catch (error) {
+      appState.update((state) => ({
+        ...state,
+        settingsError:
+          error instanceof Error
+            ? error.message
+            : `Failed to move ${kind} storage location.`,
+        desktopError:
+          state.runtimeKind === "tauri"
+            ? error instanceof Error
+              ? error.message
+              : `Failed to move desktop ${kind} storage location.`
+            : state.desktopError
+      }));
+      syncLaunchRuntimePollingForState(get(appState));
+      syncDownloadPollingForState(get(appState));
+    }
+  },
   async openProfilesFolder() {
     try {
       await openProfilesFolderApi();
@@ -3898,6 +4081,10 @@ export const actions = {
     }
   },
   async resetAllData() {
+    if (isStorageMigrationBlocking()) {
+      return;
+    }
+
     resolvePendingWarningConfirmation(false);
     resolvePendingUninstallDependantsConfirmation(false);
     resolvePendingInstallWithoutDependenciesConfirmation(false);
@@ -3927,6 +4114,7 @@ export const actions = {
       await resetAllDataApi();
       stopDownloadPolling();
       stopMemoryDiagnosticsPolling();
+      stopStorageMigrationPolling();
       clearBusyPackages();
 
       setResetProgress(
@@ -3962,8 +4150,10 @@ export const actions = {
         cacheError: null,
         settingsError: null,
         desktopError: null,
+        storageMigration: null,
         downloads: [],
         cacheSummary: undefined,
+        storageLocations: undefined,
         profilesStorageSummary: undefined,
         activeCacheTaskIds: [],
         protonRuntimes: [],

@@ -15,6 +15,7 @@
   import ResetProgressModal from "./components/ResetProgressModal.svelte";
   import SettingsScreen from "./components/SettingsScreen.svelte";
   import SimpleConfirmModal from "./components/SimpleConfirmModal.svelte";
+  import StorageMigrationModal from "./components/StorageMigrationModal.svelte";
   import UninstallDependantsModal from "./components/UninstallDependantsModal.svelte";
   import { actions, appState, selectedProfile } from "./lib/store";
   import type { AppView, EffectiveStatus } from "./lib/types";
@@ -275,6 +276,8 @@
           profilesStorageSummary={$appState.profilesStorageSummary}
           onOpenActiveProfileFolder={actions.openActiveProfileFolder}
           onOpenMemoryDiagnostics={actions.openMemoryDiagnosticsModal}
+          onMoveCacheLocation={() => actions.moveStorageLocation("cache")}
+          onMoveProfilesLocation={() => actions.moveStorageLocation("profiles")}
           onClearCache={actions.clearCache}
           onClearUnreferencedCache={actions.requestClearUnreferencedCache}
           onOpenCacheFolder={actions.openCacheFolder}
@@ -283,6 +286,8 @@
           onSelectProtonRuntime={actions.selectProtonRuntime}
           onWarningPrefChange={actions.setWarningPreference}
           settingsError={$appState.settingsError}
+          storageLocations={$appState.storageLocations}
+          storageMigration={$appState.storageMigration}
           warningPrefs={$appState.warningPrefs}
         />
       {/if}
@@ -401,6 +406,10 @@
 
 {#if $appState.resetProgress}
   <ResetProgressModal state={$appState.resetProgress} />
+{/if}
+
+{#if $appState.storageMigration?.isActive}
+  <StorageMigrationModal status={$appState.storageMigration} />
 {/if}
 
 {#if $appState.dependencyModal}

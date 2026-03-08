@@ -58,6 +58,9 @@ import type {
   QueueInstallToCacheInput,
   QueueInstallToCacheResult,
   SetInstalledModEnabledInput,
+  StartStorageMigrationInput,
+  StorageLocationsDto,
+  StorageMigrationStatusDto,
   ValidateV49InstallInput,
   SyncCatalogInput,
   SyncCatalogResult,
@@ -103,6 +106,7 @@ type MockDb = {
   }>;
   tasks: InstallTaskDto[];
   downloads: DownloadJobDto[];
+  storageLocations: StorageLocationsDto;
 };
 
 const STORAGE_KEY = "49modman.mock-backend.v1";
@@ -132,8 +136,22 @@ const defaultDb: MockDb = {
   activeProfileId: "default",
   cachedVersions: [],
   tasks: [],
-  downloads: []
+  downloads: [],
+  storageLocations: {
+    cacheDir: "/mock/cache",
+    profilesDir: "/mock/profiles"
+  }
 };
+
+let mockStorageMigrationStatus: StorageMigrationStatusDto = {
+  phase: "idle",
+  message: "No storage migration is running.",
+  bytesCopied: 0,
+  totalBytes: 0,
+  percentComplete: 0,
+  isActive: false
+};
+let mockStorageMigrationTimer: number | null = null;
 
 function loadDb(): MockDb {
   if (typeof localStorage === "undefined") {
@@ -182,7 +200,11 @@ function normalizeDb(db: MockDb): MockDb {
     activeProfileId: hasActive ? db.activeProfileId : "default",
     cachedVersions: db.cachedVersions ?? [],
     tasks: db.tasks ?? [],
-    downloads: db.downloads ?? []
+    downloads: db.downloads ?? [],
+    storageLocations: {
+      cacheDir: db.storageLocations?.cacheDir || "/mock/cache",
+      profilesDir: db.storageLocations?.profilesDir || "/mock/profiles"
+    }
   };
 }
 
@@ -979,6 +1001,18 @@ export async function getUninstallDependantsMock(
 }
 
 export async function resetAllDataMock(): Promise<void> {
+  if (mockStorageMigrationTimer !== null) {
+    window.clearInterval(mockStorageMigrationTimer);
+    mockStorageMigrationTimer = null;
+  }
+  mockStorageMigrationStatus = {
+    phase: "idle",
+    message: "No storage migration is running.",
+    bytesCopied: 0,
+    totalBytes: 0,
+    percentComplete: 0,
+    isActive: false
+  };
   saveDb(clone(defaultDb));
 }
 
@@ -1183,7 +1217,7 @@ export async function getCacheSummaryMock(): Promise<CacheSummaryDto> {
   return {
     archiveCount: db.cachedVersions.length,
     totalBytes: db.cachedVersions.reduce((sum, entry) => sum + entry.fileSize, 0),
-    cachePath: "/mock/cache",
+    cachePath: db.storageLocations.cacheDir,
     hasActiveDownloads: db.tasks.some((task) => task.status === "queued" || task.status === "running")
   };
 }
@@ -1343,6 +1377,85 @@ export async function setWarningPreferenceMock(
   };
   saveDb(db);
   return db.warningPrefs;
+}
+
+export async function getStorageLocationsMock(): Promise<StorageLocationsDto> {
+  return normalizeDb(loadDb()).storageLocations;
+}
+
+export async function getStorageMigrationStatusMock(): Promise<StorageMigrationStatusDto> {
+  return mockStorageMigrationStatus;
+}
+
+export async function pickStorageFolderMock(input: {
+  kind: "cache" | "profiles";
+}): Promise<string | null> {
+  const db = normalizeDb(loadDb());
+  const now = Date.now();
+  if (input.kind === "cache") {
+    return `${db.storageLocations.cacheDir}-moved-${now}`;
+  }
+  return `${db.storageLocations.profilesDir}-moved-${now}`;
+}
+
+export async function startStorageMigrationMock(
+  input: StartStorageMigrationInput
+): Promise<StorageMigrationStatusDto> {
+  if (mockStorageMigrationStatus.isActive) {
+    throw new Error("A storage migration is already in progress.");
+  }
+
+  const db = normalizeDb(loadDb());
+  const nextLocations: StorageLocationsDto = {
+    cacheDir: input.cacheDir?.trim() || db.storageLocations.cacheDir,
+    profilesDir: input.profilesDir?.trim() || db.storageLocations.profilesDir
+  };
+
+  mockStorageMigrationStatus = {
+    phase: "copying",
+    message: "Copying storage data to the selected destination...",
+    bytesCopied: 0,
+    totalBytes: 100,
+    percentComplete: 0,
+    isActive: true
+  };
+
+  if (mockStorageMigrationTimer !== null) {
+    window.clearInterval(mockStorageMigrationTimer);
+  }
+
+  mockStorageMigrationTimer = window.setInterval(() => {
+    const nextBytes = Math.min(100, mockStorageMigrationStatus.bytesCopied + 10);
+    const percent = Math.min(100, (nextBytes / 100) * 100);
+    const completed = nextBytes >= 100;
+
+    mockStorageMigrationStatus = completed
+      ? {
+          phase: "restarting",
+          message: "Storage migration complete. Restarting...",
+          bytesCopied: 100,
+          totalBytes: 100,
+          percentComplete: 100,
+          isActive: false
+        }
+      : {
+          ...mockStorageMigrationStatus,
+          phase: "copying",
+          bytesCopied: nextBytes,
+          percentComplete: percent
+        };
+
+    if (completed && mockStorageMigrationTimer !== null) {
+      window.clearInterval(mockStorageMigrationTimer);
+      mockStorageMigrationTimer = null;
+
+      const latest = normalizeDb(loadDb());
+      latest.storageLocations = nextLocations;
+      saveDb(latest);
+    }
+  }, 150);
+
+  return mockStorageMigrationStatus;
 }
 
 export async function getLaunchRuntimeStatusMock(): Promise<LaunchRuntimeStatus> {
