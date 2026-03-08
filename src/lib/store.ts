@@ -2254,6 +2254,27 @@ function isDependencyPrecheckFailure(result: LaunchResult) {
   );
 }
 
+function extractDependencyPrecheckIssueDetails(message: string) {
+  const separator = message.match(/\r?\n\r?\n/);
+  if (!separator || separator.index === undefined) {
+    return null;
+  }
+
+  const detail = message.slice(separator.index + separator[0].length).trim();
+  return detail.length > 0 ? detail : null;
+}
+
+function buildDependencyWarningDetail(result: LaunchResult) {
+  const intro =
+    "Some enabled mods have dependency issues in the local catalog. If you trust this profile, you can choose Run anyway.";
+  const issueDetails = extractDependencyPrecheckIssueDetails(result.message);
+  if (!issueDetails) {
+    return intro;
+  }
+
+  return `${intro}\n\nIssues detected:\n${issueDetails}`;
+}
+
 function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla") {
   if (result.ok) {
     const modeLabel = result.usedLaunchMode === "direct" ? "Direct" : "Steam";
@@ -2274,8 +2295,7 @@ function buildLaunchFeedback(result: LaunchResult, variant: "modded" | "vanilla"
     return {
       tone: "warning" as const,
       title: "Dependency check warning",
-      detail:
-        "Some enabled mods appear to have dependency issues in the local catalog. If you trust this profile, you can choose Run anyway.",
+      detail: buildDependencyWarningDetail(result),
       diagnosticsPath: result.diagnosticsPath,
       canRepair: false,
       canRunAnyway: true

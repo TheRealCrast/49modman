@@ -677,6 +677,17 @@ pub fn activate_profile(
         let target_path = game_path.join(&relative_path);
 
         if target_path.exists() {
+            if target_path.is_file() && files_have_identical_content(&source_path, &target_path)? {
+                file_entries.push(ActivationManifestEntry {
+                    relative_path: relative_path_to_slash_string(&relative_path),
+                    kind: "file".to_string(),
+                    source: "stage".to_string(),
+                    operation: "existing".to_string(),
+                    sha256: None,
+                });
+                continue;
+            }
+
             return Err(InternalError::with_detail(
                 "ACTIVATION_TARGET_CONFLICT",
                 "Activation would overwrite an unmanaged game file.",
@@ -976,7 +987,7 @@ pub fn launch_profile(
         let result = LaunchResult {
             ok: false,
             code: "PRECHECK_FAILED".to_string(),
-            message: format!("{}: {}", preflight.code, preflight.message),
+            message: format_precheck_failure_message(&preflight),
             pid: None,
             used_game_path: preflight.resolved_game_path.clone(),
             used_profile_id: Some(profile_id.clone()),
@@ -1265,7 +1276,7 @@ pub fn launch_vanilla(
         let result = LaunchResult {
             ok: false,
             code: "PRECHECK_FAILED".to_string(),
-            message: format!("{}: {}", preflight.code, preflight.message),
+            message: format_precheck_failure_message(&preflight),
             pid: None,
             used_game_path: preflight.resolved_game_path.clone(),
             used_profile_id: preflight.selected_profile_id.clone(),
@@ -1947,6 +1958,30 @@ fn check_v49_signature(
     } else {
         Ok(SignatureCheckOutcome::Mismatched)
     }
+}
+
+fn format_precheck_failure_message(preflight: &V49ValidationResult) -> String {
+    let mut message = format!("{}: {}", preflight.code, preflight.message);
+    if preflight.code == "PROFILE_DEPENDENCY_STATE_INVALID" {
+        if let Some(detail) = preflight_dependency_issue_detail(preflight) {
+            let detail = detail.trim();
+            if !detail.is_empty() {
+                message.push_str("\n\n");
+                message.push_str(detail);
+            }
+        }
+    }
+    message
+}
+
+fn preflight_dependency_issue_detail(preflight: &V49ValidationResult) -> Option<&str> {
+    preflight
+        .checks
+        .iter()
+        .find(|check| {
+            check.key == "enabledDependencies" && check.code == "PROFILE_DEPENDENCY_STATE_INVALID"
+        })
+        .and_then(|check| check.detail.as_deref())
 }
 
 fn normalize_sha256(value: &str) -> Option<String> {
@@ -3719,6 +3754,40 @@ fn calculate_sha256(path: &Path) -> Result<String, InternalError> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn files_have_identical_content(
+    left_path: &Path,
+    right_path: &Path,
+) -> Result<bool, InternalError> {
+    let left_metadata = fs::metadata(left_path)?;
+    let right_metadata = fs::metadata(right_path)?;
+    if !left_metadata.is_file() || !right_metadata.is_file() {
+        return Ok(false);
+    }
+
+    if left_metadata.len() != right_metadata.len() {
+        return Ok(false);
+    }
+
+    let mut left_file = fs::File::open(left_path)?;
+    let mut right_file = fs::File::open(right_path)?;
+    let mut left_buffer = [0_u8; 8192];
+    let mut right_buffer = [0_u8; 8192];
+
+    loop {
+        let left_read = left_file.read(&mut left_buffer)?;
+        let right_read = right_file.read(&mut right_buffer)?;
+        if left_read != right_read {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+        if left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+    }
+}
+
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -4034,9 +4103,11 @@ mod tests {
     use time::OffsetDateTime;
 
     use super::{
-        collect_relative_files, extract_quoted_tokens, is_game_executable_arg, normalize_sha256,
+        collect_relative_files, extract_quoted_tokens, files_have_identical_content,
+        format_precheck_failure_message, is_game_executable_arg, normalize_sha256,
         normalize_stage_relative_path, parse_dependency_entries,
-        parse_steam_launch_options_from_vdf_content, should_skip_stage_path,
+        parse_steam_launch_options_from_vdf_content, should_skip_stage_path, V49ValidationCheck,
+        V49ValidationResult,
     };
 
     #[test]
@@ -4197,6 +4268,47 @@ mod tests {
             "/mnt/recovery/SteamLibrary/steamapps/common/Lethal Company"
         ));
         assert!(!is_game_executable_arg("dolphin"));
+    }
+
+    #[test]
+    fn files_have_identical_content_matches_exact_bytes() {
+        let root = temp_test_dir("files-identical");
+        let left = root.join("left.bin");
+        let right = root.join("right.bin");
+        fs::write(&left, b"same-bytes").unwrap();
+        fs::write(&right, b"same-bytes").unwrap();
+
+        assert!(files_have_identical_content(&left, &right).unwrap());
+
+        fs::write(&right, b"different").unwrap();
+        assert!(!files_have_identical_content(&left, &right).unwrap());
+    }
+
+    #[test]
+    fn format_precheck_failure_message_appends_dependency_details() {
+        let preflight = V49ValidationResult {
+            ok: false,
+            code: "PROFILE_DEPENDENCY_STATE_INVALID".to_string(),
+            message: "Validation failed because enabled installed mods have dependency issues."
+                .to_string(),
+            resolved_game_path: None,
+            resolved_from: None,
+            selected_profile_id: None,
+            checks: vec![V49ValidationCheck {
+                key: "enabledDependencies".to_string(),
+                ok: false,
+                code: "PROFILE_DEPENDENCY_STATE_INVALID".to_string(),
+                message: "Enabled installed mods have missing or disabled required dependencies."
+                    .to_string(),
+                detail: Some("ModA 1.0.0 requires ModB-2.0.0 but it is not installed.".to_string()),
+            }],
+            detected_executable_sha256: None,
+            hardlink_supported: None,
+        };
+
+        let message = format_precheck_failure_message(&preflight);
+        assert!(message.contains("PROFILE_DEPENDENCY_STATE_INVALID:"));
+        assert!(message.contains("ModA 1.0.0 requires ModB-2.0.0 but it is not installed."));
     }
 
     fn temp_test_dir(prefix: &str) -> PathBuf {
