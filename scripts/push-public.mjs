@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 
 const remoteName = "public";
 const branchName = "main";
+const orphanBranchName = `public-sync-${branchName}-${Date.now()}`;
 const args = new Set(process.argv.slice(2));
 const isDryRun = args.has("--dry-run");
 const allowDirty = args.has("--allow-dirty");
@@ -71,7 +72,7 @@ function main() {
       gitInherit(["worktree", "add", "--detach", worktreePath, remoteRef], { cwd: repoRoot });
     } else {
       gitInherit(["worktree", "add", "--detach", worktreePath, "HEAD"], { cwd: repoRoot });
-      gitInherit(["checkout", "--orphan", branchName], { cwd: worktreePath });
+      gitInherit(["checkout", "--orphan", orphanBranchName], { cwd: worktreePath });
     }
     worktreeAdded = true;
 
