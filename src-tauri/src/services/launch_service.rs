@@ -3246,6 +3246,22 @@ fn launch_steam(diagnostics_dir: &Path) -> Result<u32, InternalError> {
     fs::write(diagnostics_dir.join("stdout.log"), b"")?;
     fs::write(diagnostics_dir.join("stderr.log"), b"")?;
 
+    if cfg!(target_os = "windows") {
+        let uri = format!("steam://rungameid/{STEAM_APP_ID}");
+        let child = Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(uri)
+            .spawn()
+            .map_err(|error| {
+                InternalError::with_detail(
+                    "LAUNCH_FAILED",
+                    "Failed to start Steam launch process.",
+                    error.to_string(),
+                )
+            })?;
+        return Ok(child.id());
+    }
+
     let mut last_error = None;
     let candidates = if cfg!(target_os = "windows") {
         vec!["steam", "steam.exe"]
