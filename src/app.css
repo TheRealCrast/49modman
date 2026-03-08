@@ -141,9 +141,21 @@ img {
   align-content: start;
 }
 
+.onboarding-panel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
 .onboarding-validation-block {
   display: grid;
   gap: 10px;
+}
+
+.onboarding-friendly-copy,
+.onboarding-path-copy {
+  margin: 0;
+  color: var(--text-soft);
 }
 
 .onboarding-check-row {
@@ -154,7 +166,32 @@ img {
 }
 
 .onboarding-check-row p {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
+}
+
+.onboarding-detect-state .empty-copy {
+  margin: 0;
+}
+
+.onboarding-detected-list h3 {
+  margin: 0 0 8px;
+}
+
+.onboarding-technical-details {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: var(--panel-alt);
+  padding: 8px 10px;
+}
+
+.onboarding-technical-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.onboarding-technical-grid {
+  margin-top: 10px;
 }
 
 .onboarding-depot {

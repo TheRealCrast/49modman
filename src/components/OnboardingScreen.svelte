@@ -28,21 +28,44 @@
   function guidanceForCode(code: string | undefined) {
     switch (code) {
       case "GAME_PATH_RESOLUTION_FAILED":
-        return "Choose the exact Lethal Company install folder manually, then run validation again.";
+        return "Pick your Lethal Company install folder and try again.";
       case "GAME_EXECUTABLE_MISSING":
       case "GAME_DATA_DIR_MISSING":
-        return "The selected folder is not a valid game root. Pick the folder that contains Lethal Company.exe.";
+        return "That folder does not look like the game install folder yet.";
       case "V49_SIGNATURE_MISMATCH":
       case "V49_SIGNATURE_UNCONFIGURED":
-        return "Install does not match supported v49 yet. Follow the depot workflow and re-check.";
+        return "Your game files are not on the supported v49 build yet. Follow the install steps below, then check again.";
       case "GAME_PATH_NOT_WRITABLE":
-        return "49modman must be able to write to this folder for activation. Check permissions and ownership.";
+        return "49modman needs permission to write to this folder.";
       case "OK":
         return mode === "required"
-          ? "Validation passed. Onboarding completion was saved and full startup will continue."
-          : "Validation passed. Onboarding completion was refreshed.";
+          ? "Everything looks good. You can continue."
+          : "Everything looks good.";
       default:
-        return "Review failed checks below, adjust path/setup, then re-check.";
+        return "Please adjust the folder or setup and try again.";
+    }
+  }
+
+  function summaryForValidation(result: V49ValidationResult | undefined) {
+    if (!result) {
+      return "";
+    }
+
+    switch (result.code) {
+      case "OK":
+        return "Lethal Company was found and is ready for 49modman.";
+      case "GAME_PATH_RESOLUTION_FAILED":
+        return "We could not find a valid Lethal Company folder from that path.";
+      case "GAME_EXECUTABLE_MISSING":
+      case "GAME_DATA_DIR_MISSING":
+        return "This folder is missing required Lethal Company files.";
+      case "V49_SIGNATURE_MISMATCH":
+      case "V49_SIGNATURE_UNCONFIGURED":
+        return "This install is not on the supported v49 files yet.";
+      case "GAME_PATH_NOT_WRITABLE":
+        return "49modman cannot write to this game folder right now.";
+      default:
+        return result.message;
     }
   }
 
@@ -50,6 +73,8 @@
   $: showDepotWorkflow =
     validationCode === "V49_SIGNATURE_MISMATCH" || validationCode === "V49_SIGNATURE_UNCONFIGURED";
   $: guidance = guidanceForCode(validationCode);
+  $: validationSummary = summaryForValidation(validation);
+  $: failedChecks = validation?.checks.filter((check) => !check.ok) ?? [];
 </script>
 
 <section class="screen-stack onboarding-screen">
@@ -63,7 +88,7 @@
     </div>
   </div>
 
-  <section class="panel list-panel">
+  <section class="panel compact-panel onboarding-panel">
     <div class="compact-heading compact-heading-left">
       <div class="section-title-row">
         <Icon label="Game install" name="folder" />
@@ -143,37 +168,42 @@
       <div class="onboarding-validation-block">
         <div class="compact-heading compact-heading-left">
           <Icon label="Validation" name={validation.ok ? "check" : "warning"} />
-          <h3>{validation.ok ? "Validation passed" : "Validation failed"}</h3>
+          <h3>{validation.ok ? "Install check passed" : "We couldn't verify this install yet"}</h3>
         </div>
-        <p class="empty-copy">{validation.message}</p>
-        <p class="warning-copy">{guidance}</p>
+        <p class="onboarding-friendly-copy">{validationSummary}</p>
+        <p class="onboarding-friendly-copy">{guidance}</p>
 
         {#if validation.resolvedGamePath}
-          <p class="empty-copy">Resolved path: <strong>{validation.resolvedGamePath}</strong></p>
+          <p class="onboarding-path-copy">Using folder: <strong>{validation.resolvedGamePath}</strong></p>
         {/if}
 
-        <div class="reference-table">
-          {#each validation.checks as check}
-            <div class="onboarding-check-row">
-              <div class="section-title-row">
-                <Icon label={check.ok ? "Passed" : "Failed"} name={check.ok ? "check" : "warning"} />
-                <strong>{check.code}</strong>
-              </div>
-              <p class="empty-copy">{check.message}</p>
-              {#if check.detail}
-                <p class="warning-copy">{check.detail}</p>
-              {/if}
+        {#if failedChecks.length > 0}
+          <details class="onboarding-technical-details">
+            <summary>Show technical details</summary>
+            <div class="reference-table onboarding-technical-grid">
+              {#each failedChecks as check}
+                <div class="onboarding-check-row">
+                  <div class="section-title-row">
+                    <Icon label="Failed" name="warning" />
+                    <strong>{check.message}</strong>
+                  </div>
+                  {#if check.detail}
+                    <p class="empty-copy">{check.detail}</p>
+                  {/if}
+                  <p class="meta-label">Code: {check.code}</p>
+                </div>
+              {/each}
             </div>
-          {/each}
-        </div>
+          </details>
+        {/if}
       </div>
     {/if}
 
     {#if showDepotWorkflow}
       <div class="onboarding-depot panel compact-panel">
         <div class="compact-heading compact-heading-left">
-          <Icon label="Depot setup" name="warning" />
-          <h3>Manual depot workflow</h3>
+          <Icon label="Install steps" name="settings" />
+          <h3>Installing Lethal Company v49</h3>
         </div>
         <ol>
           <li>Open Steam console.</li>
