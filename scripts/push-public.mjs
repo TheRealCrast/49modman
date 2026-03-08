@@ -9,6 +9,15 @@ const orphanBranchName = `public-sync-${branchName}-${Date.now()}`;
 const args = new Set(process.argv.slice(2));
 const isDryRun = args.has("--dry-run");
 const allowDirty = args.has("--allow-dirty");
+const archivePathspec = [
+  ".",
+  ":(exclude)docs/**",
+  ":(exclude).gitignore",
+  ":(exclude)squashfs-root/**",
+  ":(exclude,glob)*.AppImage",
+  ":(exclude,glob)*.msi",
+  ":(exclude,glob)*.tar.gz"
+];
 
 function run(command, commandArgs, options = {}) {
   const cwd = options.cwd ?? process.cwd();
@@ -76,12 +85,12 @@ function main() {
     }
     worktreeAdded = true;
 
-    gitInherit(["rm", "-r", "--ignore-unmatch", "."], { cwd: worktreePath });
+    gitInherit(["rm", "-r", "-f", "--cached", "--ignore-unmatch", "."], { cwd: worktreePath });
     gitInherit(["clean", "-fdx"], { cwd: worktreePath });
 
     const archiveBuffer = run(
       "git",
-      ["archive", "--format=tar", "HEAD", "--", ".", ":(exclude)docs/**"],
+      ["archive", "--format=tar", "HEAD", "--", ...archivePathspec],
       { cwd: repoRoot, encoding: "buffer" }
     );
 
@@ -92,6 +101,12 @@ function main() {
 
     if (fs.existsSync(path.join(worktreePath, "docs"))) {
       throw new Error("Filtered snapshot unexpectedly contains docs/. Aborting push.");
+    }
+    if (fs.existsSync(path.join(worktreePath, ".gitignore"))) {
+      throw new Error("Filtered snapshot unexpectedly contains .gitignore. Aborting push.");
+    }
+    if (fs.existsSync(path.join(worktreePath, "squashfs-root"))) {
+      throw new Error("Filtered snapshot unexpectedly contains squashfs-root/. Aborting push.");
     }
 
     gitInherit(["add", "-A"], { cwd: worktreePath });
