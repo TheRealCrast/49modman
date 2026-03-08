@@ -37,14 +37,19 @@ fn main() {
     #[cfg(target_os = "linux")]
     apply_linux_runtime_env_defaults();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    let single_instance_plugin = tauri_plugin_single_instance::Builder::new()
+        .dbus_id("dev.crast.modman49")
+        .callback(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-        }))
+        })
+        .build();
+
+    tauri::Builder::default()
+        .plugin(single_instance_plugin)
         .setup(|app| {
             let state = AppState::new(&app.handle())?;
 
