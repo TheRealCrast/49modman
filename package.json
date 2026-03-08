@@ -1,0 +1,30 @@
+{
+  "name": "49modman",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "preview": "vite preview",
+    "version:sync": "node scripts/version-sync.mjs",
+    "version:bump": "node scripts/version-bump.mjs",
+    "tauri:dev": "node scripts/tauri-runner.mjs dev",
+    "tauri:build": "node scripts/tauri-runner.mjs build",
+    "release:build:linux": "npm run version:sync && node scripts/release-linux.mjs",
+    "release:build:windows": "npm run version:sync && node scripts/tauri-runner.mjs build --bundles msi",
+    "public:push": "node scripts/push-public.mjs",
+    "public:push:dry-run": "node scripts/push-public.mjs --dry-run"
+  },
+  "dependencies": {
+    "svelte": "^5.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@tauri-apps/cli": "^2.10.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vitest": "^4.0.18"
+  }
+}

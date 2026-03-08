@@ -1,0 +1,737 @@
+<script lang="ts">
+  import { onDestroy, tick } from "svelte";
+  import { getPackageReadme } from "../lib/api/catalog";
+  import { openExternalUrl } from "../lib/api/system";
+  import { currentReferenceNote, pickRecommendedVersion, resolveEffectiveStatus } from "../lib/status";
+  import type { IconName } from "../lib/icons";
+  import type {
+    EffectiveStatus,
+    InstallActionOptions,
+    InstallRequest,
+    ModPackage,
+    ModVersion,
+    ProfileInstalledModDto
+  } from "../lib/types";
+  import Icon from "./Icon.svelte";
+  import StatusPill from "./StatusPill.svelte";
+
+  export let pkg: ModPackage | undefined;
+  export let visibleStatuses: string[];
+  export let onToggleStatus: (status: "verified" | "broken" | "green" | "yellow" | "orange" | "red") => void;
+  export let onInstall: (request: InstallRequest, options?: InstallActionOptions) => void;
+  export let onSwitchVersion: (
+    request: InstallRequest,
+    switchFromVersionIds: string[],
+    options?: InstallActionOptions
+  ) => void;
+  export let onUninstallPackage: (packageId: string, packageName: string) => void;
+  export let onUninstallVersion: (
+    packageId: string,
+    versionId: string,
+    packageName: string,
+    versionNumber: string
+  ) => void;
+  export let onSetReference: (packageId: string, versionId: string, state: "verified" | "broken" | "neutral") => void;
+  export let onViewDependencies: (request: {
+    packageId: string;
+    packageName: string;
+    versionId: string;
+    versionNumber: string;
+  }) => void;
+  export let focusedVersionId: string | undefined = undefined;
+  export let focusedVersionToken = 0;
+  export let isLocked = false;
+  export let lockMessage = "Searching cached mods...";
+
+  const filters = ["verified", "green", "yellow", "orange", "red", "broken"] as const;
+  const versionRowElements = new Map<string, HTMLElement>();
+  type DetailPanelTab = "details" | "versions";
+  export let installedMods: ProfileInstalledModDto[] = [];
+
+  let installedPackageMods: ProfileInstalledModDto[] = [];
+  let installedVersionIds = new Set<string>();
+  let packageHasInstalledVersion = false;
+  let installVersion: ModVersion | undefined = undefined;
+  let installStatusClass = "green";
+  let installLabel = "Install";
+  let installIcon: IconName = "download";
+  let menu:
+    | {
+        versionId: string;
+        versionNumber: string;
+        x: number;
+        y: number;
+      }
+    | null = null;
+  let installModeMenu:
+    | {
+        versionId: string;
+        x: number;
+        y: number;
+      }
+    | null = null;
+  let lastFocusedKey = "";
+  let detailTab: DetailPanelTab = "versions";
+  let readmeHtml = "";
+  let isResolvingDetailsTab = false;
+  let hasDetailsTab = false;
+  let readmePackageKey = "";
+  let readmeRequestToken = 0;
+
+  function openMenuForVersion(
+    version: ModVersion,
+    x: number,
+    y: number
+  ) {
+    if (isLocked) {
+      return;
+    }
+
+    menu = {
+      versionId: version.id,
+      versionNumber: version.versionNumber,
+      x: Math.max(16, Math.min(window.innerWidth - 236, x)),
+      y: Math.max(16, Math.min(window.innerHeight - 220, y))
+    };
+    installModeMenu = null;
+  }
+
+  function versionHasDependencies(version: ModVersion | undefined) {
+    return (version?.dependencies?.length ?? 0) > 0;
+  }
+
+  function openInstallModeMenu(version: ModVersion, x: number, y: number) {
+    if (isLocked) {
+      return;
+    }
+
+    installModeMenu = {
+      versionId: version.id,
+      x: Math.max(16, Math.min(window.innerWidth - 268, x)),
+      y: Math.max(16, Math.min(window.innerHeight - 132, y))
+    };
+    menu = null;
+  }
+
+  function openInstallModeMenuFromButton(event: MouseEvent, version: ModVersion) {
+    if (isLocked || !versionHasDependencies(version)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const button = event.currentTarget as HTMLButtonElement;
+    const rect = button.getBoundingClientRect();
+    openInstallModeMenu(version, rect.left - 188, rect.bottom + 8);
+  }
+
+  function openContextMenu(event: MouseEvent, version: ModVersion) {
+    if (isLocked) {
+      return;
+    }
+
+    event.preventDefault();
+    openMenuForVersion(version, event.clientX, event.clientY);
+  }
+
+  function openOverflowMenu(event: MouseEvent, version: ModVersion) {
+    if (isLocked) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const button = event.currentTarget as HTMLButtonElement;
+    const rect = button.getBoundingClientRect();
+    openMenuForVersion(version, rect.left - 188, rect.bottom + 8);
+  }
+
+  function closeVersionMenu() {
+    menu = null;
+  }
+
+  function closeInstallModeMenu() {
+    installModeMenu = null;
+  }
+
+  function closeMenus() {
+    closeVersionMenu();
+    closeInstallModeMenu();
+  }
+
+  function pickInstallVersion() {
+    if (!pkg) {
+      return undefined;
+    }
+
+    return pickRecommendedVersion(pkg);
+  }
+
+  function buildInstallRequest(versionId: string): InstallRequest | undefined {
+    if (!pkg) {
+      return undefined;
+    }
+
+    const version = pkg.versions.find((entry) => entry.id === versionId);
+    if (!version) {
+      return undefined;
+    }
+
+    return {
+      packageId: pkg.id,
+      packageName: pkg.fullName,
+      versionId: version.id,
+      versionNumber: version.versionNumber,
+      effectiveStatus: version.effectiveStatus ?? resolveEffectiveStatus(version),
+      referenceNote: currentReferenceNote(version)
+    };
+  }
+
+  function registerVersionRow(node: HTMLElement, versionId: string) {
+    versionRowElements.set(versionId, node);
+
+    return {
+      destroy() {
+        versionRowElements.delete(versionId);
+      }
+    };
+  }
+
+  function viewDependenciesForMenuVersion() {
+    if (isLocked) {
+      return;
+    }
+
+    if (!pkg || !menu) {
+      return;
+    }
+
+    onViewDependencies({
+      packageId: pkg.id,
+      packageName: pkg.fullName,
+      versionId: menu.versionId,
+      versionNumber: menu.versionNumber
+    });
+    closeVersionMenu();
+  }
+
+  async function viewPackageInBrowser() {
+    if (isLocked) {
+      return;
+    }
+
+    if (!pkg?.websiteUrl) {
+      return;
+    }
+
+    await openExternalUrl(pkg.websiteUrl);
+    closeMenus();
+  }
+
+  function runInstallAction(
+    version: ModVersion,
+    options: InstallActionOptions = {}
+  ) {
+    if (isLocked || !pkg) {
+      return;
+    }
+
+    const request = buildInstallRequest(version.id);
+    if (!request) {
+      return;
+    }
+
+    if (packageHasInstalledVersion && !installedVersionIds.has(version.id)) {
+      onSwitchVersion(
+        request,
+        installedPackageMods.map((entry) => entry.versionId),
+        options
+      );
+      return;
+    }
+
+    onInstall(request, options);
+  }
+
+  function runPrimaryInstallAction() {
+    if (isLocked) {
+      return;
+    }
+
+    if (!pkg) {
+      return;
+    }
+
+    if (packageHasInstalledVersion) {
+      onUninstallPackage(pkg.id, pkg.fullName);
+      return;
+    }
+
+    const targetVersion = pickInstallVersion();
+
+    if (!targetVersion) {
+      return;
+    }
+
+    const request = buildInstallRequest(targetVersion.id);
+    if (!request) {
+      return;
+    }
+
+    onInstall(request);
+  }
+
+  function runInstallWithoutDependenciesFromMenu() {
+    if (isLocked || !pkg || !installModeMenu) {
+      return;
+    }
+
+    const targetVersion = pkg.versions.find((entry) => entry.id === installModeMenu?.versionId);
+    if (!targetVersion) {
+      return;
+    }
+
+    runInstallAction(targetVersion, { includeDependencies: false });
+    closeInstallModeMenu();
+  }
+
+  function applyReference(state: "verified" | "broken" | "neutral") {
+    if (isLocked) {
+      return;
+    }
+
+    if (!pkg || !menu) {
+      return;
+    }
+
+    onSetReference(pkg.id, menu.versionId, state);
+    closeVersionMenu();
+  }
+
+  function handleWindowPointerDown(event: PointerEvent) {
+    const target = event.target as HTMLElement | null;
+
+    if (
+      target?.closest(".version-menu") ||
+      target?.closest(".version-menu-trigger") ||
+      target?.closest(".install-mode-menu") ||
+      target?.closest(".install-mode-trigger")
+    ) {
+      return;
+    }
+
+    closeMenus();
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      closeMenus();
+    }
+  }
+
+  function selectDetailTab(tab: DetailPanelTab) {
+    if (tab === "details" && !hasDetailsTab) {
+      return;
+    }
+
+    detailTab = tab;
+  }
+
+  function sanitizeReadmeHtml(rawHtml: string): string {
+    const parser = new DOMParser();
+    const document = parser.parseFromString(rawHtml, "text/html");
+
+    for (const element of Array.from(document.querySelectorAll("script, style, iframe, object, embed"))) {
+      element.remove();
+    }
+
+    for (const element of Array.from(document.querySelectorAll("*"))) {
+      for (const attribute of Array.from(element.attributes)) {
+        const name = attribute.name.toLowerCase();
+        const value = attribute.value.trim();
+
+        if (name.startsWith("on")) {
+          element.removeAttribute(attribute.name);
+          continue;
+        }
+
+        if ((name === "href" || name === "src") && /^javascript:/i.test(value)) {
+          element.removeAttribute(attribute.name);
+        }
+      }
+    }
+
+    return document.body.innerHTML.trim();
+  }
+
+  async function loadReadmeForPackage(targetPackage: ModPackage, token: number) {
+    try {
+      const readme = await getPackageReadme({
+        packageFullName: targetPackage.fullName,
+        packageAuthor: targetPackage.author
+      });
+
+      if (token !== readmeRequestToken) {
+        return;
+      }
+
+      const markdown = readme?.trim() ?? "";
+      if (!markdown) {
+        readmeHtml = "";
+        hasDetailsTab = false;
+        detailTab = "versions";
+        return;
+      }
+
+      const sanitizedReadmeHtml = sanitizeReadmeHtml(markdown);
+      if (!sanitizedReadmeHtml) {
+        readmeHtml = "";
+        hasDetailsTab = false;
+        detailTab = "versions";
+        return;
+      }
+
+      readmeHtml = sanitizedReadmeHtml;
+      hasDetailsTab = true;
+      detailTab = "details";
+    } catch {
+      if (token !== readmeRequestToken) {
+        return;
+      }
+
+      readmeHtml = "";
+      hasDetailsTab = false;
+      detailTab = "versions";
+    } finally {
+      if (token === readmeRequestToken) {
+        isResolvingDetailsTab = false;
+      }
+    }
+  }
+
+  onDestroy(() => {
+    window.removeEventListener("pointerdown", handleWindowPointerDown);
+    window.removeEventListener("keydown", handleWindowKeydown);
+  });
+
+  $: if (menu || installModeMenu) {
+    window.addEventListener("pointerdown", handleWindowPointerDown);
+    window.addEventListener("keydown", handleWindowKeydown);
+  } else {
+    window.removeEventListener("pointerdown", handleWindowPointerDown);
+    window.removeEventListener("keydown", handleWindowKeydown);
+  }
+
+  $: installedPackageMods = pkg ? installedMods.filter((entry) => entry.packageId === pkg.id) : [];
+  $: installedVersionIds = new Set(installedPackageMods.map((entry) => entry.versionId));
+  $: packageHasInstalledVersion = installedPackageMods.length > 0;
+
+  $: if (pkg) {
+    installVersion = pickRecommendedVersion(pkg);
+    installStatusClass = packageHasInstalledVersion
+      ? "uninstall"
+      : installVersion.effectiveStatus ?? resolveEffectiveStatus(installVersion);
+    installLabel = packageHasInstalledVersion
+      ? "Uninstall"
+      : `Install ${installVersion.versionNumber}`;
+    installIcon = packageHasInstalledVersion ? "trash" : "download";
+  } else {
+    installVersion = undefined;
+    installStatusClass = "green";
+    installLabel = "Install";
+    installIcon = "download";
+  }
+
+  $: {
+    const packageKey = pkg ? `${pkg.id}:${pkg.author}:${pkg.fullName}` : "";
+    if (packageKey !== readmePackageKey) {
+      readmePackageKey = packageKey;
+      readmeHtml = "";
+      hasDetailsTab = false;
+      detailTab = "versions";
+      isResolvingDetailsTab = false;
+
+      if (pkg) {
+        isResolvingDetailsTab = true;
+        readmeRequestToken += 1;
+        void loadReadmeForPackage(pkg, readmeRequestToken);
+      }
+    }
+  }
+
+  $: if (isLocked && (menu || installModeMenu)) {
+    closeMenus();
+  }
+
+  async function scrollFocusedVersionIntoView(versionId: string) {
+    await tick();
+    versionRowElements.get(versionId)?.scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+  }
+
+  $: {
+    const focusKey =
+      pkg && focusedVersionId
+        ? `${pkg.id}:${focusedVersionId}:${focusedVersionToken}`
+        : "";
+
+    if (focusKey && focusKey !== lastFocusedKey) {
+      lastFocusedKey = focusKey;
+      void scrollFocusedVersionIntoView(focusedVersionId!);
+    }
+  }
+</script>
+
+{#if pkg}
+  <section class="panel detail-panel list-panel detail-panel-grid">
+    <div class="detail-header detail-header-left">
+      <div>
+        <h3>{pkg.fullName}</h3>
+        <p>{pkg.summary}</p>
+      </div>
+
+      <div class="detail-metrics">
+        <span>{pkg.versions.length} versions</span>
+      </div>
+    </div>
+
+    <div class="detail-primary-actions">
+      {#key installVersion?.id ?? `${pkg.id}-install`}
+        <div class={`install-action-group ${!packageHasInstalledVersion && installVersion && versionHasDependencies(installVersion) ? "merged" : ""}`}>
+          <button
+            class={`solid-button icon-button package-install-button ${installStatusClass}`}
+            type="button"
+            disabled={isLocked}
+            on:click={runPrimaryInstallAction}
+          >
+            <Icon
+              label={packageHasInstalledVersion
+                ? `Uninstall ${pkg.fullName}`
+                : `Install ${installVersion?.versionNumber ?? "recommended version"}`}
+              name={installIcon}
+              forceWhite={true}
+            />
+            <span>{installLabel}</span>
+          </button>
+          {#if !packageHasInstalledVersion && installVersion && versionHasDependencies(installVersion)}
+            <button
+              aria-expanded={installModeMenu?.versionId === installVersion.id}
+              class={`icon-button install-mode-trigger split-dropdown-button solid-button package-install-button ${installStatusClass}`}
+              type="button"
+              disabled={isLocked}
+              on:click={(event) => openInstallModeMenuFromButton(event, installVersion)}
+            >
+              <Icon label="Install options" name="down-arrow-small" size={16} forceWhite={true} />
+            </button>
+          {/if}
+        </div>
+      {/key}
+      <button
+        class="ghost-button icon-button detail-link-button"
+        type="button"
+        disabled={isLocked}
+        on:click={viewPackageInBrowser}
+      >
+        <Icon label="View mod in browser" name="external-link" size={16} />
+        <span>View in browser</span>
+      </button>
+    </div>
+
+    <div class="chip-row">
+      {#each pkg.categories as category}
+        <span class="category-chip">{category}</span>
+      {/each}
+    </div>
+
+    {#if isResolvingDetailsTab}
+      <div class="detail-resolution-slot">
+        <div class="detail-resolution-state panel">
+          <div class="loading-spinner" aria-hidden="true"></div>
+          <p>Loading package details...</p>
+        </div>
+      </div>
+    {:else}
+      <div class="detail-tab-row" role="tablist" aria-label="Package detail tabs">
+        {#if hasDetailsTab}
+          <button
+            class:active={detailTab === "details"}
+            class="ghost-button detail-tab-button"
+            role="tab"
+            type="button"
+            aria-selected={detailTab === "details"}
+            on:click={() => selectDetailTab("details")}
+          >
+            Details
+          </button>
+        {/if}
+        <button
+          class:active={detailTab === "versions"}
+          class="ghost-button detail-tab-button"
+          role="tab"
+          type="button"
+          aria-selected={detailTab === "versions"}
+          on:click={() => selectDetailTab("versions")}
+        >
+          Versions
+        </button>
+      </div>
+
+      {#if detailTab === "details" && hasDetailsTab}
+        <div class="detail-tab-content details-tab-content list-scroll">
+          <article class="readme-markdown">
+            {@html readmeHtml}
+          </article>
+        </div>
+      {:else}
+        <div class="detail-tab-content versions-tab-content">
+          <div class="filter-row">
+            {#each filters as filter}
+              <button
+                class:active={visibleStatuses.includes(filter)}
+                class={`toggle-chip ${filter}`}
+                type="button"
+                on:click={() => onToggleStatus(filter)}
+              >
+                {filter}
+              </button>
+            {/each}
+          </div>
+
+          <div class="versions-list list-scroll">
+            {#each [...pkg.versions].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt)) as version}
+              {#if visibleStatuses.includes(version.effectiveStatus ?? resolveEffectiveStatus(version))}
+                {@const versionInstalled = installedVersionIds.has(version.id)}
+                {@const versionActionLabel = versionInstalled
+                  ? "Uninstall version"
+                  : packageHasInstalledVersion
+                    ? "Switch version"
+                    : "Install version"}
+                <article
+                  use:registerVersionRow={version.id}
+                  class:focused-version={focusedVersionId === version.id}
+                  class="version-row"
+                  on:contextmenu={(event) => openContextMenu(event, version)}
+                >
+                  <div class="version-main">
+                    <div class="version-title">
+                      <strong>{version.versionNumber}</strong>
+                      <StatusPill status={version.effectiveStatus ?? resolveEffectiveStatus(version)} />
+                    </div>
+                    <p>
+                      Published {version.publishedAt} · {version.downloads.toLocaleString()} downloads
+                    </p>
+
+                    {#if version.overrideReferenceState === "verified" || version.overrideReferenceState === "broken"}
+                      <p class="reference-note">
+                        Local override: {version.overrideReferenceNote}
+                      </p>
+                    {:else if version.bundledReferenceState}
+                      <p class="reference-note">
+                        Bundled reference: {version.bundledReferenceNote}
+                      </p>
+                    {/if}
+                  </div>
+
+                  <div class="version-actions">
+                    <div class={`install-action-group ${!versionInstalled && versionHasDependencies(version) ? "merged" : ""}`}>
+                      <button
+                        class={`icon-button version-install-button ${versionInstalled ? "danger-button package-install-button uninstall" : "solid-button"}`}
+                        type="button"
+                        disabled={isLocked}
+                        on:click={() => {
+                          if (isLocked || !pkg) {
+                            return;
+                          }
+
+                          if (versionInstalled) {
+                            onUninstallVersion(pkg.id, version.id, pkg.fullName, version.versionNumber);
+                            return;
+                          }
+
+                          runInstallAction(version);
+                        }}
+                      >
+                        <Icon
+                          label={versionActionLabel}
+                          name={versionInstalled ? "trash" : "download"}
+                          forceWhite={true}
+                        />
+                        <span>{versionActionLabel}</span>
+                      </button>
+                      {#if !versionInstalled && versionHasDependencies(version)}
+                        <button
+                          aria-expanded={installModeMenu?.versionId === version.id}
+                          class="icon-button install-mode-trigger split-dropdown-button solid-button"
+                          type="button"
+                          disabled={isLocked}
+                          on:click={(event) => openInstallModeMenuFromButton(event, version)}
+                        >
+                          <Icon label="Install options" name="down-arrow-small" size={18} forceWhite={true} />
+                        </button>
+                      {/if}
+                    </div>
+                    <button
+                      aria-expanded={menu?.versionId === version.id}
+                      class="ghost-button icon-button version-menu-trigger"
+                      type="button"
+                      disabled={isLocked}
+                      on:click={(event) => openOverflowMenu(event, version)}
+                    >
+                      <Icon label="Version actions" name="three-dots-vertical" />
+                    </button>
+                  </div>
+                </article>
+              {/if}
+            {/each}
+          </div>
+        </div>
+      {/if}
+    {/if}
+
+    {#if menu}
+      <div class="version-menu panel" style={`left:${menu.x}px;top:${menu.y}px;`}>
+        <button class="version-menu-item" type="button" on:click={viewDependenciesForMenuVersion}>
+          <Icon label="View dependencies" name="details" size={16} />
+          <span>View dependencies</span>
+        </button>
+        <button class="version-menu-item" type="button" on:click={() => applyReference("verified")}>
+          <Icon label="Mark as verified" name="verified" size={16} />
+          <span>Mark as verified</span>
+        </button>
+        <button class="version-menu-item danger" type="button" on:click={() => applyReference("broken")}>
+          <Icon label="Mark as broken" name="broken" size={16} />
+          <span>Mark as broken</span>
+        </button>
+        <button class="version-menu-item" type="button" on:click={() => applyReference("neutral")}>
+          <Icon label="Clear mark" name="x-close" size={16} />
+          <span>Clear mark</span>
+        </button>
+      </div>
+    {/if}
+
+    {#if installModeMenu}
+      <div class="install-mode-menu version-menu panel" style={`left:${installModeMenu.x}px;top:${installModeMenu.y}px;`}>
+        <button class="version-menu-item" type="button" on:click={runInstallWithoutDependenciesFromMenu}>
+          <Icon label="Install without dependencies" name="download" size={16} />
+          <span>Install without dependencies</span>
+        </button>
+      </div>
+    {/if}
+
+    {#if isLocked}
+      <div class="detail-lock-overlay" aria-live="polite">
+        <div class="detail-lock-card">
+          <div class="loading-spinner" aria-hidden="true"></div>
+          <p>{lockMessage}</p>
+        </div>
+      </div>
+    {/if}
+  </section>
+{:else}
+  <section class="panel detail-panel empty-panel">
+    <h3>Select a mod</h3>
+    <p>Choose a package from the browser to inspect its versions, local references, and install warnings.</p>
+  </section>
+{/if}

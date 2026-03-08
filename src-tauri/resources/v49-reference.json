@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "package_full_name": "BepInEx-BepInExPack",
+      "version_number": "5.4.2100",
+      "reference_state": "verified",
+      "note": "Confirmed stable with core v49 stacks and 8-player sessions."
+    },
+    {
+      "package_full_name": "notnotnotswipez-MoreCompany",
+      "version_number": "1.7.6",
+      "reference_state": "verified",
+      "note": "Confirmed working with BepInExPack 5.4.2100 and vanilla-hosted lobbies."
+    },
+    {
+      "package_full_name": "2018-LC_API",
+      "version_number": "3.4.3",
+      "reference_state": "verified",
+      "note": "Good baseline for older v49 dependency chains."
+    },
+    {
+      "package_full_name": "2018-LC_API",
+      "version_number": "3.4.5",
+      "reference_state": "broken",
+      "note": "Known to trigger lobby desync after the first quota rollover."
+    },
+    {
+      "package_full_name": "x753-Mimics",
+      "version_number": "2.2.0",
+      "reference_state": "verified",
+      "note": "Confirmed playable on dedicated host and peer host."
+    },
+    {
+      "package_full_name": "Renegades-CoilHeadStare",
+      "version_number": "0.9.1",
+      "reference_state": "broken",
+      "note": "Confirmed null-ref on facility load for v49 clients."
+    }
+  ]
+}

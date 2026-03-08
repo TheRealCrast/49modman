@@ -1,0 +1,133 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod app_state;
+mod commands;
+mod db;
+mod domain;
+mod error;
+mod resources;
+mod services;
+mod thunderstore;
+
+use app_state::AppState;
+use services::profile_service::ensure_all_profile_storage;
+use tauri::Manager;
+
+#[cfg(target_os = "linux")]
+fn apply_linux_runtime_env_defaults() {
+    // Keep Linux AppImage runtime stable on X11/i3 systems where dmabuf/gbm can fail.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
+
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
+
+    if std::env::var_os("WINIT_UNIX_BACKEND").is_none() {
+        std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+    }
+}
+
+fn main() {
+    #[cfg(target_os = "linux")]
+    apply_linux_runtime_env_defaults();
+
+    let single_instance_plugin = tauri_plugin_single_instance::Builder::new()
+        .dbus_id("com.therealcrast.modman49")
+        .callback(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        })
+        .build();
+
+    tauri::Builder::default()
+        .plugin(single_instance_plugin)
+        .setup(|app| {
+            let state = AppState::new(&app.handle())?;
+
+            {
+                let connection = state.connection.lock().map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Failed to lock the SQLite connection",
+                    )
+                })?;
+                ensure_all_profile_storage(&state, &connection)?;
+            }
+
+            app.manage(state);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::cache::queue_install_to_cache,
+            commands::cache::get_cache_summary,
+            commands::cache::open_cache_folder,
+            commands::cache::clear_cache,
+            commands::cache::preview_clear_cache_unreferenced,
+            commands::cache::clear_cache_unreferenced,
+            commands::catalog::sync_catalog,
+            commands::catalog::get_catalog_summary,
+            commands::catalog::search_packages,
+            commands::catalog::get_package_detail,
+            commands::catalog::get_package_readme,
+            commands::dependencies::get_version_dependencies,
+            commands::dependencies::warm_dependency_index,
+            commands::downloads::list_active_downloads,
+            commands::downloads::get_task,
+            commands::launch::scan_steam_installations,
+            commands::launch::pick_game_install_folder,
+            commands::launch::validate_v49_install,
+            commands::launch::build_runtime_stage,
+            commands::launch::activate_profile,
+            commands::launch::deactivate_to_vanilla,
+            commands::launch::repair_activation,
+            commands::launch::get_launch_runtime_status,
+            commands::launch::get_memory_diagnostics,
+            commands::launch::trim_resource_saver_memory,
+            commands::launch::launch_profile,
+            commands::launch::launch_vanilla,
+            commands::launch::list_proton_runtimes,
+            commands::launch::set_preferred_proton_runtime,
+            commands::profiles::list_profiles,
+            commands::profiles::get_active_profile,
+            commands::profiles::set_active_profile,
+            commands::profiles::create_profile,
+            commands::profiles::update_profile,
+            commands::profiles::delete_profile,
+            commands::profiles::get_profile_detail,
+            commands::profiles::set_installed_mod_enabled,
+            commands::profiles::uninstall_installed_mod,
+            commands::profiles::get_uninstall_dependants,
+            commands::profiles::reset_all_data,
+            commands::profiles::open_profiles_folder,
+            commands::profiles::open_active_profile_folder,
+            commands::profiles::get_profiles_storage_summary,
+            commands::profiles::preview_export_profile_pack,
+            commands::profiles::export_profile_pack,
+            commands::profiles::preview_import_profile_pack,
+            commands::profiles::preview_import_profile_mod_zip,
+            commands::profiles::import_profile_pack,
+            commands::profiles::import_profile_mod_zip,
+            commands::reference::list_reference_rows,
+            commands::reference::set_reference_state,
+            commands::settings::get_warning_prefs,
+            commands::settings::set_warning_preference,
+            commands::settings::get_onboarding_status,
+            commands::settings::complete_onboarding,
+            commands::settings::get_storage_locations,
+            commands::settings::get_storage_migration_status,
+            commands::settings::pick_storage_folder,
+            commands::settings::start_storage_migration,
+            commands::system::open_external_url
+        ])
+        .run(tauri::generate_context!())
+        .expect("failed to run 49modman");
+}
