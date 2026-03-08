@@ -2317,6 +2317,7 @@ fn write_launch_diagnostics(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 struct ProcessIdentity {
     pid: u32,
@@ -2325,6 +2326,7 @@ struct ProcessIdentity {
     vm_rss_bytes: Option<u64>,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 struct ProcessMemoryStats {
     rss_bytes: u64,
@@ -3095,6 +3097,7 @@ fn read_process_comm_matches_game_executable(path: &Path) -> Result<bool, Intern
     Ok(name == "lethal company.exe" || name == "lethal company.")
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn is_game_executable_arg(value: &str) -> bool {
     let normalized = value
         .trim()
