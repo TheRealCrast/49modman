@@ -8,8 +8,14 @@
     "build": "vite build",
     "test": "vitest run",
     "preview": "vite preview",
+    "version:sync": "node scripts/version-sync.mjs",
+    "version:bump": "node scripts/version-bump.mjs",
     "tauri:dev": "node scripts/tauri-runner.mjs dev",
-    "tauri:build": "node scripts/tauri-runner.mjs build"
+    "tauri:build": "node scripts/tauri-runner.mjs build",
+    "release:build:linux": "npm run version:sync && node scripts/release-linux.mjs",
+    "release:build:windows": "npm run version:sync && node scripts/tauri-runner.mjs build --bundles msi",
+    "public:push": "node scripts/push-public.mjs",
+    "public:push:dry-run": "node scripts/push-public.mjs --dry-run"
   },
   "dependencies": {
     "svelte": "^5.0.0"

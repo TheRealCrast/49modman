@@ -11,7 +11,30 @@ use app_state::AppState;
 use services::profile_service::ensure_all_profile_storage;
 use tauri::Manager;
 
+#[cfg(target_os = "linux")]
+fn apply_linux_runtime_env_defaults() {
+    // Keep Linux AppImage runtime stable on X11/i3 systems where dmabuf/gbm can fail.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
+    if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
+
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
+
+    if std::env::var_os("WINIT_UNIX_BACKEND").is_none() {
+        std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    apply_linux_runtime_env_defaults();
+
     tauri::Builder::default()
         .setup(|app| {
             let state = AppState::new(&app.handle())?;

@@ -25,6 +25,17 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "icon": [
+      "icons/icon.png"
+    ],
+    "targets": [
+      "msi",
+      "appimage"
+    ],
+    "windows": {
+      "wix": {
+        "upgradeCode": "A6A2640F-44A8-4D68-B7E2-26A45B782A16"
+      }
+    }
   }
 }
