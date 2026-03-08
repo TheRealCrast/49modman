@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 const mode = process.argv[2];
 
@@ -13,7 +13,7 @@ const cargoBin = join(homedir(), ".cargo", "bin");
 const extraArgs = process.argv.slice(3);
 const env = {
   ...process.env,
-  PATH: `${cargoBin}:${process.env.PATH ?? ""}`
+  PATH: `${cargoBin}${delimiter}${process.env.PATH ?? ""}`
 };
 
 if (process.platform === "linux") {
