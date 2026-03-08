@@ -28,6 +28,7 @@
   --radius-md: 12px;
   --radius-sm: 10px;
   --install-split-height: 46px;
+  --package-card-icon-size: 52px;
 }
 
 * {
@@ -1171,18 +1172,26 @@ img {
 .package-card-header-main {
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 
 .package-card-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: var(--package-card-icon-size);
+  height: var(--package-card-icon-size);
+  border-radius: 12px;
   border: 1px solid var(--panel-border);
   background: #fff;
   object-fit: contain;
   flex-shrink: 0;
+}
+
+.package-card-title-block {
+  min-width: 0;
+  min-height: var(--package-card-icon-size);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .package-card-icon-fallback {
@@ -1199,6 +1208,10 @@ img {
 .warning-copy,
 .category-chip {
   overflow-wrap: anywhere;
+}
+
+.package-meta {
+  margin: 0;
 }
 
 .package-card-install-button {

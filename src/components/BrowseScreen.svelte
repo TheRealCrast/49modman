@@ -274,7 +274,7 @@
                         <span>{card.fullName.slice(0, 1).toUpperCase()}</span>
                       </div>
                     {/if}
-                    <div>
+                    <div class="package-card-title-block">
                       <p class="package-name">{card.fullName}</p>
                       <p class="package-meta">
                         by {card.author} • {card.totalDownloads.toLocaleString()} downloads
