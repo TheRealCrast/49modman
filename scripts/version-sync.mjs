@@ -45,7 +45,7 @@ function assertSemver(version) {
 }
 
 function syncCargoTomlVersion(cargoToml, version) {
-  const pattern = /(\[package\][\s\S]*?\nversion\s*=\s*")([^"]+)(")/;
+  const pattern = /(\[package\][\s\S]*?\r?\nversion\s*=\s*")([^"]+)(")/;
   if (!pattern.test(cargoToml)) {
     throw new Error("Failed to locate package version in src-tauri/Cargo.toml");
   }
@@ -54,7 +54,8 @@ function syncCargoTomlVersion(cargoToml, version) {
 }
 
 function syncCargoLockVersion(cargoLock, version) {
-  const pattern = /(\[\[package\]\]\nname\s*=\s*"modman49"\nversion\s*=\s*")([^"]+)(")/;
+  const pattern =
+    /(\[\[package\]\]\r?\nname\s*=\s*"modman49"\r?\nversion\s*=\s*")([^"]+)(")/;
   if (!pattern.test(cargoLock)) {
     throw new Error("Failed to locate modman49 package version in src-tauri/Cargo.lock");
   }
