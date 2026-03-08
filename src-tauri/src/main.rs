@@ -38,7 +38,7 @@ fn main() {
     apply_linux_runtime_env_defaults();
 
     let single_instance_plugin = tauri_plugin_single_instance::Builder::new()
-        .dbus_id("dev.crast.modman49")
+        .dbus_id("com.therealcrast.modman49")
         .callback(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
