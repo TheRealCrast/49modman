@@ -22,10 +22,12 @@ const archivePathspec = [
 function run(command, commandArgs, options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const encoding = options.encoding ?? "utf8";
+  const maxBuffer = options.maxBuffer ?? 64 * 1024 * 1024;
 
   return execFileSync(command, commandArgs, {
     cwd,
     encoding,
+    maxBuffer,
     stdio: options.stdio ?? ["ignore", "pipe", "pipe"]
   });
 }
@@ -88,14 +90,10 @@ function main() {
     gitInherit(["rm", "-r", "-f", "--cached", "--ignore-unmatch", "."], { cwd: worktreePath });
     gitInherit(["clean", "-fdx"], { cwd: worktreePath });
 
-    const archiveBuffer = run(
-      "git",
-      ["archive", "--format=tar", "HEAD", "--", ...archivePathspec],
-      { cwd: repoRoot, encoding: "buffer" }
-    );
-
     const archivePath = path.join(tempRoot, "public-sync.tar");
-    fs.writeFileSync(archivePath, archiveBuffer);
+    gitInherit(["archive", "--format=tar", "-o", archivePath, "HEAD", "--", ...archivePathspec], {
+      cwd: repoRoot
+    });
     run("tar", ["-xf", archivePath, "-C", worktreePath], { encoding: "utf8" });
     fs.rmSync(archivePath, { force: true });
 
